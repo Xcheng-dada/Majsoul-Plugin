@@ -1,0 +1,11 @@
+{
+  "name": "majsoul-plugin",
+  "version": "1.0.0",
+  "description": "TRSS-Yunzai 雀魂抽卡插件",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {},
+  "dependencies": {
+    "sharp": "^0.33.0"
+  }
+}
