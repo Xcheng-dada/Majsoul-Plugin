@@ -197,18 +197,27 @@ export default class GachaCore {
         const [blueGiftList, purpleGiftList, baseDecorationList] = await Promise.all([
             this.fileLoader('gift/blue'),
             this.fileLoader('gift/purple'),
-            this.fileLoader('decoration')
+            this.fileLoader('decoration') // 基础装饰（decoration根目录）
         ]);
 
-        // 3. 处理特殊卡池的额外装饰
-        let decorationList = [...baseDecorationList];
-        if (!['normal', 'kuangdu', 'douhun'].includes(actualPoolName)) {
-            const extraDecor = await this.fileLoader('decoration', actualPoolName);
-            decorationList.push(...extraDecor);
+        // 3. 处理特殊卡池的UP装饰
+        let upDecorationList = [];
+        let otherDecorationList = [...baseDecorationList]; // 基础装饰作为其他装饰
+        
+        // 加载当前卡池的UP装饰（从decoration/卡池名目录）
+        if (actualPoolName !== 'normal') {
+            // 特殊卡池（如huiye、saki1、saki2等）有自己的UP装饰文件夹
+            const upDecor = await this.fileLoader('decoration', actualPoolName);
+            upDecorationList.push(...upDecor);
         }
+        
+        // 特殊处理saki2卡池，它既有decoration/saki2文件夹（作为UP装饰）
+        // 也有额外的装饰文件夹（如decoration/saki2的特殊装饰）
         if (actualPoolName === 'saki2') {
-            const saki2Decor = await this.fileLoader('decoration', 'saki2');
-            decorationList.push(...saki2Decor);
+            // saki2的UP装饰已经在上面加载了
+            // 如果有额外的saki2装饰，可以额外加载
+            // const extraSaki2Decor = await this.fileLoader('decoration', 'saki2_extra');
+            // upDecorationList.push(...extraSaki2Decor);
         }
 
         // ========== 严格按照官方概率的两阶段随机 ==========
@@ -220,11 +229,11 @@ export default class GachaCore {
         if (typeRoll < 5) {
             // 5% 角色
             objInt = ITEM_TYPE.CHARACTER;
-            // 角色选择逻辑：如果up池存在且非空，51%概率从UP池，49%概率从标配池
+            // 角色选择逻辑：如果up池存在且非空，59%概率从UP池，41%概率从标配池
             let rolePool;
             if (upPool.length > 0) {
                 const objIntPerson = Math.floor(Math.random() * 100) + 1;
-                if (objIntPerson <= 51) {
+                if (objIntPerson <= 59) {
                     rolePool = upPool;
                 } else {
                     rolePool = normalPool;
@@ -237,7 +246,21 @@ export default class GachaCore {
         } else if (typeRoll < 20) { // 5% + 15% = 20%
             // 15% 装饰
             objInt = ITEM_TYPE.DECORATION;
-            prop = decorationList[Math.floor(Math.random() * decorationList.length)];
+            
+            // 装饰选择逻辑：如果有UP装扮，则49%概率从UP装扮中选择，51%概率从其他装扮中选择
+            if (upDecorationList.length > 0) {
+                const decorationRoll = Math.floor(Math.random() * 100) + 1;
+                if (decorationRoll <= 49) {
+                    // 49% 概率：从UP装扮中选择
+                    prop = upDecorationList[Math.floor(Math.random() * upDecorationList.length)];
+                } else {
+                    // 51% 概率：从其他装扮中选择
+                    prop = otherDecorationList[Math.floor(Math.random() * otherDecorationList.length)];
+                }
+            } else {
+                // 没有UP装扮时（如normal池），从所有装扮中随机选择
+                prop = baseDecorationList[Math.floor(Math.random() * baseDecorationList.length)];
+            }
             
         } else {
             // 80% 礼物
@@ -256,7 +279,7 @@ export default class GachaCore {
 
         // 5. 安全检查：确保 prop 有值
         if (!prop) {
-            const allFiles = [...blueGiftList, ...purpleGiftList, ...decorationList, ...Array.from(this.characterFileMap.values())];
+            const allFiles = [...blueGiftList, ...purpleGiftList, ...upDecorationList, ...otherDecorationList, ...Array.from(this.characterFileMap.values())];
             prop = allFiles.length > 0 ? allFiles[0] : 'fallback.png';
             logger.error(`[GachaCore] singlePull 未选中文件，使用兜底: ${prop}`);
         }
