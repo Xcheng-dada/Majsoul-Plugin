@@ -4,9 +4,9 @@
 <h1 align = "center">Majsoul-Plugin</h1>
 <h4 align = "center">✨ 基于<a href="https://github.com/TimeRainStarSky/Yunzai" target="_blank">TRSS-Yunzai</a>的雀魂麻将多功能插件✨ </h4>
 <div align = "center">
-        <a href="https://github.com/Xcheng-dada/Majsoul_Plugin/wiki" target="_blank">说明文档</a> &nbsp; · &nbsp;
-        <a href="https://github.com/Xcheng-dada/Majsoul_Plugin/wiki#%E4%B8%A8%E6%8C%87%E4%BB%A4%E5%88%97%E8%A1%A8" target="_blank">指令列表</a> &nbsp; · &nbsp;
-        <a href="https://github.com/Xcheng-dada/Majsoul_Plugin/wiki#%E4%B8%A8%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98-qa">常见问题</a>
+        <a href="#前言插件简介">说明文档</a> &nbsp; · &nbsp;
+        <a href="#指令列表">指令列表</a> &nbsp; · &nbsp;
+        <a href="#常见问题-qa">常见问题</a>
 </div>
 <h4 align = "center"></h4>
 <div align="center">
@@ -21,6 +21,7 @@
   </a>
 </div>
 
+<a id="前言插件简介"></a>
 ## **丨前言&插件简介**
 一个雀魂麻将多功能插件，插件不包括TRSS-Yunzai，应该配合[**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai)使用：
 
@@ -29,6 +30,7 @@
 > [!TIP]
 > 本插件部分功能基于 [Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) 移植至TRSS-Yunzai
 
+<a id="安装方法"></a>
 ## 丨安装方法
 1.  在TRSS-Yunzai目录下使用以下命令拉取本项目
     ```
@@ -41,6 +43,7 @@
     ```
 3.  重启 TRSS-Yunzai，进入机器人在的群聊，即可正常使用本插件。
 
+<a id="已实现的功能"></a>
 ## 丨已实现的功能
 ### 丨雀魂抽卡模块 (功能完整)
 *   **十连抽卡**：模拟雀魂抽卡，自动合成并发送十连结果图片。
@@ -56,7 +59,8 @@
 *   **绑定切换**：可随时切换已绑定的主账号。
 *   **账号解绑**：支持解绑指定UID或全部解绑。
 
-## 丨使用指令
+<a id="指令列表"></a>
+## 丨指令列表
 ### 所有用户可用
 | 指令 | 说明 | 示例 |
 | :--- | :--- | :--- |
@@ -86,6 +90,7 @@
 -   斗牌传说up池
 -   狂赌up池
 
+<a id="段位系统说明"></a>
 ## 丨段位系统说明
 插件使用完整的雀魂段位系统，支持以下段位计算：
 
@@ -102,6 +107,7 @@
 - 魂天段位每100分转换为1.0星
 - 达到段位上限后自动升段
 
+<a id="常见问题-qa"></a>
 ## 丨常见问题 Q&A
 ### 丨抽卡时提示"插件加载错误"或类似错误？
 1.  **确保依赖已安装**：在插件目录 (`plugins/Majsoul-Plugin/`) 内执行 `pnpm install`。
@@ -124,6 +130,7 @@
 ### 丨切换UID时提示"尚未绑定该UID"？
 请先使用`#雀魂我的绑定`查看已绑定的UID列表，然后使用列表中的UID进行切换。
 
+<a id="未来计划"></a>
 ## 丨未来计划
 -   [ ] 玩家详细数据查询（基于已绑定的UID）
 -   [ ] 对局记录详细分析
@@ -131,6 +138,7 @@
 -   [ ] 对局信息订阅与播报
 -   [ ] 牌理功能
 
+<a id="感谢"></a>
 ## | 感谢
 -   [DaiShengSheng / Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) ：原Python版本雀魂插件，抽卡功能移植自该项目。
 -   [SAPikachu / amae-koromo](https://github.com/SAPikachu/amae-koromo) ：雀魂牌谱屋项目，提供玩家数据查询API。

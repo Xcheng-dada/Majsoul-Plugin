@@ -46,7 +46,7 @@ export class MajsoulGacha extends plugin {
         this.dailyLimiter = new DailyLimiter(15);
     }
 
-    // 十连抽卡（保持不变）
+    // 十连抽卡（增加保底提示）
     async tenGacha(e) {
         try {
             const canGacha = await this.dailyLimiter.check(e.user_id);
@@ -56,7 +56,7 @@ export class MajsoulGacha extends plugin {
                 return true;
             }
 
-            const { imageBase64, results } = await this.gachaCore.runGacha(e.group_id);
+            const { imageBase64, results, hasGuaranteed } = await this.gachaCore.runGacha(e.group_id);
             await this.dailyLimiter.increase(e.user_id);
 
             const currentCount = await this.dailyLimiter.getCount(e.user_id);
@@ -87,6 +87,11 @@ export class MajsoulGacha extends plugin {
             if (rareCount['紫色礼物'] > 0) summaryParts.push(`紫礼物x${rareCount['紫色礼物']}`);
             textSummary += summaryParts.join('， ');
 
+            // 添加保底提示
+            if (hasGuaranteed) {
+                textSummary += `\n✨ 触发十连保底！最后一抽升级为紫色礼物！`;
+            }
+
             textSummary += `\n📊 今日抽卡：${currentCount}/${this.dailyLimiter.limit}（剩余${remaining}次）`;
             textSummary += resetTimeInfo;
 
@@ -105,7 +110,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 切换卡池（保持不变）
+    // 切换卡池（更新：删除up池相关提示）
     async changePool(e) {
         const match = e.msg.match(/^#?切换雀魂卡池\s+(.+)$/);
         if (!match) {
@@ -116,7 +121,7 @@ export class MajsoulGacha extends plugin {
         const input = match[1];
         const poolId = this.gachaCore.getPoolId(input);
         if (!poolId) {
-            const supportedPools = "当前up池、辉夜up池、天麻up池1、天麻up池2、标配池、斗牌传说up池、狂赌up池";
+            const supportedPools = "辉夜up池、天麻up池1、天麻up池2、标配池、斗牌传说up池、狂赌up池";
             await e.reply(`没有找到该名称的卡池，当前支持的卡池有：${supportedPools}`);
             return true;
         }
@@ -152,11 +157,11 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看卡池（保持不变）
+    // 查看卡池
     async viewPool(e) {
         try {
             const groupPool = await this.gachaCore.groupPoolLoader();
-            let currentPool = 'up';
+            let currentPool = 'normal'; // 默认池改为normal
             for (const item of groupPool) {
                 if (item.gid === String(e.group_id)) {
                     currentPool = item.poolname;
@@ -172,7 +177,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查询抽卡次数（保持不变）
+    // 查询抽卡次数
     async checkLimit(e) {
         const match = e.msg.match(/^#?查询抽卡次数\s*(\d+)?$/);
         const targetUserId = match ? (match[1] || e.user_id) : e.user_id;
@@ -190,7 +195,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 修正：设置用户今日剩余抽卡次数
+    // 设置用户今日剩余抽卡次数
     async setUserCount(e) {
         const match = e.msg.match(/^#?设置用户次数\s+(\d+)\s+(\d+)$/);
         if (!match) {

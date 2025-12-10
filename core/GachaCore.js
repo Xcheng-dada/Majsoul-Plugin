@@ -94,30 +94,36 @@ export default class GachaCore {
         await fs.writeFile(filePath, JSON.stringify(data, null, 4), 'utf-8');
     }
 
-    // 主抽卡函数：对应原 run_gacha 函数
+    // 主抽卡函数
     async runGacha(groupId) {
         const pool = await this.gachaLoader();
         const groupPool = await this.groupPoolLoader();
 
         let poolName = null;
         const newGroupPool = [];
+        let hasGuaranteed = false; // 新增：保底标志
 
         // 1. 查找并确定当前群组的卡池
         for (const item of groupPool) {
             if (item.gid === String(groupId)) {
                 poolName = item.poolname;
+                // 检查卡池是否存在，如果不存在则使用normal池
+                if (!pool[poolName]) {
+                    poolName = 'normal';
+                    item.poolname = 'normal';
+                }
                 newGroupPool.push(item);
             } else {
                 newGroupPool.push(item);
             }
         }
 
-        // 2. 如果该群未设置卡池，使用默认“up”池并保存
+        // 2. 如果该群未设置卡池，使用默认"normal"池并保存
         if (poolName === null) {
-            poolName = 'up';
+            poolName = 'normal';
             newGroupPool.push({
                 gid: String(groupId),
-                poolname: 'up'
+                poolname: 'normal'
             });
             await this.saveGroupPool(newGroupPool);
         }
@@ -130,39 +136,48 @@ export default class GachaCore {
         for (let i = 0; i < 10; i++) {
             const singleResult = await this.singlePull(pool, poolName);
             result.push(singleResult);
-            // 【重要修正】保底判断逻辑：根据新的ITEM_TYPE标识判断
-            // 只有蓝色礼物(GIFT_BLUE)且不在紫色礼物列表中才计数
-            if (singleResult[0] === ITEM_TYPE.GIFT_BLUE && !purpleGift.includes(singleResult[1])) {
-                purpleFlag++;
+            // 保底判断逻辑：只有蓝色礼物(GIFT_BLUE)且不在紫色礼物列表中才计数
+            if (singleResult[0] === ITEM_TYPE.GIFT_BLUE) {
+                // 获取礼物名称（不带扩展名）
+                let giftName = singleResult[1];
+                const extIndex = giftName.lastIndexOf('.');
+                if (extIndex !== -1) {
+                    giftName = giftName.substring(0, extIndex);
+                }
+                // 检查是否在紫色礼物列表中
+                if (!purpleGift.includes(giftName + '.jpg') && !purpleGift.includes(giftName)) {
+                    purpleFlag++;
+                }
             }
         }
 
-    // 修改 runGacha 方法中的保底逻辑部分：
-    // 十连保底机制：如果前9抽都是普通礼物(蓝礼物且非紫礼物)，第10抽强制出紫
-    if (purpleFlag === 10 && result[9][0] === ITEM_TYPE.GIFT_BLUE) {
-    result[9][0] = ITEM_TYPE.GIFT_PURPLE; // 改为紫色礼物标识
-    const randomIndex = Math.floor(Math.random() * purpleGift.length);
-    
-    // 修复：确保不重复添加 .jpg 后缀
-    let giftName = purpleGift[randomIndex];
-    
-    // 如果 giftName 已经有 .jpg 后缀，就不再加
-    if (!giftName.toLowerCase().endsWith('.jpg') && !giftName.toLowerCase().endsWith('.jpeg')) {
-        giftName += '.jpg';
-    }
-    
-    result[9][1] = giftName;
-    }
+        // 4. 十连保底机制：如果前10抽都是普通礼物(蓝礼物且非紫礼物)，第10抽强制出紫
+        if (purpleFlag === 10 && result[9][0] === ITEM_TYPE.GIFT_BLUE) {
+            result[9][0] = ITEM_TYPE.GIFT_PURPLE; // 改为紫色礼物标识
+            const randomIndex = Math.floor(Math.random() * purpleGift.length);
+            
+            // 修复：确保不重复添加 .jpg 后缀
+            let giftName = purpleGift[randomIndex];
+            
+            // 如果 giftName 已经有 .jpg 后缀，就不再加
+            if (!giftName.toLowerCase().endsWith('.jpg') && !giftName.toLowerCase().endsWith('.jpeg')) {
+                giftName += '.jpg';
+            }
+            
+            result[9][1] = giftName;
+            hasGuaranteed = true; // 设置保底标志
+        }
 
         // 5. 拼接图片并返回结果
         const imageBase64 = await this.concatImages(result, poolName);
         return {
             imageBase64: imageBase64,
-            results: result
+            results: result,
+            hasGuaranteed: hasGuaranteed // 新增：返回保底标志
         };
     }
 
-    // 单次抽卡：完整复刻原 single_pull 函数逻辑
+    // 单次抽卡
     async singlePull(pool, poolName) {
         // --- 惰性初始化：确保角色文件映射已构建 ---
         if (this.characterFileMap.size === 0) {
@@ -170,33 +185,33 @@ export default class GachaCore {
         }
 
         // 1. 构建角色池
-        const upPool = pool[poolName]
-            ? pool[poolName].map(name => this.characterFileMap.get(name)).filter(Boolean)
+        const actualPoolName = pool[poolName] ? poolName : 'normal';
+        const upPool = pool[actualPoolName]
+            ? pool[actualPoolName].map(name => this.characterFileMap.get(name)).filter(Boolean)
             : [];
         const normalPool = pool.normal
             ? pool.normal.map(name => this.characterFileMap.get(name)).filter(Boolean)
             : [];
 
         // 2. 异步读取其他目录
-        // 【注意】需要先创建 resources/gift/blue/ 和 resources/gift/purple/ 目录
         const [blueGiftList, purpleGiftList, baseDecorationList] = await Promise.all([
-        this.fileLoader('gift/blue'),
-        this.fileLoader('gift/purple'),
-        this.fileLoader('decoration')
+            this.fileLoader('gift/blue'),
+            this.fileLoader('gift/purple'),
+            this.fileLoader('decoration')
         ]);
 
         // 3. 处理特殊卡池的额外装饰
         let decorationList = [...baseDecorationList];
-        if (!['normal', 'up', 'kuangdu', 'douhun'].includes(poolName)) {
-            const extraDecor = await this.fileLoader('decoration', poolName);
+        if (!['normal', 'kuangdu', 'douhun'].includes(actualPoolName)) {
+            const extraDecor = await this.fileLoader('decoration', actualPoolName);
             decorationList.push(...extraDecor);
         }
-        if (poolName === 'up') {
+        if (actualPoolName === 'saki2') {
             const saki2Decor = await this.fileLoader('decoration', 'saki2');
             decorationList.push(...saki2Decor);
         }
 
-        // ========== 【核心修改】严格按照官方概率的两阶段随机 ==========
+        // ========== 严格按照官方概率的两阶段随机 ==========
         const typeRoll = Math.random() * 100; // 第一阶段：决定大类
         let prop;
         let objInt;
@@ -205,13 +220,17 @@ export default class GachaCore {
         if (typeRoll < 5) {
             // 5% 角色
             objInt = ITEM_TYPE.CHARACTER;
-            // 角色选择逻辑：51%概率从UP池，49%概率从标配池
-            const objIntPerson = Math.floor(Math.random() * 100) + 1;
+            // 角色选择逻辑：如果up池存在且非空，51%概率从UP池，49%概率从标配池
             let rolePool;
-            if (objIntPerson <= 51 && upPool.length > 0) {
-                rolePool = upPool;
+            if (upPool.length > 0) {
+                const objIntPerson = Math.floor(Math.random() * 100) + 1;
+                if (objIntPerson <= 51) {
+                    rolePool = upPool;
+                } else {
+                    rolePool = normalPool;
+                }
             } else {
-                rolePool = normalPool;
+                rolePool = normalPool; // up池不存在时，全从normal池抽
             }
             prop = rolePool[Math.floor(Math.random() * rolePool.length)];
             
@@ -231,7 +250,7 @@ export default class GachaCore {
             } else {
                 // 6.25% 概率：紫色礼物 (占礼物部分的6.25%，总概率的5%)
                 objInt = ITEM_TYPE.GIFT_PURPLE;
-                prop = purpleGiftList[Math.floor(Math.random() * purpleGiftList.length)]; // 临时
+                prop = purpleGiftList[Math.floor(Math.random() * purpleGiftList.length)];
             }
         }
 
@@ -246,7 +265,7 @@ export default class GachaCore {
         return [objInt, prop];
     }
 
-    // 拼接图片：对应原 concat_images 函数
+    // 拼接图片
     async concatImages(imageResults, poolName) {
         const COL = 5;
         const ROW = 2;
@@ -268,10 +287,8 @@ export default class GachaCore {
                     // 装饰图片：需要尝试多个目录
                     possibleDirs = ['decoration'];
                     // 特殊卡池子目录逻辑
-                    if (poolName && poolName !== 'up') {
+                    if (poolName && poolName !== 'normal') {
                         possibleDirs.unshift(path.join('decoration', poolName));
-                    } else if (poolName === 'up') {
-                        possibleDirs.unshift(path.join('decoration', 'saki2'));
                     }
                 } else if (objInt === ITEM_TYPE.CHARACTER) {
                     possibleDirs = ['person'];
@@ -349,11 +366,9 @@ export default class GachaCore {
         return `base64://${base64Str}`;
     }
 
-    // 根据卡池名称获取ID：对应原 get_pool_id 函数
+    // 根据卡池名称获取ID
     getPoolId(name) {
         const map = {
-            'up': 'up',
-            '当前up池': 'up',
             '辉夜up池': 'huiye',
             '天麻up池1': 'saki1',
             '天麻up池2': 'saki2',
@@ -361,19 +376,20 @@ export default class GachaCore {
             '斗牌传说up池': 'douhun',
             '狂赌up池': 'kuangdu'
         };
-        // 处理包含关键词的情况（原逻辑）
+        // 处理包含关键词的情况
         if (name.includes('辉夜')) return 'huiye';
         if (name.includes('标配')) return 'normal';
         if (name.includes('斗牌')) return 'douhun';
         if (name.includes('狂赌')) return 'kuangdu';
+        if (name.includes('天麻') && name.includes('1')) return 'saki1';
+        if (name.includes('天麻') && name.includes('2')) return 'saki2';
 
         return map[name] || null;
     }
 
-    // 根据卡池ID获取名称：对应原 get_pool_name 函数
+    // 根据卡池ID获取名称
     getPoolName(id) {
         const map = {
-            'up': '当前up池',
             'huiye': '辉夜up池',
             'saki1': '天麻up池1',
             'saki2': '天麻up池2',
