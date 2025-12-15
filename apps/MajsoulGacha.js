@@ -24,6 +24,17 @@ export class MajsoulGacha extends plugin {
                     reg: '^#?(查看雀魂卡池|当前雀魂卡池)$',
                     fnc: 'viewPool'
                 },
+                // 抽卡开关功能
+                {
+                    reg: '^#?(开启|关闭)雀魂抽卡$',
+                    fnc: 'toggleGacha',
+                    permission: 'admin'
+                },
+                // 查询抽卡开关状态
+                {
+                    reg: '^#?雀魂抽卡状态$',
+                    fnc: 'checkGachaStatus'
+                },
                 // 设置用户今日剩余抽卡次数
                 {
                     reg: '^#?设置用户次数\\s+(\\d+)\\s+(\\d+)$',
@@ -43,11 +54,29 @@ export class MajsoulGacha extends plugin {
             ]
         });
         this.gachaCore = new GachaCore();
-        this.dailyLimiter = new DailyLimiter(15);
+        this.dailyLimiter = new DailyLimiter(5); // 修改为每日5次
     }
 
-    // 十连抽卡（保持不变）
+    // 十连抽卡（增加保底提示）
     async tenGacha(e) {
+        // 检查是否在群聊中
+        if (!e.group_id) {
+            await e.reply('雀魂抽卡功能仅限群聊使用');
+            return true;
+        }
+
+        // 检查抽卡开关状态
+        try {
+            const isEnabled = await this.gachaCore.getGachaStatus(e.group_id);
+            if (!isEnabled) {
+                await e.reply('本群雀魂抽卡功能已关闭，请联系管理员开启');
+                return true;
+            }
+        } catch (error) {
+            logger.error('[雀魂抽卡] 检查开关状态失败:', error);
+            // 出错时继续执行，避免影响正常使用
+        }
+
         try {
             const canGacha = await this.dailyLimiter.check(e.user_id);
             if (!canGacha) {
@@ -56,7 +85,7 @@ export class MajsoulGacha extends plugin {
                 return true;
             }
 
-            const { imageBase64, results } = await this.gachaCore.runGacha(e.group_id);
+            const { imageBase64, results, hasGuaranteed } = await this.gachaCore.runGacha(e.group_id);
             await this.dailyLimiter.increase(e.user_id);
 
             const currentCount = await this.dailyLimiter.getCount(e.user_id);
@@ -87,6 +116,11 @@ export class MajsoulGacha extends plugin {
             if (rareCount['紫色礼物'] > 0) summaryParts.push(`紫礼物x${rareCount['紫色礼物']}`);
             textSummary += summaryParts.join('， ');
 
+            // 添加保底提示
+            if (hasGuaranteed) {
+                textSummary += `\n✨ 触发十连保底！最后一抽升级为紫色礼物！`;
+            }
+
             textSummary += `\n📊 今日抽卡：${currentCount}/${this.dailyLimiter.limit}（剩余${remaining}次）`;
             textSummary += resetTimeInfo;
 
@@ -100,12 +134,79 @@ export class MajsoulGacha extends plugin {
 
         } catch (error) {
             logger.error('[雀魂抽卡] 抽卡失败:', error);
-            await e.reply('抽卡过程出现异常，请联系维护者。', true);
+            // 如果是开关关闭的错误，提示更友好的信息
+            if (error.message.includes('抽卡功能已关闭')) {
+                await e.reply('本群雀魂抽卡功能已关闭，请联系管理员开启');
+            } else {
+                await e.reply('抽卡过程出现异常，请联系维护者。', true);
+            }
         }
         return true;
     }
 
-    // 切换卡池（保持不变）
+    // 开关抽卡功能
+    async toggleGacha(e) {
+        const match = e.msg.match(/^#?(开启|关闭)雀魂抽卡$/);
+        if (!match || !e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+
+        const action = match[1];
+        const isEnable = action === '开启';
+        
+        try {
+            const success = await this.gachaCore.setGachaStatus(e.group_id, isEnable);
+            if (success) {
+                const statusText = isEnable ? '开启' : '关闭';
+                await e.reply(`已${statusText}本群雀魂抽卡功能`);
+                
+                // 如果是关闭操作，额外提示
+                if (!isEnable) {
+                    await e.reply('提示：关闭后，所有成员将无法使用雀魂抽卡功能');
+                }
+            } else {
+                await e.reply('操作失败，请重试或联系维护者');
+            }
+        } catch (error) {
+            logger.error('[雀魂抽卡] 切换开关失败:', error);
+            await e.reply('操作失败，系统异常');
+        }
+        return true;
+    }
+
+    // 查询抽卡开关状态
+    async checkGachaStatus(e) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+
+        try {
+            const isEnabled = await this.gachaCore.getGachaStatus(e.group_id);
+            const statusText = isEnabled ? '开启' : '关闭';
+            const statusIcon = isEnabled ? '✅' : '❌';
+            
+            const replyMsg = [
+                `群 ${e.group_id} 雀魂抽卡功能状态：`,
+                `${statusIcon} ${statusText}`,
+                '',
+                isEnabled 
+                    ? '✅ 成员可以使用 #雀魂十连 进行抽卡'
+                    : '❌ 抽卡功能已禁用，请联系管理员开启',
+                '',
+                `📊 每日抽卡次数限制：${this.dailyLimiter.limit}次`
+            ].join('\n');
+            
+            await e.reply(replyMsg);
+        } catch (error) {
+            logger.error('[雀魂抽卡] 查询状态失败:', error);
+            await e.reply('查询失败，系统异常');
+        }
+        return true;
+    }
+
+    // 切换卡池（更新：删除up池相关提示）
     async changePool(e) {
         const match = e.msg.match(/^#?切换雀魂卡池\s+(.+)$/);
         if (!match) {
@@ -116,7 +217,7 @@ export class MajsoulGacha extends plugin {
         const input = match[1];
         const poolId = this.gachaCore.getPoolId(input);
         if (!poolId) {
-            const supportedPools = "当前up池、辉夜up池、天麻up池1、天麻up池2、标配池、斗牌传说up池、狂赌up池";
+            const supportedPools = "辉夜大小姐想让我告白、Fate、咲-saki-1、咲-saki-2、斗牌传说、反叛的鲁路修、狂赌之渊、银魂、常驻池、限定、魔法少女伊莉雅、蔚蓝档案、偶像大师闪耀色彩";
             await e.reply(`没有找到该名称的卡池，当前支持的卡池有：${supportedPools}`);
             return true;
         }
@@ -152,11 +253,11 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看卡池（保持不变）
+    // 查看卡池
     async viewPool(e) {
         try {
             const groupPool = await this.gachaCore.groupPoolLoader();
-            let currentPool = 'up';
+            let currentPool = 'normal'; // 默认池改为normal
             for (const item of groupPool) {
                 if (item.gid === String(e.group_id)) {
                     currentPool = item.poolname;
@@ -172,7 +273,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查询抽卡次数（保持不变）
+    // 查询抽卡次数
     async checkLimit(e) {
         const match = e.msg.match(/^#?查询抽卡次数\s*(\d+)?$/);
         const targetUserId = match ? (match[1] || e.user_id) : e.user_id;
@@ -190,7 +291,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 修正：设置用户今日剩余抽卡次数
+    // 设置用户今日剩余抽卡次数
     async setUserCount(e) {
         const match = e.msg.match(/^#?设置用户次数\s+(\d+)\s+(\d+)$/);
         if (!match) {

@@ -60,7 +60,8 @@ export class MajsoulUser extends plugin {
             let message = '🔍 搜索结果：\n\n';
             for (let i = 0; i < players.length; i++) {
                 const player = players[i];
-                const playerLevel = new PlayerLevel(player.level.id, player.level.score);
+                // 假设 PlayerLevel 是一个命名导出，且构造函数接受 levelId 和 score
+                const playerLevel = new PlayerLevel(player.level.id, player.level.score); 
                 
                 message += `【${i + 1}】${player.nickname}\n`;
                 message += `   ID: ${player.id}\n`;
@@ -198,7 +199,7 @@ export class MajsoulUser extends plugin {
             }
             
             let message = '📋 您的雀魂绑定：\n\n';
-            const mainUid = await redis.get(`${this.redisPrefix}${qid}:main`) || bindings[0];
+            const mainUid = await this.getMainUid(qid); // 修正为调用新的 getMainUid
             
             for (let i = 0; i < bindings.length; i++) {
                 const uid = bindings[i];
@@ -220,6 +221,29 @@ export class MajsoulUser extends plugin {
             await e.reply('查看绑定信息时出现错误');
         }
         return true;
+    }
+    
+    // ========== 新增：获取主绑定 UID 方法 ==========
+    /**
+     * @description 获取用户的主绑定 UID，如果未设置主账号则返回第一个绑定
+     * @param {string} qid QQ号
+     * @returns {string|null} 主UID 或 null
+     */
+    async getMainUid(qid) {
+        try {
+            // 1. 尝试获取设置的主UID
+            let mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
+            
+            if (mainUid) return mainUid;
+            
+            // 2. 如果没有设置 main 键，尝试获取第一个绑定作为默认主账号
+            const bindings = await this.getUserBindings(qid);
+            return bindings.length > 0 ? bindings[0] : null;
+            
+        } catch (error) {
+            logger.error('[MajsoulUser] 获取主绑定 UID 失败:', error);
+            return null;
+        }
     }
     
     // ========== 数据库操作方法 ==========

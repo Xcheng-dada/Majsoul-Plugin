@@ -1,12 +1,18 @@
 {
-  "name": "majsoul-plugin",
-  "version": "0.0.1",
-  "description": "TRSS-Yunzai 雀魂插件",
+  "name": "Majsoul-Plugin",
+  "version": "0.0.3",
+  "description": "雀魂多功能插件（测试中）",
   "type": "module",
   "main": "index.js",
   "scripts": {},
+  "author": "Xcheng-dada",
   "dependencies": {
     "node-fetch": "^3.3.2",
     "sharp": "^0.33.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./utils/*": "./utils/*.js",
+    "./apps/*": "./apps/*.js"
   }
 }
