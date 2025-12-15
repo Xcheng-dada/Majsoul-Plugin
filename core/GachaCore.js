@@ -422,6 +422,7 @@ export default class GachaCore {
     // 根据卡池名称获取ID
     getPoolId(name) {
         const map = {
+<<<<<<< HEAD
             '辉夜大小姐想让我告白': 'huiye',
             '咲-saki-1': 'saki1',
             '咲-saki-2': 'saki2',
@@ -435,12 +436,21 @@ export default class GachaCore {
             '魔法少女伊莉雅': 'mofa',
             '蔚蓝档案': 'bluearchive',
             '偶像大师闪耀色彩': 'ouxiang'
+=======
+            '辉夜up池': 'huiye',
+            '天麻up池1': 'saki1',
+            '天麻up池2': 'saki2',
+            '标配池': 'normal',
+            '斗牌传说up池': 'douhun',
+            '狂赌up池': 'kuangdu'
+>>>>>>> fc20948ed7299fb49778b80a80fa2fcabe1893c3
         };
         // 处理包含关键词的情况
         if (name.includes('辉夜')) return 'huiye';
         if (name.includes('常驻')) return 'normal';
         if (name.includes('斗牌')) return 'douhun';
         if (name.includes('狂赌')) return 'kuangdu';
+<<<<<<< HEAD
         if (name.includes('saki') && name.includes('1')) return 'saki1';
         if (name.includes('saki') && name.includes('2')) return 'saki2';
         if (name.includes('鲁鲁修')) return 'luluxiu';
@@ -450,6 +460,10 @@ export default class GachaCore {
         if (name.includes('Fate')) return 'fate';
         if (name.includes('银魂')) return 'yinhun';
         if (name.includes('偶像')) return 'ouxiang'
+=======
+        if (name.includes('天麻') && name.includes('1')) return 'saki1';
+        if (name.includes('天麻') && name.includes('2')) return 'saki2';
+>>>>>>> fc20948ed7299fb49778b80a80fa2fcabe1893c3
 
         return map[name] || null;
     }
@@ -457,6 +471,7 @@ export default class GachaCore {
     // 根据卡池ID获取名称
     getPoolName(id) {
         const map = {
+<<<<<<< HEAD
             'huiye': '辉夜大小姐想让我告白',
             'saki1': '咲-saki-1',
             'saki2': '咲-saki-2',
@@ -470,6 +485,14 @@ export default class GachaCore {
             'mofa': '魔法少女伊莉雅',
             'bluearchive': '蔚蓝档案',
             'ouxiang': '偶像大师闪耀色彩'
+=======
+            'huiye': '辉夜up池',
+            'saki1': '天麻up池1',
+            'saki2': '天麻up池2',
+            'normal': '标配池',
+            'douhun': '斗牌传说up池',
+            'kuangdu': '狂赌up池'
+>>>>>>> fc20948ed7299fb49778b80a80fa2fcabe1893c3
         };
         return map[id] || '未知卡池';
     }

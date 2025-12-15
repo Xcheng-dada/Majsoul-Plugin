@@ -144,6 +144,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
+<<<<<<< HEAD
     // 开关抽卡功能
     async toggleGacha(e) {
         const match = e.msg.match(/^#?(开启|关闭)雀魂抽卡$/);
@@ -206,6 +207,8 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
+=======
+>>>>>>> fc20948ed7299fb49778b80a80fa2fcabe1893c3
     // 切换卡池（更新：删除up池相关提示）
     async changePool(e) {
         const match = e.msg.match(/^#?切换雀魂卡池\s+(.+)$/);
@@ -217,7 +220,11 @@ export class MajsoulGacha extends plugin {
         const input = match[1];
         const poolId = this.gachaCore.getPoolId(input);
         if (!poolId) {
+<<<<<<< HEAD
             const supportedPools = "辉夜大小姐想让我告白、Fate、咲-saki-1、咲-saki-2、斗牌传说、反叛的鲁路修、狂赌之渊、银魂、常驻池、限定、魔法少女伊莉雅、蔚蓝档案、偶像大师闪耀色彩";
+=======
+            const supportedPools = "辉夜up池、天麻up池1、天麻up池2、标配池、斗牌传说up池、狂赌up池";
+>>>>>>> fc20948ed7299fb49778b80a80fa2fcabe1893c3
             await e.reply(`没有找到该名称的卡池，当前支持的卡池有：${supportedPools}`);
             return true;
         }
