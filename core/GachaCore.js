@@ -434,7 +434,8 @@ export default class GachaCore {
             '限定': 'xianding',
             '魔法少女伊莉雅': 'mofa',
             '蔚蓝档案': 'bluearchive',
-            '偶像大师闪耀色彩': 'ouxiang'
+            '偶像大师闪耀色彩': 'ouxiang',
+            '刀剑神域': 'daojian'
         };
         // 处理包含关键词的情况
         if (name.includes('辉夜')) return 'huiye';
@@ -450,6 +451,7 @@ export default class GachaCore {
         if (name.includes('Fate')) return 'fate';
         if (name.includes('银魂')) return 'yinhun';
         if (name.includes('偶像')) return 'ouxiang'
+        if (name.includes('刀剑')) return 'daojian'
 
         return map[name] || null;
     }
@@ -469,7 +471,8 @@ export default class GachaCore {
             'xianding': '限定',
             'mofa': '魔法少女伊莉雅',
             'bluearchive': '蔚蓝档案',
-            'ouxiang': '偶像大师闪耀色彩'
+            'ouxiang': '偶像大师闪耀色彩',
+            'daojian': '刀剑神域'
         };
         return map[id] || '未知卡池';
     }

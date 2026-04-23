@@ -1,53 +1,10 @@
-<p align="center">
-  <a href="https://github.com/Xcheng-dada/Majsoul-Plugin/"><img src="https://wx2.sinaimg.cn/mw690/006wqMDrly1i80d2ugs6sj30u00u00wd.jpg" width="256" height="256" alt="Majsoul-Plugin"></a>
-</p>
-<h1 align = "center">Majsoul-Plugin</h1>
-<h4 align = "center">✨ 基于<a href="https://github.com/TimeRainStarSky/Yunzai" target="_blank">TRSS-Yunzai</a>的雀魂麻将多功能插件✨ </h4>
-<div align = "center">
-        <a href="#前言插件简介">说明文档</a> &nbsp; · &nbsp;
-        <a href="#指令列表">指令列表</a> &nbsp; · &nbsp;
-        <a href="#常见问题-qa">常见问题</a>
-</div>
-<h4 align = "center"></h4>
-<div align="center">
-  <a href="https://nodejs.org/">
-    <img src="https://img.shields.io/badge/node.js-18%2B-green?logo=node.js&logoColor=white" alt="Node.js">
-  </a>
-  <a href="https://github.com/TimeRainStarSky/TRSS_Yunzai">
-    <img src="https://img.shields.io/badge/TRSS--Yunzai-Plugin-success" alt="TRSS-Yunzai">
-  </a>
-  <a href="./LICENSE">
-    <img src="https://img.shields.io/badge/license-AGPL--3.0-blueviolet" alt="LICENSE">
-  </a>
-</div>
-
-<a id="前言插件简介"></a>
-## **丨前言&插件简介**
-一个雀魂麻将多功能插件，插件不包括TRSS-Yunzai，应该配合[**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai)使用：
-
-项目地址：https://github.com/Xcheng-dada/Majsoul-Plugin
-
-> [!TIP]
-> 本插件部分功能基于 [Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) 移植至TRSS-Yunzai
-
-<a id="安装方法"></a>
-## 丨安装方法
-1.  在TRSS-Yunzai目录下使用以下命令拉取本项目
-    ```
-    git clone https://github.com/Xcheng-dada/Majsoul-Plugin.git ./plugins/Majsoul-Plugin
-    ```
-2.  然后使用如下命令安装依赖
-    ```
-    cd ./plugins/Majsoul-Plugin
-    pnpm install
-    ```
 3.  重启 TRSS-Yunzai，进入机器人在的群聊，即可正常使用本插件。
 
 <a id="已实现的功能"></a>
 ## 丨已实现的功能
 ### 丨雀魂抽卡模块 (功能完整)
 *   **十连抽卡**：模拟雀魂抽卡，自动合成并发送十连结果图片。
-*   **多卡池系统**：支持多个联动UP卡池（包括经典联动与热门新联动），可随时切换。
+*   **多卡池系统**：支持多个UP卡池（包括经典卡池与新增卡池），可随时切换。
 *   **每日限制**：每个用户每日默认可进行 **5** 次十连抽卡。
 *   **群组独立配置**：每个QQ群可以独立设置和切换卡池，互不影响。
 *   **管理员工具**：管理员可为特定用户**设定**抽卡机会、**查询**状态、**重置**抽卡次数。
@@ -65,7 +22,7 @@
 | 指令 | 说明 | 示例 |
 | :--- | :--- | :--- |
 | `#雀魂十连` | 进行十连抽卡。 | `#雀魂十连` |
-| `#切换雀魂卡池 [卡池名]` | 切换本群的抽卡卡池。 | `#切换雀魂卡池 辉夜大小姐想让我告白` |
+| `#切换雀魂卡池 [卡池名]` | 切换本群的抽卡卡池。 | `#切换雀魂卡池 刀剑神域` |
 | `#查看雀魂卡池` | 查看本群当前使用的卡池。 | `#查看雀魂卡池` |
 | `#查询抽卡次数 [QQ号]` | 查询自己或他人的今日抽卡情况。 | `#查询抽卡次数 123456` |
 | `#雀魂搜索 [玩家名]` | 搜索雀魂玩家信息（昵称、ID、段位）。 | `#雀魂搜索 宫永咲` |
@@ -82,15 +39,13 @@
 | `#重置用户次数 [QQ号]` | 重置**指定用户**的今日抽卡记录。 | `#重置用户次数 123456` |
 
 ### 支持的卡池（持续更新中）
-#### 经典联动卡池
+#### 经典卡池
 -   常驻池
 -   辉夜大小姐想让我告白
 -   咲-Saki-1
 -   咲-Saki-2
 -   斗牌传说
 -   狂赌之渊
-
-#### 新增热门联动卡池
 -   限定池
 -   反叛的鲁路修
 -   Fate系列
@@ -99,16 +54,21 @@
 -   蔚蓝档案
 -   偶像大师闪耀色彩
 
+#### 刀剑神域卡池
+-   刀剑神域
+
 > [!NOTE]
 > **关于限定装扮的说明**：由于限定装扮数量庞大、复刻时间不固定，且部分限定装扮为活动获取而非抽卡获取，因此目前暂不考虑单独增加限定装扮卡池。限定池仅包含可通过抽卡获取的限定雀士。
 
 <a id="新增雀士"></a>
 ## 丨新增雀士
-### 常驻池新增雀士
-- **金乌** - 新增到常驻卡池
-- **筱原米亚** - 新增到常驻卡池
+### 刀剑神域新增雀士
+- **桐人** - 刀剑神域限定雀士
+- **莉法** - 刀剑神域限定雀士
+- **亚丝娜** - 刀剑神域限定雀士
+- **诗乃** - 刀剑神域限定雀士
 
-这些新雀士已加入标配池（常驻池）的抽卡范围。
+这些雀士仅在「刀剑神域」卡池中可抽取获得。
 
 <a id="段位系统说明"></a>
 ## 丨段位系统说明
@@ -155,6 +115,10 @@
 
 <a id="更新日志"></a>
 ## 丨更新日志
+### v0.0.6 更新
+- **新增雀士**：新增桐人、莉法、亚丝娜、诗乃四位刀剑神域雀士
+- **新增卡池**：新增「刀剑神域」卡池
+
 ### v0.0.5 更新
 - **新增2位雀士**：新增金乌和筱原米亚两位雀士
 
