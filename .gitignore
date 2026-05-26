@@ -48,3 +48,6 @@ build/
 *.cache
 *.pid
 *.seed
+
+# 推送脚本
+push-update.ps1
