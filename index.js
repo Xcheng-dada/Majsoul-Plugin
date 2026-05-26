@@ -219,50 +219,86 @@ export class majsoul extends plugin {
       await this.majsoulSubscribe.init?.();
       console.log('[Majsoul-Plugin] 对局订阅模块初始化完成');
       
+      // 启动定时任务
+      this._startSchedule();
+      
     } catch (error) {
       console.error('[Majsoul-Plugin] 模块初始化失败:', error);
     }
   }
-
-  // 任务初始化 - 启动定时任务
-  async task() {
-    // 确保定时任务只初始化一次
+  
+  // 启动定时任务
+  _startSchedule() {
+    // 获取 Bot 实例
+    let botInstance = null;
+    if (typeof global.Bot !== 'undefined') {
+      botInstance = global.Bot;
+    } else if (this.bot) {
+      botInstance = this.bot;
+    }
+    
+    // 初始化 scheduleManager
     if (!scheduleManager) {
-      console.log('[Majsoul-Plugin] 初始化对局订阅定时任务...');
-      
-      try {
-        scheduleManager = new MajsoulSchedule();
-        
-        // 获取 Bot 实例
-        let botInstance = null;
-        
-        // 尝试不同的方式获取 Bot 实例
-        if (typeof Bot !== 'undefined') {
-          botInstance = Bot;
-          console.debug('[Majsoul-Plugin] 从全局 Bot 对象获取实例');
-        } else if (typeof global.Bot !== 'undefined') {
-          botInstance = global.Bot;
-          console.debug('[Majsoul-Plugin] 从 global.Bot 获取实例');
-        } else if (this.bot) {
-          botInstance = this.bot;
-          console.debug('[Majsoul-Plugin] 从插件实例获取 Bot 实例');
-        }
-        
-        if (botInstance) {
-          scheduleManager.setBot(botInstance);
-          scheduleManager.start();
-          console.log('[Majsoul-Plugin] 定时任务启动成功');
-        } else {
-          console.warn('[Majsoul-Plugin] 无法获取 Bot 实例，定时任务将无法发送消息');
-          // 仍然启动定时任务，但只能记录日志
-          scheduleManager.start();
-        }
-        
-      } catch (error) {
-        console.error('[Majsoul-Plugin] 定时任务初始化失败:', error);
-        scheduleManager = null;
+      scheduleManager = new MajsoulSchedule();
+      if (botInstance) {
+        scheduleManager.setBot(botInstance);
       }
     }
+    
+    // 如果定时任务已在运行，不再重复启动
+    if (scheduleManager.isRunning) {
+      console.log('[Majsoul-Plugin] 定时任务已在运行中');
+      return;
+    }
+    
+    // 使用 setInterval 实现定时检查
+    // 四麻：每3分钟
+    const interval4p = setInterval(async () => {
+      try {
+        console.log('[Majsoul-Plugin] 开始四麻定时检查...');
+        
+        // 确保有 Bot 实例
+        if (!scheduleManager.bot && typeof global.Bot !== 'undefined') {
+          scheduleManager.setBot(global.Bot);
+        }
+        
+        await scheduleManager.performCheck(4);
+        console.log('[Majsoul-Plugin] 四麻定时检查完成');
+      } catch (error) {
+        console.error('[Majsoul-Plugin] 四麻定时检查失败:', error);
+      }
+    }, 3 * 60 * 1000);
+    
+    // 三麻：每5分钟
+    const interval3p = setInterval(async () => {
+      try {
+        console.log('[Majsoul-Plugin] 开始三麻定时检查...');
+        
+        // 确保有 Bot 实例
+        if (!scheduleManager.bot && typeof global.Bot !== 'undefined') {
+          scheduleManager.setBot(global.Bot);
+        }
+        
+        await scheduleManager.performCheck(3);
+        console.log('[Majsoul-Plugin] 三麻定时检查完成');
+      } catch (error) {
+        console.error('[Majsoul-Plugin] 三麻定时检查失败:', error);
+      }
+    }, 5 * 60 * 1000);
+    
+    // 保存定时器引用用于停止
+    scheduleManager.interval4p = interval4p;
+    scheduleManager.interval3p = interval3p;
+    scheduleManager.isRunning = true;
+    
+    console.log('[Majsoul-Plugin] 定时任务启动成功（四麻3分钟/三麻5分钟）');
+    
+    // 立即执行一次检查
+    setTimeout(async () => {
+      console.log('[Majsoul-Plugin] 执行初始检查...');
+      await scheduleManager.performCheck(4);
+      await scheduleManager.performCheck(3);
+    }, 5000);
   }
 
   // 插件卸载时的清理
@@ -272,7 +308,17 @@ export class majsoul extends plugin {
     // 停止定时任务
     if (scheduleManager) {
       try {
-        scheduleManager.stop();
+        // 清除 setInterval 定时器
+        if (scheduleManager.interval4p) {
+          clearInterval(scheduleManager.interval4p);
+        }
+        if (scheduleManager.interval3p) {
+          clearInterval(scheduleManager.interval3p);
+        }
+        // 调用 scheduleManager 的 stop 方法
+        if (typeof scheduleManager.stop === 'function') {
+          scheduleManager.stop();
+        }
         console.log('[Majsoul-Plugin] 定时任务已停止');
       } catch (error) {
         console.error('[Majsoul-Plugin] 停止定时任务时出错:', error);

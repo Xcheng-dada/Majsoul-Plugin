@@ -3,6 +3,7 @@
 // 段位常量
 const PLAYER_RANKS = "初士杰豪圣魂";
 const PLAYER_RANKS_DETAIL = ["初心", "雀士", "雀杰", "雀豪", "雀圣", "魂天"];
+const PLAYER_RANKS_SHORT = ["初", "士", "杰", "豪", "圣", "魂"];
 const LEVEL_KONTEN = 7; // 魂天
 const LEVEL_MAX_POINT_KONTEN = 2000;
 
@@ -11,6 +12,115 @@ const LEVEL_MAX_POINTS = [
     20, 80, 200, 600, 800, 1000, 1200, 1400, 2000,
     2800, 3200, 3600, 4000, 6000, 9000
 ];
+
+// 房间等级映射（四麻）
+const ROOM_LEVEL_MAP_4P = {
+    8: "金之间 四人东",
+    9: "金之间 四人南",
+    11: "玉之间 四人东",
+    12: "玉之间 四人南",
+    15: "王座之间 四人东",
+    16: "王座之间 四人南"
+};
+
+// 房间等级映射（三麻）
+const ROOM_LEVEL_MAP_3P = {
+    21: "金之间 三人东",
+    22: "金之间 三人南",
+    23: "玉之间 三人东",
+    24: "玉之间 三人南",
+    25: "王座之间 三人东",
+    26: "王座之间 三人南"
+};
+
+// 房间等级名称映射（简化版）
+const ROOM_LEVEL_NAMES = {
+    8: "金东", 9: "金南",
+    11: "玉东", 12: "玉南",
+    15: "王座东", 16: "王座南",
+    21: "三金东", 22: "三金南",
+    23: "三玉东", 24: "三玉南",
+    25: "三王座东", 26: "三王座南"
+};
+
+/**
+ * 解析段位ID
+ * @param {number} levelId - 段位ID
+ * @returns {Object} - 段位信息对象
+ */
+function parseLevelId(levelId) {
+    const realId = levelId % 10000;
+    const majorRank = Math.floor(realId / 100);
+    const minorRank = realId % 100;
+    const playerNum = Math.floor(levelId / 10000);
+    
+    return {
+        realId,
+        majorRank,
+        minorRank,
+        playerNum,
+        isKonten: majorRank >= LEVEL_KONTEN - 1
+    };
+}
+
+/**
+ * 获取段位名称
+ * @param {number} majorRank - 主段位
+ * @param {number} minorRank - 子段位
+ * @param {boolean} isKonten - 是否魂天
+ * @returns {string} - 段位名称
+ */
+function getRankName(majorRank, minorRank, isKonten) {
+    const index = isKonten ? LEVEL_KONTEN - 2 : majorRank - 1;
+    const baseName = PLAYER_RANKS_DETAIL[index] || '未知';
+    
+    if (isKonten) {
+        if (minorRank === 20) return baseName; // 魂天20星显示为魂天
+        return `${baseName} ${minorRank}星`;
+    }
+    
+    if (minorRank === 1) return `${baseName}一`;
+    if (minorRank === 2) return `${baseName}二`;
+    if (minorRank === 3) return `${baseName}三`;
+    
+    return `${baseName}${minorRank}`;
+}
+
+/**
+ * 获取房间名称
+ * @param {number} modeId - 模式ID
+ * @returns {string} - 房间名称
+ */
+function getRoomName(modeId) {
+    return ROOM_LEVEL_MAP_4P[modeId] || ROOM_LEVEL_MAP_3P[modeId] || `未知房间(${modeId})`;
+}
+
+/**
+ * 获取简化房间名称
+ * @param {number} modeId - 模式ID
+ * @returns {string} - 简化房间名称
+ */
+function getRoomShortName(modeId) {
+    return ROOM_LEVEL_NAMES[modeId] || `${modeId}`;
+}
+
+/**
+ * 判断是否为三麻模式
+ * @param {number} modeId - 模式ID
+ * @returns {boolean} - 是否三麻
+ */
+function isThreePlayerMode(modeId) {
+    return modeId >= 20 && modeId <= 26;
+}
+
+/**
+ * 判断是否为四麻模式
+ * @param {number} modeId - 模式ID
+ * @returns {boolean} - 是否四麻
+ */
+function isFourPlayerMode(modeId) {
+    return (modeId >= 8 && modeId <= 16) && modeId !== 10 && modeId !== 13 && modeId !== 14;
+}
 
 export default class PlayerLevel {
     constructor(levelId, score = 0) {
@@ -219,4 +329,45 @@ export default class PlayerLevel {
         }
         return false;
     }
+    
+    // 获取简化的段位标签（如"雀士1"）
+    getShortTag() {
+        const index = this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1;
+        const shortName = PLAYER_RANKS_SHORT[index] || '?';
+        return `${shortName}${this._minorRank}`;
+    }
+    
+    // 获取完整的段位信息对象
+    toObject() {
+        return {
+            id: this.id,
+            realId: this.realId,
+            score: this.score,
+            majorRank: this._majorRank,
+            minorRank: this._minorRank,
+            isKonten: this.isKonten(),
+            tag: this.getTag(),
+            fullTag: this.full_tag,
+            shortTag: this.getShortTag(),
+            maxPoint: this.getMaxPoint(),
+            adjustedScore: this.real_score,
+            displayScore: this.real_display_score,
+            levelTagWithScore: this.real_level_tag_with_score
+        };
+    }
 }
+
+// 导出辅助函数
+export {
+    parseLevelId,
+    getRankName,
+    getRoomName,
+    getRoomShortName,
+    isThreePlayerMode,
+    isFourPlayerMode,
+    ROOM_LEVEL_MAP_4P,
+    ROOM_LEVEL_MAP_3P,
+    ROOM_LEVEL_NAMES,
+    PLAYER_RANKS_DETAIL,
+    PLAYER_RANKS
+};
