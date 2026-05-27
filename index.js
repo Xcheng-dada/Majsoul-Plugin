@@ -53,6 +53,7 @@ try {
 import { MajsoulGacha } from './apps/MajsoulGacha.js';
 import { MajsoulUser } from './apps/MajsoulUser.js';
 import { MajsoulSubscribe } from './apps/MajsoulSubscribe.js';
+import { MajsoulRecords } from './apps/MajsoulRecords.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 
 let scheduleManager = null;
@@ -177,29 +178,52 @@ export class majsoul extends plugin {
           reg: '^#三麻订阅状态$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
+        },
+        
+        // 对局查询相关指令
+        {
+          reg: '^#?(雀魂对局|雀魂牌谱|雀魂最近对局)\\s+(.+)$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
+        },
+        {
+          reg: '^#?四麻对局\\s+(.+)$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
+        },
+        {
+          reg: '^#?三麻对局\\s+(.+)$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
         }
       ]
     });
     
     // 现在可以安全地初始化各个功能模块
-    this.majsoulGacha = new MajsoulGacha();
-    this.majsoulUser = new MajsoulUser();
-    this.majsoulSubscribe = new MajsoulSubscribe();
+    this._gachaModule = new MajsoulGacha();
+    this._userModule = new MajsoulUser();
+    this._subscribeModule = new MajsoulSubscribe();
+    this._recordsModule = new MajsoulRecords();
   }
   
   // 指令路由 - 抽卡相关
   async majsoulGacha(e) {
-    return await this.majsoulGacha.handle(e);
+    return await this._gachaModule.handle(e);
   }
   
   // 指令路由 - 用户管理相关
   async majsoulUser(e) {
-    return await this.majsoulUser.handle(e);
+    return await this._userModule.handle(e);
   }
   
   // 指令路由 - 对局订阅相关
   async majsoulSubscribe(e) {
-    return await this.majsoulSubscribe.handle(e);
+    return await this._subscribeModule.handle(e);
+  }
+  
+  // 指令路由 - 对局查询相关
+  async majsoulRecords(e) {
+    return await this._recordsModule.handle(e);
   }
 
   // 插件加载时的初始化
@@ -208,15 +232,15 @@ export class majsoul extends plugin {
     
     try {
       // 初始化抽卡模块
-      await this.majsoulGacha.init?.();
+      await this._gachaModule.init?.();
       console.log('[Majsoul-Plugin] 抽卡模块初始化完成');
       
       // 初始化用户管理模块
-      await this.majsoulUser.init?.();
+      await this._userModule.init?.();
       console.log('[Majsoul-Plugin] 用户管理模块初始化完成');
       
       // 初始化订阅模块
-      await this.majsoulSubscribe.init?.();
+      await this._subscribeModule.init?.();
       console.log('[Majsoul-Plugin] 对局订阅模块初始化完成');
       
       // 启动定时任务
@@ -328,9 +352,9 @@ export class majsoul extends plugin {
     
     // 清理各个模块
     try {
-      await this.majsoulGacha.uninstall?.();
-      await this.majsoulUser.uninstall?.();
-      await this.majsoulSubscribe.uninstall?.();
+      await this._gachaModule.uninstall?.();
+      await this._userModule.uninstall?.();
+      await this._subscribeModule.uninstall?.();
       console.log('[Majsoul-Plugin] 各模块已清理');
     } catch (error) {
       console.error('[Majsoul-Plugin] 模块清理时出错:', error);
@@ -355,4 +379,4 @@ export class majsoul extends plugin {
 }
 
 // 保持原有的导出，确保向后兼容
-export { MajsoulGacha, MajsoulUser, MajsoulSubscribe };
+export { MajsoulGacha, MajsoulUser, MajsoulSubscribe, MajsoulRecords };

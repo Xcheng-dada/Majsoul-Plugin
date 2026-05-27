@@ -534,9 +534,13 @@ export default class MajsoulApi {
      * 切换到下一个API节点
      */
     _switchEndpoint() {
-        const newHost = this.hostProber.selectNextHost();
-        this.baseUrl = `https://${newHost}/api/v2`;
-        this.logger.info(`[MajsoulApi] 切换到API节点: ${newHost}`);
+        const success = this.hostProber.selectNextHost();
+        if (success) {
+            this.baseUrl = `https://${this.hostProber.currentHost}/api/v2`;
+            this.logger.info(`[MajsoulApi] 切换到API节点: ${this.hostProber.currentHost}`);
+        } else {
+            this.logger.warn('[MajsoulApi] 无法切换到备用节点');
+        }
     }
 
     /**
@@ -830,6 +834,163 @@ export default class MajsoulApi {
         }
 
         return null;
+    }
+
+    /**
+     * 获取玩家扩展统计信息
+     * @param {number} playerId - 玩家ID
+     * @param {number} [mode=4] - 模式（3=三麻，4=四麻）
+     * @returns {Promise<Object>} - 扩展统计信息
+     */
+    async getPlayerExtendedStats(playerId, mode = 4) {
+        await this.rateLimiter.acquire();
+        const maxRetries = this.apiHosts.length;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const modeStr = mode.toString();
+                const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
+                const currentTimestamp = Date.now();
+
+                const url = `${this.baseUrl}/pl${modeStr}/player_extended_stats/${playerId}/${this.startDateTimestamp}/${currentTimestamp}?mode=${modeParams}`;
+
+                this.logger.debug(`[MajsoulApi] 获取玩家扩展统计: ${url}`);
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
+                        'Accept': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                return await response.json();
+
+            } catch (error) {
+                this.logger.warn(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+
+                if (attempt < maxRetries - 1) {
+                    this._switchEndpoint();
+                } else {
+                    this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
+                    throw new Error(handleApiError(error));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 获取玩家最近对局记录（可指定数量）
+     * @param {number} playerId - 玩家ID
+     * @param {number} [mode=4] - 模式（3=三麻，4=四麻）
+     * @param {number} [limit=10] - 返回数量限制
+     * @returns {Promise<Object[]>} - 对局记录数组
+     */
+    async getRecentRecords(playerId, mode = 4, limit = 10) {
+        await this.rateLimiter.acquire();
+        const maxRetries = this.apiHosts.length;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const modeStr = mode.toString();
+                const modeName = modeStr === '4' ? '四麻' : '三麻';
+
+                this.logger.info(`[MajsoulApi] 获取${modeName}玩家最近对局，玩家ID: ${playerId}，数量: ${limit}`);
+
+                const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
+                const currentTimestamp = Date.now();
+
+                // 步骤1: 获取统计信息得到count
+                const statsUrl = `${this.baseUrl}/pl${modeStr}/player_stats/${playerId}/${this.startDateTimestamp}/${currentTimestamp}?mode=${modeParams}`;
+                this.logger.debug(`[MajsoulApi] 获取统计信息: ${statsUrl}`);
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+                const statsResponse = await fetch(statsUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
+                        'Accept': 'application/json'
+                    },
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!statsResponse.ok) {
+                    throw new Error(`获取统计信息失败: HTTP ${statsResponse.status}`);
+                }
+
+                const statsData = await statsResponse.json();
+                const count = statsData.count || 'all';
+
+                this.logger.debug(`[MajsoulApi] 统计信息count值: ${count}`);
+
+                // 步骤2: 获取对局记录（按指定数量限制）
+                const recordsUrl = `${this.baseUrl}/pl${modeStr}/player_records/${playerId}/${currentTimestamp}/${this.startDateTimestamp}?limit=${limit}&mode=${modeParams}&descending=true&tag=${count}`;
+                this.logger.debug(`[MajsoulApi] 获取对局记录: ${recordsUrl}`);
+
+                const recordsController = new AbortController();
+                const recordsTimeoutId = setTimeout(() => recordsController.abort(), this.timeout);
+
+                const recordsResponse = await fetch(recordsUrl, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
+                        'Accept': 'application/json'
+                    },
+                    signal: recordsController.signal
+                });
+
+                clearTimeout(recordsTimeoutId);
+
+                if (!recordsResponse.ok) {
+                    throw new Error(`获取对局记录失败: HTTP ${recordsResponse.status}`);
+                }
+
+                const recordsData = await recordsResponse.json();
+
+                // 确保返回的是数组
+                let records = [];
+                if (Array.isArray(recordsData)) {
+                    records = recordsData;
+                } else if (recordsData.records && Array.isArray(recordsData.records)) {
+                    records = recordsData.records;
+                } else if (recordsData.games && Array.isArray(recordsData.games)) {
+                    records = recordsData.games;
+                } else if (recordsData.matches && Array.isArray(recordsData.matches)) {
+                    records = recordsData.matches;
+                } else if (recordsData) {
+                    records = [recordsData];
+                }
+
+                this.logger.info(`[MajsoulApi] 成功获取玩家 ${playerId} 的${modeName}最近对局，记录数: ${records.length}`);
+
+                return records;
+
+            } catch (error) {
+                this.logger.warn(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+
+                if (attempt < maxRetries - 1) {
+                    this._switchEndpoint();
+                } else {
+                    this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
+                    throw new Error(handleApiError(error));
+                }
+            }
+        }
+
+        return [];
     }
 }
 
