@@ -31,6 +31,25 @@ async function getLzBar(title, v1, v2, v3 = null) {
   drawRoundRect(ctx, x2 + 10, y1, x3 - (x2 + 10), height, 5, c2)
   drawRoundRect(ctx, x3 + 10, y1, x4 - (x3 + 10), height, 5, c3)
   
+  // 添加百分比标注
+  ctx.font = 'bold 14px "Microsoft YaHei", sans-serif'
+  ctx.fillStyle = '#ffffff'
+  
+  // 立直百分比
+  const text1 = `${(v1 * 100).toFixed(1)}%`
+  const text1Width = ctx.measureText(text1).width
+  ctx.fillText(text1, (start + x2) / 2 - text1Width / 2, y1 + 22)
+  
+  // 副露百分比
+  const text2 = `${(v2 * 100).toFixed(1)}%`
+  const text2Width = ctx.measureText(text2).width
+  ctx.fillText(text2, (x2 + 10 + x3) / 2 - text2Width / 2, y1 + 22)
+  
+  // 默听百分比
+  const text3 = `${(v3 * 100).toFixed(1)}%`
+  const text3Width = ctx.measureText(text3).width
+  ctx.fillText(text3, (x3 + 10 + x4) / 2 - text3Width / 2, y1 + 22)
+  
   return canvas
 }
 
@@ -271,7 +290,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   ctx.drawImage(detailCanvas, 0, 1188)
   ctx.drawImage(mid, 0, 1161)
   drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', 500, 2151 + 30, 24, '#484f58', 'center')
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
 
   const rank4Icon = await getRankIcon(level4, data4, extended4, "4")
   const rank3Icon = await getRankIcon(level3, data3, extended3, "3")
