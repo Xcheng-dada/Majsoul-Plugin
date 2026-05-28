@@ -54,6 +54,7 @@ import { MajsoulGacha } from './apps/MajsoulGacha.js';
 import { MajsoulUser } from './apps/MajsoulUser.js';
 import { MajsoulSubscribe } from './apps/MajsoulSubscribe.js';
 import { MajsoulRecords } from './apps/MajsoulRecords.js';
+import { MajsoulInfo } from './apps/MajsoulInfo.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 
 let scheduleManager = null;
@@ -69,120 +70,136 @@ export class majsoul extends plugin {
       rule: [
         // 抽卡相关指令
         {
-          reg: '^#雀魂十连$',
+          reg: '^#?雀魂十连$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
         {
-          reg: '^#切换雀魂卡池\\s+(.+)$',
+          reg: '^#?切换雀魂卡池\\s+(.+)$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
         {
-          reg: '^#查看雀魂卡池$',
+          reg: '^#?查看雀魂卡池$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
         {
-          reg: '^#查询抽卡次数\\s*(\\d*)$',
+          reg: '^#?查询抽卡次数\\s*(\\d*)$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
         {
-          reg: '^#设置用户次数\\s+(\\d+)\\s+(\\d+)$',
+          reg: '^#?设置用户次数\\s+(\\d+)\\s+(\\d+)$',
           fnc: 'majsoulGacha',
           permission: 'master'
         },
         {
-          reg: '^#重置用户次数\\s+(\\d+)$',
+          reg: '^#?重置用户次数\\s+(\\d+)$',
           fnc: 'majsoulGacha',
           permission: 'master'
         },
         
         // 用户管理相关指令
         {
-          reg: '^#雀魂搜索\\s+(.+)$',
+          reg: '^#?雀魂搜索\\s+(.+)$',
           fnc: 'majsoulUser',
           permission: 'group'
         },
         {
-          reg: '^#雀魂绑定\\s+(\\d+)$',
+          reg: '^#?雀魂绑定\\s+(\\d+)$',
           fnc: 'majsoulUser',
           permission: 'group'
         },
         {
-          reg: '^#雀魂切换\\s+(\\d+)$',
+          reg: '^#?雀魂切换\\s+(\\d+)$',
           fnc: 'majsoulUser',
           permission: 'group'
         },
         {
-          reg: '^#雀魂解绑(?:\\s+(\\d+))?$',
+          reg: '^#?雀魂解绑(?:\\s+(\\d+))?$',
           fnc: 'majsoulUser',
           permission: 'group'
         },
         {
-          reg: '^#雀魂我的绑定$',
+          reg: '^#?雀魂我的绑定$',
           fnc: 'majsoulUser',
           permission: 'group'
         },
         
         // 对局订阅相关指令 (四麻)
         {
-          reg: '^#(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#(关闭|取消)(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?(关闭|取消)(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#开启(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?开启(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#删除(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?删除(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#(雀魂|四麻)订阅状态$',
+          reg: '^#?(雀魂|四麻)订阅状态$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         
         // 对局订阅相关指令 (三麻)
         {
-          reg: '^#三麻订阅\\s+(.+)$',
+          reg: '^#?三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#(关闭|取消)三麻订阅\\s+(.+)$',
+          reg: '^#?(关闭|取消)三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#开启三麻订阅\\s+(.+)$',
+          reg: '^#?开启三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#删除三麻订阅\\s+(.+)$',
+          reg: '^#?删除三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         {
-          reg: '^#三麻订阅状态$',
+          reg: '^#?三麻订阅状态$',
           fnc: 'majsoulSubscribe',
           permission: 'group'
         },
         
-        // 对局查询相关指令
+        // 对局查询相关指令（不带昵称，使用绑定的UID）
         {
-          reg: '^#?(雀魂对局|雀魂牌谱|雀魂最近对局)\\s+(.+)$',
+          reg: '^#?雀魂对局$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
+        },
+        {
+          reg: '^#?四麻对局$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
+        },
+        {
+          reg: '^#?三麻对局$',
+          fnc: 'majsoulRecords',
+          permission: 'group'
+        },
+        // 对局查询相关指令（带昵称）
+        {
+          reg: '^#?雀魂对局\\s+(.+)$',
           fnc: 'majsoulRecords',
           permission: 'group'
         },
@@ -195,6 +212,49 @@ export class majsoul extends plugin {
           reg: '^#?三麻对局\\s+(.+)$',
           fnc: 'majsoulRecords',
           permission: 'group'
+        },
+        
+        // 玩家信息查询相关指令（四麻）
+        {
+          reg: '^#?雀魂战绩$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?雀魂战绩\\s+(.+)$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?雀魂查询$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?雀魂查询\\s+(.+)$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?查询四麻$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?查询四麻\\s+(.+)$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        // 玩家信息查询相关指令（三麻）
+        {
+          reg: '^#?查询三麻$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
+        },
+        {
+          reg: '^#?查询三麻\\s+(.+)$',
+          fnc: 'majsoulInfo',
+          permission: 'group'
         }
       ]
     });
@@ -204,6 +264,7 @@ export class majsoul extends plugin {
     this._userModule = new MajsoulUser();
     this._subscribeModule = new MajsoulSubscribe();
     this._recordsModule = new MajsoulRecords();
+    this._infoModule = new MajsoulInfo();
   }
   
   // 指令路由 - 抽卡相关
@@ -224,6 +285,11 @@ export class majsoul extends plugin {
   // 指令路由 - 对局查询相关
   async majsoulRecords(e) {
     return await this._recordsModule.handle(e);
+  }
+  
+  // 指令路由 - 玩家信息查询相关
+  async majsoulInfo(e) {
+    return await this._infoModule.handle(e);
   }
 
   // 插件加载时的初始化

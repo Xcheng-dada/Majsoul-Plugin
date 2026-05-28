@@ -108,7 +108,7 @@ export class MajsoulSubscribe extends plugin {
         
         // 3. 如果有多个匹配结果，提示用户
         if (searchResult.allMatches && searchResult.allMatches.length > 1) {
-            let tip = `\n⚠️ 提示：共找到 ${searchResult.allMatches.length} 个相似昵称，已订阅第一个：\n`;
+            let tip = `⚠️ 提示：共找到 ${searchResult.allMatches.length} 个相似昵称，已订阅第一个：\n`;
             searchResult.allMatches.slice(0, 3).forEach((p, i) => {
                 tip += `${i+1}. ${p.nickname} (ID:${p.id})\n`;
             });

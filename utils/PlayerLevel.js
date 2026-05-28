@@ -1,373 +1,178 @@
-// plugins/Majsoul-Plugin/utils/PlayerLevel.js
+const PLAYER_RANKS = "初士杰豪圣魂"
+const PLAYER_RANKS_DETAIL = ["初心", "雀士", "雀杰", "雀豪", "雀圣", "魂天"]
+const LEVEL_KONTEN = 7
+const LEVEL_MAX_POINT_KONTEN = 2000
 
-// 段位常量
-const PLAYER_RANKS = "初士杰豪圣魂";
-const PLAYER_RANKS_DETAIL = ["初心", "雀士", "雀杰", "雀豪", "雀圣", "魂天"];
-const PLAYER_RANKS_SHORT = ["初", "士", "杰", "豪", "圣", "魂"];
-const LEVEL_KONTEN = 7; // 魂天
-const LEVEL_MAX_POINT_KONTEN = 2000;
+export class PlayerLevel {
+  constructor(levelId, score = 0) {
+    this.id = levelId
+    const realId = levelId % 10000
+    this.score = score
+    this.realId = realId
+    this._majorRank = Math.floor(realId / 100)
+    this._minorRank = realId % 100
+    this._numPlayerId = Math.floor(levelId / 10000)
 
-// 段位最大分数
-const LEVEL_MAX_POINTS = [
-    20, 80, 200, 600, 800, 1000, 1200, 1400, 2000,
-    2800, 3200, 3600, 4000, 6000, 9000
-];
+    this.major_rank = this.getFullTag()
+    this.minor_rank = this._minorRank
+    
+    if (this.isTenhou()) {
+      this.full_tag = this.major_rank
+    } else {
+      this.full_tag = `${this.major_rank}${this.minor_rank}`
+    }
 
-// 房间等级映射（四麻）
-const ROOM_LEVEL_MAP_4P = {
-    8: "金之间 四人东",
-    9: "金之间 四人南",
-    11: "玉之间 四人东",
-    12: "玉之间 四人南",
-    15: "王座之间 四人东",
-    16: "王座之间 四人南"
+    this.real_score = this.getVersionAdjustedScore(score)
+    this.real_display_score = this.formatAdjustedScore(score)
+  }
+  
+  isTenhou() {
+    return this.getFullTag() === '魂天'
+  }
+
+  isKonten() {
+    return this._majorRank >= LEVEL_KONTEN - 1
+  }
+
+  getVersionAdjustedScore(score) {
+    if (this._majorRank === LEVEL_KONTEN - 1) {
+      return Math.floor(score / 100) * 10 + 200
+    }
+    return score
+  }
+
+  getScoreDisplay(score) {
+    let s = this.getVersionAdjustedScore(score)
+    if (this.isKonten()) {
+      return (s / 100).toFixed(1)
+    }
+    return String(s)
+  }
+
+  getMaxPoint() {
+    if (this.isKonten()) {
+      if (this._minorRank === 20) return 0
+      return LEVEL_MAX_POINT_KONTEN
+    }
+    const LEVEL_MAX_POINTS = [20, 80, 200, 600, 800, 1000, 1200, 1400, 2000, 2800, 3200, 3600, 4000, 6000, 9000]
+    return LEVEL_MAX_POINTS[(this._majorRank - 1) * 3 + this._minorRank - 1] || 0
+  }
+
+  getMaxPointScoreDisplay() {
+    let maxPoint = this.getMaxPoint()
+    if (this.isKonten()) {
+      return (maxPoint / 100).toFixed(1)
+    }
+    return String(maxPoint)
+  }
+
+  formatAdjustedScore(score) {
+    if (this.isTenhou()) {
+      return String(score)
+    }
+    let scoreDisplay = this.getScoreDisplay(score)
+    if (!this.getMaxPoint()) {
+      return scoreDisplay
+    }
+    return `${scoreDisplay}/${this.getMaxPointScoreDisplay()}`
+  }
+
+  getFullTag() {
+    let rankIndex = this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1
+    
+    if (!this.isKonten() && this._majorRank <= PLAYER_RANKS_DETAIL.length) {
+      const maxPoint = this.getMaxPoint()
+      if (maxPoint > 0 && this.score >= maxPoint) {
+        if (rankIndex + 1 < PLAYER_RANKS_DETAIL.length) {
+          rankIndex++
+        }
+      }
+    }
+    
+    return PLAYER_RANKS_DETAIL[rankIndex] || PLAYER_RANKS_DETAIL[this._majorRank - 1]
+  }
+
+  getTag() {
+    return this.full_tag
+  }
+}
+
+export const playerStatsZero = {
+  count: 0,
+  level: { id: 10101, score: 0, delta: 0 },
+  max_level: { id: 10101, score: 0, delta: 0 },
+  rank_rates: [0, 0, 0, 0],
+  rank_avg_score: [0, 0, 0, 0],
+  avg_rank: 4,
+  negative_rate: 0,
+  id: 0,
+  nickname: "Player",
+  played_modes: [12, 11, 8, 9]
+}
+
+export const playerExtendZero = {
+  count: 0,
+  "和牌率": 0, "自摸率": 0, "默听率": 0, "放铳率": 0, "副露率": 0, "立直率": 0,
+  "平均打点": 0, "最大连庄": 0, "和了巡数": 0, "平均铳点": 0, "流局率": 0,
+  "流听率": 0, "一发率": 0, "里宝率": 0, "被炸率": 0, "平均被炸点数": 0,
+  "放铳时立直率": 0, "放铳时副露率": 0, "立直后放铳率": 0, "立直后非瞬间放铳率": 0,
+  "副露后放铳率": 0, "立直后和牌率": 0, "副露后和牌率": 0, "立直后流局率": 0,
+  "副露后流局率": 0, "放铳至立直": 0, "放铳至副露": 0, "放铳至默听": 0,
+  "立直和了": 0, "副露和了": 0, "默听和了": 0, "立直巡目": 0, "立直收支": 0,
+  "立直收入": 0, "立直支出": 0, "先制率": 0, "追立率": 0, "被追率": 0,
+  "振听立直率": 0, "立直好型": 0, "立直多面": 0, "立直好型2": 0, "最大累计番数": 0,
+  "W立直": 0, "打点效率": 0, "铳点损失": 0, "净打点效率": 0, "平均起手向听": 0,
+  "平均起手向听亲": 0, "平均起手向听子": 0,
+  "最近大铳": { id: "", start_time: 0, fans: [] },
+  id: 0, played_modes: [9, 11, 8, 12]
+}
+
+export const ROOM_LEVEL_MAP_4P = {
+  1: '般',
+  2: '般东',
+  3: '上',
+  4: '上东',
+  5: '特',
+  6: '特东',
+  7: '凤凰',
+  8: '银之间',
+  9: '金之间',
+  10: '玉之间',
+  12: '王座之间',
+  14: '翡翠之间',
+  15: '钻石之间',
+  16: '大师之间',
+  17: '名人之间'
 };
 
-// 房间等级映射（三麻）
-const ROOM_LEVEL_MAP_3P = {
-    21: "金之间 三人东",
-    22: "金之间 三人南",
-    23: "玉之间 三人东",
-    24: "玉之间 三人南",
-    25: "王座之间 三人东",
-    26: "王座之间 三人南"
+export const ROOM_LEVEL_MAP_3P = {
+  1: '般',
+  2: '般东',
+  3: '上',
+  4: '上东',
+  5: '特',
+  6: '特东',
+  7: '凤凰',
+  8: '银之间三麻',
+  11: '金之间三麻',
+  13: '玉之间三麻',
+  18: '王座之间三麻',
+  19: '翡翠之间三麻',
+  20: '钻石之间三麻',
+  21: '大师之间三麻',
+  22: '名人之间三麻'
 };
 
-// 房间等级名称映射（简化版）
-const ROOM_LEVEL_NAMES = {
-    8: "金东", 9: "金南",
-    11: "玉东", 12: "玉南",
-    15: "王座东", 16: "王座南",
-    21: "三金东", 22: "三金南",
-    23: "三玉东", 24: "三玉南",
-    25: "三王座东", 26: "三王座南"
-};
-
-/**
- * 解析段位ID
- * @param {number} levelId - 段位ID
- * @returns {Object} - 段位信息对象
- */
-function parseLevelId(levelId) {
-    const realId = levelId % 10000;
-    const majorRank = Math.floor(realId / 100);
-    const minorRank = realId % 100;
-    const playerNum = Math.floor(levelId / 10000);
-    
-    return {
-        realId,
-        majorRank,
-        minorRank,
-        playerNum,
-        isKonten: majorRank >= LEVEL_KONTEN - 1
-    };
+export function getRoomName(modeId) {
+  if (ROOM_LEVEL_MAP_4P[modeId]) {
+    return ROOM_LEVEL_MAP_4P[modeId];
+  }
+  if (ROOM_LEVEL_MAP_3P[modeId]) {
+    return ROOM_LEVEL_MAP_3P[modeId];
+  }
+  return `房间${modeId}`;
 }
 
-/**
- * 获取段位名称
- * @param {number} majorRank - 主段位
- * @param {number} minorRank - 子段位
- * @param {boolean} isKonten - 是否魂天
- * @returns {string} - 段位名称
- */
-function getRankName(majorRank, minorRank, isKonten) {
-    const index = isKonten ? LEVEL_KONTEN - 2 : majorRank - 1;
-    const baseName = PLAYER_RANKS_DETAIL[index] || '未知';
-    
-    if (isKonten) {
-        if (minorRank === 20) return baseName; // 魂天20星显示为魂天
-        return `${baseName} ${minorRank}星`;
-    }
-    
-    if (minorRank === 1) return `${baseName}一`;
-    if (minorRank === 2) return `${baseName}二`;
-    if (minorRank === 3) return `${baseName}三`;
-    
-    return `${baseName}${minorRank}`;
+export function isThreePlayerMode(modeId) {
+  return !!ROOM_LEVEL_MAP_3P[modeId];
 }
-
-/**
- * 获取房间名称
- * @param {number} modeId - 模式ID
- * @returns {string} - 房间名称
- */
-function getRoomName(modeId) {
-    return ROOM_LEVEL_MAP_4P[modeId] || ROOM_LEVEL_MAP_3P[modeId] || `未知房间(${modeId})`;
-}
-
-/**
- * 获取简化房间名称
- * @param {number} modeId - 模式ID
- * @returns {string} - 简化房间名称
- */
-function getRoomShortName(modeId) {
-    return ROOM_LEVEL_NAMES[modeId] || `${modeId}`;
-}
-
-/**
- * 判断是否为三麻模式
- * @param {number} modeId - 模式ID
- * @returns {boolean} - 是否三麻
- */
-function isThreePlayerMode(modeId) {
-    return modeId >= 20 && modeId <= 26;
-}
-
-/**
- * 判断是否为四麻模式
- * @param {number} modeId - 模式ID
- * @returns {boolean} - 是否四麻
- */
-function isFourPlayerMode(modeId) {
-    return (modeId >= 8 && modeId <= 16) && modeId !== 10 && modeId !== 13 && modeId !== 14;
-}
-
-export default class PlayerLevel {
-    constructor(levelId, score = 0) {
-        this.id = levelId;
-        this.score = score;
-        
-        // 计算真实的等级ID（去掉玩家编号部分）
-        const realId = levelId % 10000;
-        this.realId = realId;
-        
-        // 主段位（前两位）
-        this._majorRank = Math.floor(realId / 100);
-        
-        // 子段位（后两位）
-        this._minorRank = realId % 100;
-        
-        // 玩家编号（前几位）
-        this._numPlayerId = Math.floor(levelId / 10000);
-        
-        // 预计算常用属性
-        this.major_rank = this.getFullTag();
-        this.minor_rank = this._minorRank;
-        this.full_tag = `${this.major_rank}${this.minor_rank}`;
-        this.real_score = this.getVersionAdjustedScore(score);
-        this.real_display_score = this.formatAdjustedScore(score);
-        this.real_level_tag_with_score = this.formatAdjustedScoreWithTag(score);
-    }
-    
-    // 获取段位标签（如"雀士1"）
-    getTag() {
-        const label = PLAYER_RANKS[this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1];
-        
-        if (this._majorRank === LEVEL_KONTEN - 1) {
-            return label;
-        }
-        
-        if (this._minorRank === 1) return label + "一";
-        if (this._minorRank === 2) return label + "二";
-        if (this._minorRank === 3) return label + "三";
-        
-        return label + this._minorRank;
-    }
-    
-    // 获取详细段位标签（如"雀士"）
-    getFullTag() {
-        return PLAYER_RANKS_DETAIL[this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1];
-    }
-    
-    // 是否为魂天段位
-    isKonten() {
-        return this._majorRank >= LEVEL_KONTEN - 1;
-    }
-    
-    // 获取最大分数
-    getMaxPoint() {
-        if (this.isKonten()) {
-            if (this._minorRank === 20) return 0; // 魂天20星无上限
-            return LEVEL_MAX_POINT_KONTEN;
-        }
-        
-        const index = (this._majorRank - 1) * 3 + this._minorRank - 1;
-        return LEVEL_MAX_POINTS[index] || 0;
-    }
-    
-    // 获取调整后的等级（用于魂天段位特殊处理）
-    getVersionAdjustedLevel() {
-        if (this._majorRank !== LEVEL_KONTEN - 1) {
-            return this;
-        }
-        return new PlayerLevel(this._numPlayerId * 10000 + LEVEL_KONTEN * 100 + 1);
-    }
-    
-    // 获取调整后的分数
-    getVersionAdjustedScore(score) {
-        if (this._majorRank === LEVEL_KONTEN - 1) {
-            return Math.floor(score / 100) * 10 + 200;
-        }
-        return score;
-    }
-    
-    // 获取分数显示
-    getScoreDisplay(score) {
-        const adjustedScore = this.getVersionAdjustedScore(score);
-        if (this.isKonten()) {
-            return (adjustedScore / 100).toFixed(1);
-        }
-        return adjustedScore.toString();
-    }
-    
-    // 获取最大分数显示
-    getMaxPointScoreDisplay() {
-        const maxPoint = this.getMaxPoint();
-        if (this.isKonten()) {
-            return (maxPoint / 100).toFixed(1);
-        }
-        return maxPoint.toString();
-    }
-    
-    // 格式化调整后的分数
-    formatAdjustedScore(score) {
-        const scoreDisplay = this.getScoreDisplay(score);
-        const maxPoint = this.getMaxPoint();
-        
-        if (!maxPoint) {
-            return scoreDisplay;
-        }
-        
-        return `${scoreDisplay}/${this.getMaxPointScoreDisplay()}`;
-    }
-    
-    // 格式化带标签的分数
-    formatAdjustedScoreWithTag(score) {
-        return `${this.getTag()} ${this.formatAdjustedScore(score)}`;
-    }
-    
-    // 获取下一个段位
-    getNextLevel() {
-        const level = this.getVersionAdjustedLevel();
-        let majorRank = level._majorRank;
-        let minorRank = level._minorRank + 1;
-        
-        if (minorRank > 3 && !level.isKonten()) {
-            majorRank += 1;
-            minorRank = 1;
-        }
-        
-        if (majorRank === LEVEL_KONTEN - 1) {
-            majorRank = LEVEL_KONTEN;
-        }
-        
-        return new PlayerLevel(level._numPlayerId * 10000 + majorRank * 100 + minorRank);
-    }
-    
-    // 获取上一个段位
-    getPreviousLevel() {
-        if (this._majorRank === 1 && this._minorRank === 1) {
-            return this;
-        }
-        
-        const level = this.getVersionAdjustedLevel();
-        let majorRank = level._majorRank;
-        let minorRank = level._minorRank - 1;
-        
-        if (minorRank < 1) {
-            majorRank -= 1;
-            minorRank = 3;
-        }
-        
-        if (majorRank === LEVEL_KONTEN - 1) {
-            majorRank = LEVEL_KONTEN - 2;
-        }
-        
-        return new PlayerLevel(level._numPlayerId * 10000 + majorRank * 100 + minorRank);
-    }
-    
-    // 根据分数调整段位
-    getAdjustedLevel(score) {
-        const adjustedScore = this.getVersionAdjustedScore(score);
-        const level = this.getVersionAdjustedLevel();
-        const maxPoints = level.getMaxPoint();
-        
-        if (maxPoints && adjustedScore >= maxPoints) {
-            const nextLevel = level.getNextLevel();
-            nextLevel.score = nextLevel.getStartingPoint();
-            return nextLevel;
-        }
-        
-        if (adjustedScore < 0) {
-            if (!maxPoints || level._majorRank === 1 || (level._majorRank === 2 && level._minorRank === 1)) {
-                level.score = 0;
-                return level;
-            }
-            
-            const prevLevel = level.getPreviousLevel();
-            prevLevel.score = prevLevel.getStartingPoint();
-            return prevLevel;
-        }
-        
-        level.score = adjustedScore;
-        return level;
-    }
-    
-    // 获取起始分数
-    getStartingPoint() {
-        if (this._majorRank === 1) return 0;
-        return this.getMaxPoint() / 2;
-    }
-    
-    // 转换为等级ID
-    toLevelId() {
-        return this._numPlayerId * 10000 + this._majorRank * 100 + this._minorRank;
-    }
-    
-    // 判断是否相同主段位
-    isSameMajorRank(other) {
-        return this._majorRank === other._majorRank;
-    }
-    
-    // 判断是否相同
-    isSame(other) {
-        if (this.isKonten() && other.isKonten()) {
-            if (this._majorRank === LEVEL_KONTEN - 1 || other._majorRank === LEVEL_KONTEN - 1) {
-                return true;
-            }
-            return this._majorRank === other._majorRank && this._minorRank === other._minorRank;
-        }
-        return false;
-    }
-    
-    // 获取简化的段位标签（如"雀士1"）
-    getShortTag() {
-        const index = this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1;
-        const shortName = PLAYER_RANKS_SHORT[index] || '?';
-        return `${shortName}${this._minorRank}`;
-    }
-    
-    // 获取完整的段位信息对象
-    toObject() {
-        return {
-            id: this.id,
-            realId: this.realId,
-            score: this.score,
-            majorRank: this._majorRank,
-            minorRank: this._minorRank,
-            isKonten: this.isKonten(),
-            tag: this.getTag(),
-            fullTag: this.full_tag,
-            shortTag: this.getShortTag(),
-            maxPoint: this.getMaxPoint(),
-            adjustedScore: this.real_score,
-            displayScore: this.real_display_score,
-            levelTagWithScore: this.real_level_tag_with_score
-        };
-    }
-}
-
-// 导出辅助函数
-export {
-    parseLevelId,
-    getRankName,
-    getRoomName,
-    getRoomShortName,
-    isThreePlayerMode,
-    isFourPlayerMode,
-    ROOM_LEVEL_MAP_4P,
-    ROOM_LEVEL_MAP_3P,
-    ROOM_LEVEL_NAMES,
-    PLAYER_RANKS_DETAIL,
-    PLAYER_RANKS
-};

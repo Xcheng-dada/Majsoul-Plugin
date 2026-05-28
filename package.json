@@ -1,12 +1,13 @@
 {
   "name": "Majsoul-Plugin",
-  "version": "2.0.8",
+  "version": "3.0.9",
   "description": "雀魂多功能插件",
   "type": "module",
   "main": "index.js",
   "scripts": {},
   "author": "Xcheng-dada",
   "dependencies": {
+    "jimp": "^1.6.1",
     "node-fetch": "^3.3.2",
     "sharp": "^0.33.0"
   },

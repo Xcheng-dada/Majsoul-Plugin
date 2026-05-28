@@ -2,7 +2,7 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import MajsoulApi from '../utils/MajsoulApi.js';
-import PlayerLevel, { ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
+import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 import Renderer from '../../../lib/renderer/loader.js';
 
 export class MajsoulRecords extends plugin {
@@ -17,6 +17,7 @@ export class MajsoulRecords extends plugin {
         
         this.api = new MajsoulApi();
         this.renderer = null;
+        this.redisPrefix = 'majsoul:user:';
     }
     
     /**
@@ -39,14 +40,32 @@ export class MajsoulRecords extends plugin {
             const msg = e.msg;
             let playerName, mode;
             
-            // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局
-            let match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)\s+(.+)$/);
+            // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局（不带昵称）
+            let match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)$/);
             if (match) {
-                playerName = match[2].trim();
+                playerName = '';
                 mode = 4;
             }
             
-            // 四麻对局查询 - 四麻对局
+            // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局（带昵称）
+            if (!playerName) {
+                match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)\s+(.+)$/);
+                if (match) {
+                    playerName = match[2].trim();
+                    mode = 4;
+                }
+            }
+            
+            // 四麻对局查询 - 四麻对局（不带昵称）
+            if (!playerName) {
+                match = msg.match(/^#?四麻对局$/);
+                if (match) {
+                    playerName = '';
+                    mode = 4;
+                }
+            }
+            
+            // 四麻对局查询 - 四麻对局（带昵称）
             if (!playerName) {
                 match = msg.match(/^#?四麻对局\s+(.+)$/);
                 if (match) {
@@ -55,7 +74,16 @@ export class MajsoulRecords extends plugin {
                 }
             }
             
-            // 三麻对局查询
+            // 三麻对局查询（不带昵称）
+            if (!playerName) {
+                match = msg.match(/^#?三麻对局$/);
+                if (match) {
+                    playerName = '';
+                    mode = 3;
+                }
+            }
+            
+            // 三麻对局查询（带昵称）
             if (!playerName) {
                 match = msg.match(/^#?三麻对局\s+(.+)$/);
                 if (match) {
@@ -64,8 +92,21 @@ export class MajsoulRecords extends plugin {
                 }
             }
             
-            if (!playerName) {
+            if (playerName === undefined) {
                 return false;
+            }
+            
+            // 如果没有输入昵称，尝试从绑定中获取
+            if (!playerName || playerName.length === 0) {
+                const qid = String(e.user_id);
+                const boundUid = await this.getMainUid(qid);
+                
+                if (!boundUid) {
+                    await e.reply('您还没有绑定雀魂UID，请先使用【雀魂绑定+UID】进行绑定\n或使用【雀魂对局+昵称】查询其他玩家');
+                    return true;
+                }
+                
+                playerName = boundUid;
             }
             
             // 查询对局记录
@@ -324,5 +365,45 @@ export class MajsoulRecords extends plugin {
         });
         
         return img;
+    }
+    
+    /**
+     * 获取用户绑定的主UID（从Redis获取）
+     * @param {string} qid - 用户QQ号
+     * @returns {Promise<string|null>} - 主UID或null
+     */
+    async getMainUid(qid) {
+        try {
+            // 确保 redis 对象可用（Yunzai 框架全局对象）
+            if (typeof redis === 'undefined') {
+                console.error('[MajsoulRecords] redis 对象未定义！');
+                return null;
+            }
+            
+            // 1. 尝试获取设置的主UID
+            let mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
+            
+            if (mainUid) {
+                console.log(`[MajsoulRecords] 找到主UID: ${mainUid}`);
+                return mainUid;
+            }
+            
+            // 2. 如果没有设置main键，尝试获取第一个绑定作为默认主账号
+            const key = `${this.redisPrefix}${qid}:bindings`;
+            const bindingsStr = await redis.get(key);
+            const bindings = bindingsStr ? JSON.parse(bindingsStr) : [];
+            
+            if (bindings.length > 0) {
+                console.log(`[MajsoulRecords] 从绑定列表获取UID: ${bindings[0]}`);
+                return bindings[0];
+            }
+            
+            console.log(`[MajsoulRecords] 未找到用户 ${qid} 的绑定UID`);
+            return null;
+            
+        } catch (error) {
+            console.error('[MajsoulRecords] 获取主绑定UID失败:', error);
+            return null;
+        }
     }
 }

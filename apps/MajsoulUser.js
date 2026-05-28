@@ -1,7 +1,7 @@
 // plugins/Majsoul-Plugin/apps/MajsoulUser.js
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
-import PlayerLevel from '../utils/PlayerLevel.js';
+import { PlayerLevel } from '../utils/PlayerLevel.js';
 
 export class MajsoulUser extends plugin {
     constructor() {
@@ -89,9 +89,9 @@ export class MajsoulUser extends plugin {
             const uid = match[1];
             const qid = e.user_id;
             
-            // 验证UID格式
-            if (uid.length < 6 || uid.length > 10) {
-                await e.reply('UID格式不正确，应为6-10位数字');
+            // 验证UID格式（支持5-10位数字）
+            if (uid.length < 5 || uid.length > 10) {
+                await e.reply('UID格式不正确，应为5-10位数字');
                 return true;
             }
             
