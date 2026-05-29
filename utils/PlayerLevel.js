@@ -9,8 +9,22 @@ export class PlayerLevel {
     const realId = levelId % 10000
     this.score = score
     this.realId = realId
-    this._majorRank = Math.floor(realId / 100)
-    this._minorRank = realId % 100
+    
+    // 正确解析段位ID
+    // 段位ID格式: 101=初心1, 201=雀士1, 301=雀杰1, 401=雀豪1, 501=雀圣1, 601=魂天
+    let majorRank = Math.floor(realId / 100)
+    let minorRank = realId % 100
+    
+    // 防御性处理：确保段位在有效范围内
+    if (majorRank < 1 || majorRank > PLAYER_RANKS_DETAIL.length) {
+      majorRank = 1
+    }
+    if (minorRank < 1 || minorRank > 3) {
+      minorRank = 1
+    }
+    
+    this._majorRank = majorRank
+    this._minorRank = minorRank
     this._numPlayerId = Math.floor(levelId / 10000)
 
     this.major_rank = this.getFullTag()
@@ -19,7 +33,7 @@ export class PlayerLevel {
     if (this.isTenhou()) {
       this.full_tag = this.major_rank
     } else {
-      this.full_tag = `${this.major_rank}${this.minor_rank}`
+      this.full_tag = `${this.major_rank}${this._minorRank}`
     }
 
     this.real_score = this.getVersionAdjustedScore(score)
@@ -78,18 +92,24 @@ export class PlayerLevel {
   }
 
   getFullTag() {
+    if (this._majorRank <= 0) {
+      return PLAYER_RANKS_DETAIL[0]
+    }
+    
     let rankIndex = this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1
     
     if (!this.isKonten() && this._majorRank <= PLAYER_RANKS_DETAIL.length) {
       const maxPoint = this.getMaxPoint()
-      if (maxPoint > 0 && this.score >= maxPoint) {
+      // 只有当分数在合理范围内（不超过10000）时才进行升级检查
+      // 避免对局点数（如36100）被错误当作段位分数处理
+      if (maxPoint > 0 && this.score >= maxPoint && this.score <= 10000) {
         if (rankIndex + 1 < PLAYER_RANKS_DETAIL.length) {
           rankIndex++
         }
       }
     }
     
-    return PLAYER_RANKS_DETAIL[rankIndex] || PLAYER_RANKS_DETAIL[this._majorRank - 1]
+    return PLAYER_RANKS_DETAIL[rankIndex] || PLAYER_RANKS_DETAIL[this._majorRank - 1] || PLAYER_RANKS_DETAIL[0]
   }
 
   getTag() {
@@ -128,39 +148,33 @@ export const playerExtendZero = {
 }
 
 export const ROOM_LEVEL_MAP_4P = {
-  1: '般',
-  2: '般东',
-  3: '上',
-  4: '上东',
-  5: '特',
-  6: '特东',
-  7: '凤凰',
-  8: '银之间',
-  9: '金之间',
+  1: '铜之间',
+  2: '铜之间 · 四人东',
+  3: '铜之间 · 四人南',
+  4: '银之间',
+  5: '银之间 · 四人东',
+  6: '银之间 · 四人南',
+  7: '金之间',
+  8: '金之间 · 四人东',
+  9: '金之间 · 四人南',
   10: '玉之间',
-  12: '王座之间',
-  14: '翡翠之间',
-  15: '钻石之间',
-  16: '大师之间',
-  17: '名人之间'
+  11: '玉之间 · 四人东',
+  12: '玉之间 · 四人南',
+  15: '王座间 · 四人东',
+  16: '王座间 · 四人南'
 };
 
 export const ROOM_LEVEL_MAP_3P = {
-  1: '般',
-  2: '般东',
-  3: '上',
-  4: '上东',
-  5: '特',
-  6: '特东',
-  7: '凤凰',
-  8: '银之间三麻',
-  11: '金之间三麻',
-  13: '玉之间三麻',
-  18: '王座之间三麻',
-  19: '翡翠之间三麻',
-  20: '钻石之间三麻',
-  21: '大师之间三麻',
-  22: '名人之间三麻'
+  17: '铜之间 · 三人东',
+  18: '铜之间 · 三人南',
+  19: '银之间 · 三人东',
+  20: '银之间 · 三人南',
+  21: '金之间 · 三人东',
+  22: '金之间 · 三人南',
+  23: '玉之间 · 三人东',
+  24: '玉之间 · 三人南',
+  25: '王座间 · 三人东',
+  26: '王座间 · 三人南'
 };
 
 export function getRoomName(modeId) {
