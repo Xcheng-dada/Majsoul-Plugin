@@ -241,7 +241,8 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   detailCtx.drawImage(lzChongz, 0, 418)
   
   // 生成最近对局记录
-  const recordBg = await loadResImage('info_texture/record_bg.png')
+  const recordBgPath = mode === "3" ? 'info_texture/record_bg_3p.png' : 'info_texture/record_bg.png'
+  const recordBg = await loadResImage(recordBgPath)
   const recordCanvas = createCanvas(recordBg.width, recordBg.height)
   const recordCtx = recordCanvas.getContext('2d')
   recordCtx.drawImage(recordBg, 0, 0)
