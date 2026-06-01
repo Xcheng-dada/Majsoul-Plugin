@@ -246,7 +246,9 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   const recordCtx = recordCanvas.getContext('2d')
   recordCtx.drawImage(recordBg, 0, 0)
   
-  const RANK_POS = { 4: 321, 3: 242, 2: 160, 1: 73 }
+  const RANK_POS_4P = { 4: 321, 3: 242, 2: 160, 1: 73 }
+  const RANK_POS_3P = { 3: 321, 2: 206, 1: 73 }
+  const RANK_POS = mode === "3" ? RANK_POS_3P : RANK_POS_4P
   let posPrev = null
   
   const revRecords = record.slice().reverse()
@@ -264,7 +266,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
     ranks.sort((a, b) => b.score - a.score)
     let rankNum = ranks.findIndex(p => p.nick === data.nickname) + 1
     
-    if (rankNum === 0) rankNum = 4
+    if (rankNum === 0) rankNum = mode === "3" ? 3 : 4
     
     const posY = RANK_POS[rankNum]
     const pos = { x: 108 + i * 50, y: posY }
@@ -290,7 +292,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   ctx.drawImage(detailCanvas, 0, 1188)
   ctx.drawImage(mid, 0, 1161)
   drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo | Python-to-JS移植: QingFeng', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
 
   const rank4Icon = await getRankIcon(level4, data4, extended4, "4")
   const rank3Icon = await getRankIcon(level3, data3, extended3, "3")
