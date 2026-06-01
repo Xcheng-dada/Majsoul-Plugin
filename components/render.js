@@ -241,14 +241,14 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   detailCtx.drawImage(lzChongz, 0, 418)
   
   // 生成最近对局记录
-  const recordBgPath = mode === "3" ? 'info_texture/record_bg_3p.png' : 'info_texture/record_bg.png'
+  const recordBgPath = mode === "3" ? 'info_texture/record_bg_3.png' : 'info_texture/record_bg_4.png'
   const recordBg = await loadResImage(recordBgPath)
   const recordCanvas = createCanvas(recordBg.width, recordBg.height)
   const recordCtx = recordCanvas.getContext('2d')
   recordCtx.drawImage(recordBg, 0, 0)
   
-  const RANK_POS_4P = { 4: 321, 3: 242, 2: 160, 1: 73 }
-  const RANK_POS_3P = { 3: 321, 2: 206, 1: 73 }
+  const RANK_POS_4P = { 4: 316, 3: 237, 2: 155, 1: 73 }
+  const RANK_POS_3P = { 3: 316, 2: 199, 1: 73 }
   const RANK_POS = mode === "3" ? RANK_POS_3P : RANK_POS_4P
   let posPrev = null
   

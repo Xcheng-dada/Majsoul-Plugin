@@ -188,6 +188,17 @@
 
 <a id="更新日志"></a>
 ## 丨更新日志
+### v3.1.0 更新
+- **查询功能协作者**：
+  - 感谢 QingFeng 对玩家数据查询功能的贡献
+- **新增三麻段位走势背景**：
+  - 新增 `record_bg_3.png` 专用背景图（3条线）
+  - 三麻模式使用专用背景图，更贴合三麻三人对局特性
+- **优化段位走势显示**：
+  - 调整三麻和四麻的走势点位，使点位居中显示在对应线条上
+  - 三麻模式：第1名、第2名、第3名位置精细调整
+  - 四麻模式：第1名、第2名、第3名、第4名位置精细调整
+  
 ### v3.0.9 更新
 - **新增玩家数据查询功能**：
   - 支持查询玩家详细战绩数据，包含四麻和三麻段位信息
@@ -260,3 +271,4 @@
 -   [DaiShengSheng / Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) ：原Python版本雀魂插件，功能移植自该项目。
 -   [SAPikachu / amae-koromo](https://github.com/SAPikachu/amae-koromo) ：雀魂牌谱屋项目，提供玩家数据查询API。
 -   [KimigaiiWuyi / MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) ：原早柚核心雀魂插件（Python），玩家信息查询功能移植自该项目。
+-   [QingFeng](/) ：玩家数据查询功能协作者，对玩家数据查询功能移植有重要贡献。
