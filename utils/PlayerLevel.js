@@ -10,12 +10,9 @@ export class PlayerLevel {
     this.score = score
     this.realId = realId
     
-    // 正确解析段位ID
-    // 段位ID格式: 101=初心1, 201=雀士1, 301=雀杰1, 401=雀豪1, 501=雀圣1, 601=魂天
     let majorRank = Math.floor(realId / 100)
     let minorRank = realId % 100
     
-    // 防御性处理：确保段位在有效范围内
     if (majorRank < 1 || majorRank > PLAYER_RANKS_DETAIL.length) {
       majorRank = 1
     }
@@ -23,9 +20,12 @@ export class PlayerLevel {
       minorRank = 1
     }
     
-    this._majorRank = majorRank
-    this._minorRank = minorRank
     this._numPlayerId = Math.floor(levelId / 10000)
+    
+    const adjusted = this._adjustRankAndScore(majorRank, minorRank, score)
+    this._majorRank = adjusted.majorRank
+    this._minorRank = adjusted.minorRank
+    this._adjustedScore = adjusted.score
 
     this.major_rank = this.getFullTag()
     this.minor_rank = this._minorRank
@@ -36,8 +36,68 @@ export class PlayerLevel {
       this.full_tag = `${this.major_rank}${this._minorRank}`
     }
 
-    this.real_score = this.getVersionAdjustedScore(score)
-    this.real_display_score = this.formatAdjustedScore(score)
+    this.real_score = this.getVersionAdjustedScore(this._adjustedScore)
+    this.real_display_score = this.formatAdjustedScore(this._adjustedScore)
+  }
+  
+  _getMaxPoint(majorRank, minorRank) {
+    if (majorRank >= 6) {
+      if (minorRank === 20) return 0
+      return LEVEL_MAX_POINT_KONTEN
+    }
+    const LEVEL_MAX_POINTS = [20, 80, 200, 600, 800, 1000, 1200, 1400, 2000, 2800, 3200, 3600, 4000, 6000, 9000]
+    return LEVEL_MAX_POINTS[(majorRank - 1) * 3 + minorRank - 1] || 0
+  }
+  
+  _adjustRankAndScore(majorRank, minorRank, score) {
+    if (majorRank >= 6) {
+      return { majorRank, minorRank, score }
+    }
+    
+    if (score > 10000) {
+      return { majorRank, minorRank, score }
+    }
+    
+    let currentMajor = majorRank
+    let currentMinor = minorRank
+    let currentScore = score
+    
+    while (currentScore < 0) {
+      if (currentMajor === 1 && currentMinor === 1) {
+        currentScore = 0
+        break
+      }
+      if (currentMinor > 1) {
+        currentMinor--
+      } else {
+        currentMajor--
+        currentMinor = 3
+      }
+      const newMax = this._getMaxPoint(currentMajor, currentMinor)
+      currentScore = Math.floor(newMax / 2)
+    }
+    
+    while (currentScore >= 0 && currentMajor < 6) {
+      const maxPoint = this._getMaxPoint(currentMajor, currentMinor)
+      if (maxPoint <= 0 || currentScore < maxPoint) break
+      
+      if (currentMinor < 3) {
+        currentMinor++
+      } else {
+        currentMinor = 1
+        currentMajor++
+        if (currentMajor >= 6) {
+          currentMajor = 6
+          currentMinor = 0
+          break
+        }
+      }
+      
+      const newMax = this._getMaxPoint(currentMajor, currentMinor)
+      currentScore = Math.floor(newMax / 2)
+    }
+    
+    return { majorRank: currentMajor, minorRank: currentMinor, score: currentScore }
   }
   
   isTenhou() {
@@ -64,12 +124,7 @@ export class PlayerLevel {
   }
 
   getMaxPoint() {
-    if (this.isKonten()) {
-      if (this._minorRank === 20) return 0
-      return LEVEL_MAX_POINT_KONTEN
-    }
-    const LEVEL_MAX_POINTS = [20, 80, 200, 600, 800, 1000, 1200, 1400, 2000, 2800, 3200, 3600, 4000, 6000, 9000]
-    return LEVEL_MAX_POINTS[(this._majorRank - 1) * 3 + this._minorRank - 1] || 0
+    return this._getMaxPoint(this._majorRank, this._minorRank)
   }
 
   getMaxPointScoreDisplay() {
@@ -97,18 +152,6 @@ export class PlayerLevel {
     }
     
     let rankIndex = this.isKonten() ? LEVEL_KONTEN - 2 : this._majorRank - 1
-    
-    if (!this.isKonten() && this._majorRank <= PLAYER_RANKS_DETAIL.length) {
-      const maxPoint = this.getMaxPoint()
-      // 只有当分数在合理范围内（不超过10000）时才进行升级检查
-      // 避免对局点数（如36100）被错误当作段位分数处理
-      if (maxPoint > 0 && this.score >= maxPoint && this.score <= 10000) {
-        if (rankIndex + 1 < PLAYER_RANKS_DETAIL.length) {
-          rankIndex++
-        }
-      }
-    }
-    
     return PLAYER_RANKS_DETAIL[rankIndex] || PLAYER_RANKS_DETAIL[this._majorRank - 1] || PLAYER_RANKS_DETAIL[0]
   }
 

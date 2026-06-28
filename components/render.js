@@ -35,20 +35,35 @@ async function getLzBar(title, v1, v2, v3 = null) {
   ctx.font = 'bold 14px "Microsoft YaHei", sans-serif'
   ctx.fillStyle = '#ffffff'
   
-  // 立直百分比
-  const text1 = `${(v1 * 100).toFixed(1)}%`
-  const text1Width = ctx.measureText(text1).width
-  ctx.fillText(text1, (start + x2) / 2 - text1Width / 2, y1 + 22)
+  // 立直百分比 - 只有柱形足够宽时才显示
+  const width1 = x2 - start
+  if (v1 > 0 && width1 > 30) {
+    const text1 = `${(v1 * 100).toFixed(1)}%`
+    const text1Width = ctx.measureText(text1).width
+    if (width1 > text1Width + 8) {
+      ctx.fillText(text1, (start + x2) / 2 - text1Width / 2, y1 + 22)
+    }
+  }
   
-  // 副露百分比
-  const text2 = `${(v2 * 100).toFixed(1)}%`
-  const text2Width = ctx.measureText(text2).width
-  ctx.fillText(text2, (x2 + 10 + x3) / 2 - text2Width / 2, y1 + 22)
+  // 副露百分比 - 只有柱形足够宽时才显示
+  const width2 = x3 - (x2 + 10)
+  if (v2 > 0 && width2 > 30) {
+    const text2 = `${(v2 * 100).toFixed(1)}%`
+    const text2Width = ctx.measureText(text2).width
+    if (width2 > text2Width + 8) {
+      ctx.fillText(text2, (x2 + 10 + x3) / 2 - text2Width / 2, y1 + 22)
+    }
+  }
   
-  // 默听百分比
-  const text3 = `${(v3 * 100).toFixed(1)}%`
-  const text3Width = ctx.measureText(text3).width
-  ctx.fillText(text3, (x3 + 10 + x4) / 2 - text3Width / 2, y1 + 22)
+  // 默听百分比 - 只有柱形足够宽时才显示
+  const width3 = x4 - (x3 + 10)
+  if (v3 > 0 && width3 > 30) {
+    const text3 = `${(v3 * 100).toFixed(1)}%`
+    const text3Width = ctx.measureText(text3).width
+    if (width3 > text3Width + 8) {
+      ctx.fillText(text3, (x3 + 10 + x4) / 2 - text3Width / 2, y1 + 22)
+    }
+  }
   
   return canvas
 }
