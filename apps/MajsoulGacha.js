@@ -18,7 +18,8 @@ export class MajsoulGacha extends plugin {
                 },
                 {
                     reg: '^#?切换雀魂卡池\\s+(.+)$',
-                    fnc: 'changePool'
+                    fnc: 'changePool',
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?(查看雀魂卡池|当前雀魂卡池)$',

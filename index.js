@@ -131,54 +131,54 @@ export class majsoul extends plugin {
         {
           reg: '^#?(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?(关闭|取消)(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?开启(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?删除(雀魂|四麻)订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?(雀魂|四麻)订阅状态$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         
         // 对局订阅相关指令 (三麻)
         {
           reg: '^#?三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?(关闭|取消)三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?开启三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?删除三麻订阅\\s+(.+)$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?三麻订阅状态$',
           fnc: 'majsoulSubscribe',
-          permission: 'group'
+          permission: 'admin'
         },
         
         // 对局查询相关指令（不带昵称，使用绑定的UID）
@@ -215,16 +215,6 @@ export class majsoul extends plugin {
         },
         
         // 玩家信息查询相关指令（四麻）
-        {
-          reg: '^#?雀魂战绩$',
-          fnc: 'majsoulInfo',
-          permission: 'group'
-        },
-        {
-          reg: '^#?雀魂战绩\\s+(.+)$',
-          fnc: 'majsoulInfo',
-          permission: 'group'
-        },
         {
           reg: '^#?雀魂查询$',
           fnc: 'majsoulInfo',

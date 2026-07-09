@@ -101,7 +101,7 @@ export default class MajsoulSchedule {
             // 发送更新消息
             let sentCount = 0;
             for (const update of updates) {
-                const success = await this.sendGroupMessage(update.groupId, update.message);
+                const success = await this.sendGroupMessage(update.groupId, update.message, update.image);
                 if (success) sentCount++;
                 // 避免消息轰炸，每条消息间隔1秒
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -126,33 +126,55 @@ export default class MajsoulSchedule {
         await this.performCheck(3);
     }
     
-    // 发送群消息
-    async sendGroupMessage(groupId, message) {
+    // 发送群消息（支持文字+图片合并发送）
+    async sendGroupMessage(groupId, message, imageBuffer = null) {
         if (!this.bot) {
             this.logger.error(`[MajsoulSchedule] 未设置Bot实例，无法发送消息到群 ${groupId}`);
             return false;
         }
         
         try {
-            // TRSS-Yunzai 中发送群消息的标准方式
+            // 如果有图片，合并成一条消息发送：标题 + 图片 + 牌谱链接
+            if (imageBuffer) {
+                const imageBase64 = `base64://${imageBuffer.toString('base64')}`;
+                
+                // 使用 segment 组合消息
+                if (typeof global.segment === 'object') {
+                    const imageSegment = global.segment.image(imageBase64);
+                    const msgChain = [
+                        '本群侦测到新的对局\n',
+                        imageSegment,
+                        `\n${message}`
+                    ];
+                    
+                    if (typeof this.bot.sendGroupMsg === 'function') {
+                        await this.bot.sendGroupMsg(parseInt(groupId), msgChain);
+                        this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
+                        return true;
+                    }
+                    else if (typeof this.bot.pickGroup === 'function') {
+                        await this.bot.pickGroup(parseInt(groupId)).sendMsg(msgChain);
+                        this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
+                        return true;
+                    }
+                }
+            }
+            
+            // 没有图片或图片发送失败，只发送文字（文字消息已包含完整内容）
             let sent = false;
             
-            // 方式1: 直接使用 sendGroupMsg
             if (typeof this.bot.sendGroupMsg === 'function') {
                 await this.bot.sendGroupMsg(parseInt(groupId), message);
                 sent = true;
             }
-            // 方式2: 使用 pickGroup
             else if (typeof this.bot.pickGroup === 'function') {
                 await this.bot.pickGroup(parseInt(groupId)).sendMsg(message);
                 sent = true;
             }
-            // 方式3: 使用全局 Bot 对象
             else if (typeof global.Bot === 'object' && typeof global.Bot.sendGroupMsg === 'function') {
                 await global.Bot.sendGroupMsg(parseInt(groupId), message);
                 sent = true;
             }
-            // 方式4: 遍历 global.Bots
             else if (typeof global.Bots === 'object') {
                 for (const [, bot] of Object.entries(global.Bots)) {
                     if (typeof bot.sendGroupMsg === 'function') {
@@ -201,7 +223,7 @@ export default class MajsoulSchedule {
             
             // 发送消息
             for (const update of [...updates4p, ...updates3p]) {
-                await this.sendGroupMessage(update.groupId, update.message);
+                await this.sendGroupMessage(update.groupId, update.message, update.image);
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             

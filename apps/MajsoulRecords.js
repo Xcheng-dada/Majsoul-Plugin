@@ -1,9 +1,10 @@
 // plugins/Majsoul-Plugin/apps/MajsoulRecords.js
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
+import { createCanvas } from '@napi-rs/canvas';
+import { loadResImage, drawText, drawRoundRect } from '../components/canvas.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
-import Renderer from '../../../lib/renderer/loader.js';
 
 export class MajsoulRecords extends plugin {
     constructor() {
@@ -16,18 +17,7 @@ export class MajsoulRecords extends plugin {
         });
         
         this.api = new MajsoulApi();
-        this.renderer = null;
         this.redisPrefix = 'majsoul:user:';
-    }
-    
-    /**
-     * 初始化渲染器
-     */
-    async initRenderer() {
-        if (!this.renderer) {
-            this.renderer = await Renderer.getRenderer();
-        }
-        return this.renderer;
     }
     
     /**
@@ -299,20 +289,11 @@ export class MajsoulRecords extends plugin {
         }
     }
     
-    /**
-     * 构建图片模板数据
-     * @param {string} playerName - 玩家昵称
-     * @param {string} modeName - 模式名称
-     * @param {Array} records - 对局记录数组
-     * @param {number} playerId - 玩家ID
-     * @returns {Array} - 格式化后的记录数据
-     */
     _buildImageData(playerName, modeName, records, playerId) {
+        const mode = modeName === '四麻' ? '4' : '3';
         return records.map((record, index) => {
-            // 排序玩家
             const sortedPlayers = [...record.players].sort((a, b) => (b.score || 0) - (a.score || 0));
             
-            // 格式化玩家数据
             const players = sortedPlayers.map((p, j) => {
                 const isTarget = p.accountId === playerId || p.id === playerId;
                 const ptChange = p.gradingScore || p.delta || 0;
@@ -322,10 +303,10 @@ export class MajsoulRecords extends plugin {
                     rank: j + 1,
                     nickname: p.nickname,
                     level: level.getTag(),
+                    majorRank: level.major_rank,
                     score: p.score || 0,
                     pt: ptChange,
                     ptText: ptChange === 0 ? '±0' : (ptChange > 0 ? `+${ptChange}` : ptChange.toString()),
-                    ptClass: ptChange > 0 ? 'pt-positive' : (ptChange < 0 ? 'pt-negative' : 'pt-neutral'),
                     isTarget: isTarget
                 };
             });
@@ -341,30 +322,157 @@ export class MajsoulRecords extends plugin {
         });
     }
     
-    /**
-     * 生成图片
-     * @param {object} result - 查询结果
-     * @returns {Promise<string|Buffer|null>} - 图片路径或Buffer
-     */
+    async _drawRankIcon(ctx, majorRank, mode, x, y, size = 40) {
+        try {
+            const rankIcon = await loadResImage(`info_texture/${majorRank}_${mode}.png`);
+            ctx.drawImage(rankIcon, x, y, size, size);
+        } catch(e) {}
+    }
+
     async _generateImage(result) {
-        const renderer = await this.initRenderer();
+        const { playerName, modeName, records } = result;
+        const mode = modeName === '四麻' ? '4' : '3';
         
-        const data = {
-            playerName: result.playerName,
-            modeName: result.modeName,
-            totalCount: result.records.length,
-            records: result.records
+        const CARD_WIDTH = 720;
+        const PADDING = 16;
+        const CONTENT_WIDTH = CARD_WIDTH - PADDING * 2;
+        const HEADER_HEIGHT = 80;
+        const CARD_HEADER_HEIGHT = 60;
+        const TABLE_HEADER_HEIGHT = 36;
+        const PLAYER_ROW_HEIGHT = 56;
+        const CARD_GAP = 16;
+        const HEADER_CARD_GAP = 16;
+        const FOOTER_HEIGHT = 40;
+        
+        const LEVEL_COL_CENTER = PADDING + 475;
+        const LEVEL_ICON_SIZE = 40;
+        const LEVEL_TEXT_OFFSET = LEVEL_ICON_SIZE + 8;
+        
+        const COL_X = {
+            rank: PADDING + 30,
+            name: PADDING + 100,
+            level: LEVEL_COL_CENTER,
+            score: PADDING + 590,
+            pt: PADDING + 650
         };
         
-        const tplPath = `${process.cwd()}/plugins/Majsoul-Plugin/resources/templates/records.html`;
+        const totalHeight = HEADER_HEIGHT + HEADER_CARD_GAP +
+            records.reduce((sum, record) => sum + CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT, 0) + 
+            records.length * CARD_GAP + FOOTER_HEIGHT;
         
-        const img = await renderer.render('majsoul_records', {
-            tplFile: tplPath,
-            saveId: `records_${Date.now()}`,
-            ...data
-        });
+        const canvas = createCanvas(CARD_WIDTH, totalHeight);
+        const ctx = canvas.getContext('2d');
         
-        return img;
+        ctx.fillStyle = '#0d1117';
+        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        
+        const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, totalHeight);
+        gradient.addColorStop(0, '#0d1117');
+        gradient.addColorStop(0.5, '#161b22');
+        gradient.addColorStop(1, '#0d1117');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        
+        drawText(ctx, `${playerName} 的${modeName}对局记录`, CARD_WIDTH / 2, 40, 28, '#ffd700', 'center', 'bold');
+        drawText(ctx, `最近 ${records.length} 场对局 | 数据来源: amae-koromo`, CARD_WIDTH / 2, 65, 14, '#6e7681', 'center');
+        
+        let currentY = HEADER_HEIGHT + HEADER_CARD_GAP;
+        
+        for (const record of records) {
+            const cardHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT;
+            
+            drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, cardHeight, 12, '#1c2128');
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#30363d';
+            ctx.stroke();
+            
+            const headerGradient = ctx.createLinearGradient(PADDING, currentY, CARD_WIDTH - PADDING, currentY + CARD_HEADER_HEIGHT);
+            headerGradient.addColorStop(0, '#1e3a5f');
+            headerGradient.addColorStop(1, '#0d1b2a');
+            ctx.fillStyle = headerGradient;
+            
+            ctx.save();
+            drawRoundRect(ctx, PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2, 11, null);
+            ctx.clip();
+            ctx.fillRect(PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2);
+            ctx.restore();
+            
+            drawRoundRect(ctx, PADDING + 20, currentY + 15, 60, 30, 4, '#ffd700');
+            ctx.fillStyle = '#1a1a2e';
+            ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('段位场', PADDING + 50, currentY + 30);
+            
+            drawText(ctx, record.roomName, PADDING + 100, currentY + 30, 14, '#e6edf3', 'left', '500');
+            
+            drawText(ctx, record.startTime, CARD_WIDTH - PADDING - 20, currentY + 22, 11, '#8b949e', 'right');
+            drawText(ctx, record.endTime, CARD_WIDTH - PADDING - 20, currentY + 38, 11, '#58a6ff', 'right');
+            
+            currentY += CARD_HEADER_HEIGHT;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            
+            ctx.save();
+            drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT, 11, null);
+            ctx.clip();
+            ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT);
+            ctx.restore();
+            
+            drawText(ctx, '排名', COL_X.rank, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
+            drawText(ctx, '参赛玩家', COL_X.name, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'left', '500');
+            drawText(ctx, '段位', LEVEL_COL_CENTER + 20, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
+            drawText(ctx, '点数', COL_X.score, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
+            drawText(ctx, 'PT', COL_X.pt, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
+            
+            currentY += TABLE_HEADER_HEIGHT;
+            
+            for (const player of record.players) {
+                if (player.isTarget) {
+                    ctx.fillStyle = 'rgba(255, 215, 0, 0.06)';
+                    ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, PLAYER_ROW_HEIGHT);
+                    
+                    ctx.fillStyle = '#ffd700';
+                    ctx.fillRect(PADDING, currentY + 4, 3, PLAYER_ROW_HEIGHT - 8);
+                }
+                
+                const rankColors = {
+                    1: ['#ffd700', '#ffaa00'],
+                    2: ['#c0c0c0', '#a0a0a0'],
+                    3: ['#cd7f32', '#b87333'],
+                    4: ['#4a5568', '#2d3748']
+                };
+                const rc = rankColors[player.rank] || rankColors[4];
+                const rankGradient = ctx.createRadialGradient(COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 0, COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 14);
+                rankGradient.addColorStop(0, rc[0]);
+                rankGradient.addColorStop(1, rc[1]);
+                drawRoundRect(ctx, COL_X.rank - 14, currentY + PLAYER_ROW_HEIGHT / 2 - 14, 28, 28, 14, rankGradient);
+                
+                drawText(ctx, player.rank.toString(), COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#ffffff', 'center', 'bold');
+                
+                drawText(ctx, player.nickname, COL_X.name, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#e6edf3', 'left', '500');
+                
+                const levelIconX = LEVEL_COL_CENTER - LEVEL_TEXT_OFFSET / 2;
+                await this._drawRankIcon(ctx, player.majorRank, mode, levelIconX, currentY + PLAYER_ROW_HEIGHT / 2 - LEVEL_ICON_SIZE / 2, LEVEL_ICON_SIZE);
+                
+                drawText(ctx, player.level, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
+                
+                drawText(ctx, player.score.toString(), COL_X.score, currentY + PLAYER_ROW_HEIGHT / 2, 14, '#e6edf3', 'center', 'bold');
+                
+                let ptColor = '#6e7681';
+                if (player.pt > 0) ptColor = '#3fb950';
+                else if (player.pt < 0) ptColor = '#f85149';
+                drawText(ctx, player.ptText, COL_X.pt, currentY + PLAYER_ROW_HEIGHT / 2, 12, ptColor, 'center', '500');
+                
+                currentY += PLAYER_ROW_HEIGHT;
+            }
+            
+            currentY += CARD_GAP;
+        }
+        
+        drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, totalHeight - 20, 12, '#ffffff', 'center', 'bold');
+        
+        return canvas.toBuffer('image/png');
     }
     
     /**
