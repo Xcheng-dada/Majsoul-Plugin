@@ -93,24 +93,36 @@ class BotLink {
             
             console.log('[BotLink] 昵称匹配:', nicknameMatch);
             
-            const rankPattern = /\[(.+?)\s+(\d+)\/(\d+)\]/g;
-            let match;
-            let rankCount = 0;
-            
-            while ((match = rankPattern.exec(text)) !== null) {
-                console.log('[BotLink] 段位匹配:', match);
-                const rankInfo = {
-                    rank: match[1].trim(),
-                    score: parseInt(match[2]),
-                    maxScore: parseInt(match[3])
-                };
-                
-                if (rankCount === 0) {
-                    result.fourPlayer = rankInfo;
-                } else {
-                    result.threePlayer = rankInfo;
+            const rankBlocks = text.match(/\[[^\]]+\]/g);
+            if (rankBlocks) {
+                for (let i = 0; i < rankBlocks.length; i++) {
+                    const block = rankBlocks[i];
+                    console.log('[BotLink] 段位块:', block);
+                    
+                    const rankMatch = block.match(/\[(.+?)\s+(\d+)\/(\d+)\]/);
+                    if (rankMatch) {
+                        const rankName = rankMatch[1].trim();
+                        
+                        if (rankName.includes('魂天')) {
+                            console.log('[BotLink] 检测到魂天段位，跳过该模式实时数据（魂天格式特殊，使用牌谱屋数据）');
+                            continue;
+                        }
+                        
+                        const rankInfo = {
+                            rank: rankName,
+                            score: parseInt(rankMatch[2]),
+                            maxScore: parseInt(rankMatch[3])
+                        };
+                        
+                        if (i === 0) {
+                            result.fourPlayer = rankInfo;
+                        } else {
+                            result.threePlayer = rankInfo;
+                        }
+                    } else {
+                        console.log('[BotLink] 段位块格式不匹配分数格式:', block);
+                    }
                 }
-                rankCount++;
             }
             
             if (text.includes('实时') || text.includes('同步')) {

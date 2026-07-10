@@ -376,14 +376,14 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
     const randomPerson = getRandomPersonFull()
     if (randomPerson) {
       const personImg = await loadResImage(randomPerson)
-      const targetWidth = 289
-      const targetHeight = 617
-      const scale = Math.max(targetWidth / personImg.width, targetHeight / personImg.height)
+      const displayWidth = charBg.width - 38 * 2
+      const displayHeight = charBg.height - 37 * 2
+      const scale = Math.max(displayWidth / personImg.width, displayHeight / personImg.height)
       const scaledWidth = personImg.width * scale
       const scaledHeight = personImg.height * scale
-      const offsetX = (targetWidth - scaledWidth) / 2
-      const offsetY = (targetHeight - scaledHeight) / 2
-      charCtx.drawImage(personImg, 38 + offsetX, 37 + offsetY, scaledWidth, scaledHeight)
+      const sx = (personImg.width - displayWidth / scale) / 2
+      const sy = (personImg.height - displayHeight / scale) / 2
+      charCtx.drawImage(personImg, sx, sy, displayWidth / scale, displayHeight / scale, 38, 37, displayWidth, displayHeight)
     }
   } catch(e) {}
   charCtx.drawImage(charFg, 0, 0)
