@@ -2,6 +2,7 @@ import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { drawMajsInfoImg } from '../components/render.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
+import BotLink from '../utils/BotLink.js';
 
 const api = new MajsoulApi();
 
@@ -48,6 +49,7 @@ export class MajsoulInfo extends plugin {
                 return true;
             }
             
+            let searchPlayerName = playerName;
             if (playerName) {
                 logger.info(`[MajsoulInfo] 搜索玩家昵称: ${playerName}`);
                 const players = await api.searchPlayer(playerName, mode === '3' ? 3 : 4);
@@ -57,10 +59,23 @@ export class MajsoulInfo extends plugin {
                     return true;
                 }
                 uid = String(players[0].id);
-                logger.info(`[MajsoulInfo] 提取到UID: ${uid}`);
+                searchPlayerName = players[0].nickname;
+                logger.info(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
             }
             
-            const imgBuffer = await drawMajsInfoImg(uid, mode);
+            let realtimePT = null;
+            if (e.group_id) {
+                logger.info(`[MajsoulInfo] 尝试获取实时PT数据...`);
+                realtimePT = await BotLink.queryPT(searchPlayerName || uid, e.group_id);
+                if (realtimePT) {
+                    logger.info(`[MajsoulInfo] 获取实时PT成功: ${JSON.stringify(realtimePT)}`);
+                } else {
+                    logger.info(`[MajsoulInfo] 获取实时PT失败，使用API数据`);
+                    await e.reply('⚠️ 未收到THsBot回复，请检查群内是否存在THsBot机器人或THsBot暂不可用，将以牌谱屋数据输出段位PT（非实时数据）');
+                }
+            }
+            
+            const imgBuffer = await drawMajsInfoImg(uid, mode, realtimePT);
             
             if (typeof imgBuffer === 'string') {
                 // 如果返回了字符串，说明是错误提示

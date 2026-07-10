@@ -93,15 +93,16 @@ async function generateSubscribeImage(record) {
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
         const ctx = canvas.getContext('2d');
         
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
-        
-        const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, totalHeight);
-        gradient.addColorStop(0, '#0d1117');
-        gradient.addColorStop(0.5, '#161b22');
-        gradient.addColorStop(1, '#0d1117');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        try {
+            const bgImage = await loadResImage('utils_texture/bg.jpg');
+            const scale = Math.max(CARD_WIDTH / bgImage.width, totalHeight / bgImage.height);
+            const x = (CARD_WIDTH - bgImage.width * scale) / 2;
+            const y = (totalHeight - bgImage.height * scale) / 2;
+            ctx.drawImage(bgImage, x, y, bgImage.width * scale, bgImage.height * scale);
+        } catch(e) {
+            ctx.fillStyle = '#0d1117';
+            ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        }
         
         let currentY = 0;
         

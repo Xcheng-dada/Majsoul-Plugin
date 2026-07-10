@@ -2,8 +2,23 @@ import { createCanvas } from '@napi-rs/canvas'
 import { loadResImage, drawText, drawRoundRect } from './canvas.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
+import fs from 'fs'
+import path from 'path'
 
 const api = new MajsoulApi()
+
+function getRandomPersonFull() {
+  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person_full')
+  try {
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
+    if (files.length === 0) return null
+    const randomIndex = Math.floor(Math.random() * files.length)
+    return `person_full/${files[randomIndex]}`
+  } catch (e) {
+    console.error('[render] 读取person_full目录失败:', e)
+    return null
+  }
+}
 
 function getRate(value) {
   if (!value) return "0.00%"
@@ -122,7 +137,31 @@ async function getRankIcon(level, stats, extended, mode = '4') {
   return canvas
 }
 
-export async function drawMajsInfoImg(uid, mode = 'auto') {
+function parseRankFromText(rankText) {
+  const rankMap = {
+    '初心': 1, '雀士': 2, '雀杰': 3, '雀豪': 4, '雀圣': 5, '魂天': 6
+  };
+  
+  let majorRank = 1;
+  let minorRank = 1;
+  
+  for (const [name, value] of Object.entries(rankMap)) {
+    if (rankText.includes(name)) {
+      majorRank = value;
+      break;
+    }
+  }
+  
+  const numMatch = rankText.match(/([一二三四五])$/);
+  if (numMatch) {
+    const numMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5 };
+    minorRank = numMap[numMatch[1]] || 1;
+  }
+  
+  return { majorRank, minorRank };
+}
+
+export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   let data4, data3, extended4, extended3
   
   try {
@@ -192,6 +231,21 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
 
   let level4Score = data4.level?.score + data4.level?.delta || 0
   let level3Score = data3.level?.score + data3.level?.delta || 0
+
+  if (realtimePT) {
+    if (realtimePT.fourPlayer) {
+      const rank4 = parseRankFromText(realtimePT.fourPlayer.rank);
+      const level4Id = rank4.majorRank * 10000 + rank4.majorRank * 100 + rank4.minorRank;
+      data4.level = { ...data4.level, id: level4Id };
+      level4Score = realtimePT.fourPlayer.score;
+    }
+    if (realtimePT.threePlayer) {
+      const rank3 = parseRankFromText(realtimePT.threePlayer.rank);
+      const level3Id = rank3.majorRank * 10000 + rank3.majorRank * 100 + rank3.minorRank;
+      data3.level = { ...data3.level, id: level3Id };
+      level3Score = realtimePT.threePlayer.score;
+    }
+  }
 
   let level4 = new PlayerLevel(data4.level?.id || 10101, level4Score)
   let level3 = new PlayerLevel(data3.level?.id || 10101, level3Score)
@@ -319,8 +373,18 @@ export async function drawMajsInfoImg(uid, mode = 'auto') {
   const charCtx = charCanvas.getContext('2d')
   charCtx.drawImage(charBg, 0, 0)
   try {
-    const waitingRoom = await loadResImage('info_texture/waitingroom.png')
-    charCtx.drawImage(waitingRoom, 38, 37, 289, 617)
+    const randomPerson = getRandomPersonFull()
+    if (randomPerson) {
+      const personImg = await loadResImage(randomPerson)
+      const targetWidth = 289
+      const targetHeight = 617
+      const scale = Math.max(targetWidth / personImg.width, targetHeight / personImg.height)
+      const scaledWidth = personImg.width * scale
+      const scaledHeight = personImg.height * scale
+      const offsetX = (targetWidth - scaledWidth) / 2
+      const offsetY = (targetHeight - scaledHeight) / 2
+      charCtx.drawImage(personImg, 38 + offsetX, 37 + offsetY, scaledWidth, scaledHeight)
+    }
   } catch(e) {}
   charCtx.drawImage(charFg, 0, 0)
   

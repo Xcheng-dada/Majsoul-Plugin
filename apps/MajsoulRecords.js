@@ -2,7 +2,7 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { createCanvas } from '@napi-rs/canvas';
-import { loadResImage, drawText, drawRoundRect } from '../components/canvas.js';
+import { loadResImage, drawText, drawRoundRect, drawPartialRoundRect } from '../components/canvas.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 
@@ -336,13 +336,12 @@ export class MajsoulRecords extends plugin {
         const CARD_WIDTH = 720;
         const PADDING = 16;
         const CONTENT_WIDTH = CARD_WIDTH - PADDING * 2;
-        const HEADER_HEIGHT = 80;
         const CARD_HEADER_HEIGHT = 60;
         const TABLE_HEADER_HEIGHT = 36;
         const PLAYER_ROW_HEIGHT = 56;
         const CARD_GAP = 16;
-        const HEADER_CARD_GAP = 16;
-        const FOOTER_HEIGHT = 40;
+        const HEADER_CARD_GAP = 0;
+        const FOOTER_HEIGHT = 30;
         
         const LEVEL_COL_CENTER = PADDING + 475;
         const LEVEL_ICON_SIZE = 40;
@@ -356,29 +355,49 @@ export class MajsoulRecords extends plugin {
             pt: PADDING + 650
         };
         
+        let titleImage = null;
+        let HEADER_HEIGHT = 80;
+        try {
+            titleImage = await loadResImage('info_texture/title.png');
+            const titleScale = CARD_WIDTH / titleImage.width;
+            const titleHeight = titleImage.height * titleScale;
+            const CROP_BOTTOM = 14;
+            HEADER_HEIGHT = titleHeight - CROP_BOTTOM;
+        } catch(e) {}
+        
         const totalHeight = HEADER_HEIGHT + HEADER_CARD_GAP +
             records.reduce((sum, record) => sum + CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT, 0) + 
-            records.length * CARD_GAP + FOOTER_HEIGHT;
+            (records.length - 1) * CARD_GAP + FOOTER_HEIGHT;
         
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
         const ctx = canvas.getContext('2d');
         
-        ctx.fillStyle = '#0d1117';
-        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        try {
+            const bgImage = await loadResImage('utils_texture/bg.jpg');
+            const scale = Math.max(CARD_WIDTH / bgImage.width, totalHeight / bgImage.height);
+            const x = (CARD_WIDTH - bgImage.width * scale) / 2;
+            const y = (totalHeight - bgImage.height * scale) / 2;
+            ctx.drawImage(bgImage, x, y, bgImage.width * scale, bgImage.height * scale);
+        } catch(e) {
+            ctx.fillStyle = '#0d1117';
+            ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
+        }
         
-        const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, totalHeight);
-        gradient.addColorStop(0, '#0d1117');
-        gradient.addColorStop(0.5, '#161b22');
-        gradient.addColorStop(1, '#0d1117');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
-        
-        drawText(ctx, `${playerName} 的${modeName}对局记录`, CARD_WIDTH / 2, 40, 28, '#ffd700', 'center', 'bold');
-        drawText(ctx, `最近 ${records.length} 场对局 | 数据来源: amae-koromo`, CARD_WIDTH / 2, 65, 14, '#6e7681', 'center');
+        if (titleImage) {
+            const titleWidth = CARD_WIDTH;
+            const titleScale = titleWidth / titleImage.width;
+            const titleHeight = titleImage.height * titleScale;
+            ctx.drawImage(titleImage, 0, 0, titleWidth, titleHeight);
+            drawText(ctx, `${playerName}的最近${records.length}场${modeName}对局`, CARD_WIDTH / 2, HEADER_HEIGHT - 70, 20, '#ffffff', 'center', 'bold');
+        } else {
+            drawText(ctx, `${playerName} 的${modeName}对局记录`, CARD_WIDTH / 2, HEADER_HEIGHT / 2 - 10, 28, '#ffd700', 'center', 'bold');
+            drawText(ctx, `最近 ${records.length} 场对局`, CARD_WIDTH / 2, HEADER_HEIGHT / 2 + 15, 14, '#6e7681', 'center');
+        }
         
         let currentY = HEADER_HEIGHT + HEADER_CARD_GAP;
         
-        for (const record of records) {
+        for (let i = 0; i < records.length; i++) {
+            const record = records[i];
             const cardHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT;
             
             drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, cardHeight, 12, '#1c2128');
@@ -392,7 +411,7 @@ export class MajsoulRecords extends plugin {
             ctx.fillStyle = headerGradient;
             
             ctx.save();
-            drawRoundRect(ctx, PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2, 11, null);
+            drawPartialRoundRect(ctx, PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2, 11, true, true, false, false, null);
             ctx.clip();
             ctx.fillRect(PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2);
             ctx.restore();
@@ -413,11 +432,7 @@ export class MajsoulRecords extends plugin {
             
             ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             
-            ctx.save();
-            drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT, 11, null);
-            ctx.clip();
             ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT);
-            ctx.restore();
             
             drawText(ctx, '排名', COL_X.rank, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
             drawText(ctx, '参赛玩家', COL_X.name, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'left', '500');
@@ -467,10 +482,12 @@ export class MajsoulRecords extends plugin {
                 currentY += PLAYER_ROW_HEIGHT;
             }
             
-            currentY += CARD_GAP;
+            if (i < records.length - 1) {
+                currentY += CARD_GAP;
+            }
         }
         
-        drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, totalHeight - 20, 12, '#ffffff', 'center', 'bold');
+        drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, totalHeight - 12, 12, '#ffffff', 'center', 'bold');
         
         return canvas.toBuffer('image/png');
     }

@@ -225,8 +225,8 @@ export default class GachaCore {
 
         // 2. 异步读取其他目录
         const [blueGiftList, purpleGiftList, baseDecorationList] = await Promise.all([
-            this.fileLoader('gift/blue'),
-            this.fileLoader('gift/purple'),
+            this.fileLoader('gift/intermediate'),
+            this.fileLoader('gift/advanced'),
             this.fileLoader('decoration') // 基础装饰（decoration根目录）
         ]);
 
@@ -333,9 +333,9 @@ export default class GachaCore {
                 let possibleDirs = [];
                 
                 if (objInt === ITEM_TYPE.GIFT_BLUE) {
-                    possibleDirs = ['gift/blue']; // 蓝色礼物目录
+                    possibleDirs = ['gift/intermediate']; // 中级礼物目录
                 } else if (objInt === ITEM_TYPE.GIFT_PURPLE) {
-                    possibleDirs = ['gift/purple']; // 紫色礼物目录
+                    possibleDirs = ['gift/advanced']; // 高级礼物目录
                 } else if (objInt === ITEM_TYPE.DECORATION) {
                     // 装饰图片：需要尝试多个目录
                     possibleDirs = ['decoration'];
