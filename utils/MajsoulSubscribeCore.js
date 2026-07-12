@@ -56,7 +56,7 @@ function formatPlayerInfo(player) {
     return `${nickname}：${score}（${prefix}${gradingScore}）`;
 }
 
-async function generateSubscribeImage(record) {
+async function generateSubscribeImage(record, targetPlayerId = null) {
     try {
         const mode = isThreePlayerMode(record.modeId) ? '3' : '4';
         const roomName = getRoomName(record.modeId);
@@ -155,6 +155,15 @@ async function generateSubscribeImage(record) {
         for (let i = 0; i < sortedPlayers.length; i++) {
             const player = sortedPlayers[i];
             const rank = i + 1;
+            
+            const isTarget = targetPlayerId && (player.id === targetPlayerId || player.playerId === targetPlayerId);
+            if (isTarget) {
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.06)';
+                ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, PLAYER_ROW_HEIGHT);
+                
+                ctx.fillStyle = '#ffd700';
+                ctx.fillRect(PADDING, currentY + 4, 3, PLAYER_ROW_HEIGHT - 8);
+            }
             
             const rankColors = {
                 1: ['#ffd700', '#ffaa00'],
@@ -569,7 +578,7 @@ export default class MajsoulSubscribeCore {
             fullMsg += `对局开始时间：${startTime}\n`;
             fullMsg += `对局结束时间：${endTime}`;
             
-            const imageBuffer = await generateSubscribeImage(record);
+            const imageBuffer = await generateSubscribeImage(record, sub.id);
             
             return {
                 text: imageBuffer ? `牌谱链接：${paipuUrl}` : fullMsg,
