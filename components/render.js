@@ -85,7 +85,7 @@ async function getLzBar(title, v1, v2, v3 = null) {
   return canvas
 }
 
-async function getRankImg(majorRank, minorRank, mode = '4', size = 156) {
+async function getRankImg(majorRank, minorRank, mode = '4', size = 156, score = 0) {
   const canvas = createCanvas(156, 156)
   const ctx = canvas.getContext('2d')
   
@@ -100,6 +100,17 @@ async function getRankImg(majorRank, minorRank, mode = '4', size = 156) {
     for (let i = 0; i < 3; i++) {
       const star = minorRank > i ? starFull : starEmpty
       ctx.drawImage(star, 26 + i * 38, 118, 32, 32)
+    }
+  } else {
+    const flowerFull = await loadResImage(`info_texture/flower_full.png`)
+    const flowerEmpty = await loadResImage(`info_texture/flower_empty.png`)
+    let flowerCount = 0
+    if (score >= 5 && score < 10) flowerCount = 1
+    else if (score >= 10 && score < 15) flowerCount = 2
+    else if (score >= 15) flowerCount = 3
+    for (let i = 0; i < 3; i++) {
+      const flower = flowerCount > i ? flowerFull : flowerEmpty
+      ctx.drawImage(flower, 26 + i * 38, 118, 32, 32)
     }
   }
   
@@ -118,7 +129,7 @@ async function getRankIcon(level, stats, extended, mode = '4') {
   const ctx = canvas.getContext('2d')
   ctx.drawImage(rankbg, 0, 0)
   
-  const rankIcon = await getRankImg(level.major_rank, level.minor_rank, mode, 156)
+  const rankIcon = await getRankImg(level.major_rank, level.minor_rank, mode, 156, level.score)
   ctx.drawImage(rankIcon, 51, 28)
   
   const avgRank = stats.avg_rank ? stats.avg_rank.toFixed(2) : "0.00"
@@ -158,6 +169,11 @@ function parseRankFromText(rankText) {
   if (numMatch) {
     const numMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5 };
     minorRank = numMap[numMatch[1]] || 1;
+  }
+  
+  const arabicMatch = rankText.match(/魂天(\d+)/);
+  if (arabicMatch) {
+    minorRank = parseInt(arabicMatch[1]) || 1;
   }
   
   return { majorRank, minorRank };
@@ -239,13 +255,33 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
       const rank4 = parseRankFromText(realtimePT.fourPlayer.rank);
       const level4Id = rank4.majorRank * 10000 + rank4.majorRank * 100 + rank4.minorRank;
       data4.level = { ...data4.level, id: level4Id };
-      level4Score = realtimePT.fourPlayer.score;
+      if (realtimePT.fourPlayer.useApiScore && data4.level) {
+        const apiScore = data4.level.score + (data4.level.delta || 0);
+        const level4Obj = new PlayerLevel(data4.level.id, 0);
+        if (level4Obj.isTenhou()) {
+          level4Score = apiScore / 100;
+        } else {
+          level4Score = apiScore;
+        }
+      } else {
+        level4Score = realtimePT.fourPlayer.score;
+      }
     }
     if (realtimePT.threePlayer) {
       const rank3 = parseRankFromText(realtimePT.threePlayer.rank);
       const level3Id = rank3.majorRank * 10000 + rank3.majorRank * 100 + rank3.minorRank;
       data3.level = { ...data3.level, id: level3Id };
-      level3Score = realtimePT.threePlayer.score;
+      if (realtimePT.threePlayer.useApiScore && data3.level) {
+        const apiScore = data3.level.score + (data3.level.delta || 0);
+        const level3Obj = new PlayerLevel(data3.level.id, 0);
+        if (level3Obj.isTenhou()) {
+          level3Score = apiScore / 100;
+        } else {
+          level3Score = apiScore;
+        }
+      } else {
+        level3Score = realtimePT.threePlayer.score;
+      }
     }
   }
 
@@ -392,5 +428,177 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   ctx.drawImage(rank4Icon, 357, 545)
   ctx.drawImage(rank3Icon, 357, 857)
 
+  return canvas.toBuffer('image/jpeg', 85)
+}
+
+function formatTimestamp(timestamp) {
+  if (!timestamp) return ''
+  const date = new Date(timestamp * 1000)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  const second = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
+export async function drawSearchResultImg(players, realtimeData = {}) {
+  const bg = await loadResImage('utils_texture/bg.jpg')
+  
+  const PLAYER_CARD_HEIGHT = 230
+  const PADDING = 15
+  const CARD_GAP = 20
+  const FOOTER_HEIGHT = 40
+  
+  let titleImage = null
+  let HEADER_HEIGHT = 80
+  try {
+    titleImage = await loadResImage('info_texture/title.png')
+    const titleScale = 650 / titleImage.width
+    const titleHeight = titleImage.height * titleScale
+    const CROP_BOTTOM = 14
+    HEADER_HEIGHT = titleHeight - CROP_BOTTOM
+  } catch(e) {}
+  
+  const width = 650
+  const height = HEADER_HEIGHT + players.length * (PLAYER_CARD_HEIGHT + CARD_GAP) + FOOTER_HEIGHT
+  
+  const canvas = createCanvas(width, height)
+  const ctx = canvas.getContext('2d')
+  
+  const bgScale = Math.max(width / bg.width, height / bg.height)
+  const bgX = (width - bg.width * bgScale) / 2
+  const bgY = (height - bg.height * bgScale) / 2
+  ctx.drawImage(bg, bgX, bgY, bg.width * bgScale, bg.height * bgScale)
+  
+  if (titleImage) {
+    const titleWidth = width
+    const titleScale = titleWidth / titleImage.width
+    const titleHeight = titleImage.height * titleScale
+    ctx.drawImage(titleImage, 0, 0, titleWidth, titleHeight)
+    drawText(ctx, '搜索结果', width / 2, HEADER_HEIGHT - 62, 20, '#ffffff', 'center', 'bold')
+  } else {
+    drawText(ctx, '搜索结果', width / 2, HEADER_HEIGHT / 2, 36, '#FFD700', 'center', 'bold')
+  }
+  
+  let y = HEADER_HEIGHT + 10
+  
+  for (let i = 0; i < players.length; i++) {
+    const player = players[i]
+    
+    drawRoundRect(ctx, PADDING, y, width - PADDING * 2, PLAYER_CARD_HEIGHT, 20, 'rgba(255, 255, 255, 0.1)')
+    
+    const uid = player.id.toString()
+    const realtime = realtimeData[uid]
+    
+    drawText(ctx, `${i + 1}. ${player.nickname}`, PADDING + 25, y + 35, 28, '#FFFFFF', 'left', 'bold')
+    
+    drawText(ctx, `UID: ${player.id}`, PADDING + 25, y + 65, 18, '#999999', 'left')
+    
+    const has4 = player.level4 || (realtime && realtime.fourPlayer)
+    const has3 = player.level3 || (realtime && realtime.threePlayer)
+    
+    let level4, level3
+    
+    if (realtime && realtime.fourPlayer) {
+      const rank = parseRankFromText(realtime.fourPlayer.rank)
+      const levelId = rank.majorRank * 10000 + rank.majorRank * 100 + rank.minorRank
+      let score = realtime.fourPlayer.score
+      if (realtime.fourPlayer.useApiScore && player.level4) {
+        const apiScore = player.level4.score + (player.level4.delta || 0)
+        const tempLevel = new PlayerLevel(levelId, 0)
+        if (tempLevel.isTenhou()) {
+          score = apiScore / 100
+        } else {
+          score = apiScore
+        }
+      }
+      level4 = new PlayerLevel(levelId, score)
+    } else if (player.level4) {
+      level4 = new PlayerLevel(player.level4.id, player.level4.score)
+    }
+    
+    if (realtime && realtime.threePlayer) {
+      const rank = parseRankFromText(realtime.threePlayer.rank)
+      const levelId = rank.majorRank * 10000 + rank.majorRank * 100 + rank.minorRank
+      let score = realtime.threePlayer.score
+      if (realtime.threePlayer.useApiScore && player.level3) {
+        const apiScore = player.level3.score + (player.level3.delta || 0)
+        const tempLevel = new PlayerLevel(levelId, 0)
+        if (tempLevel.isTenhou()) {
+          score = apiScore / 100
+        } else {
+          score = apiScore
+        }
+      }
+      level3 = new PlayerLevel(levelId, score)
+    } else if (player.level3) {
+      level3 = new PlayerLevel(player.level3.id, player.level3.score)
+    }
+    
+    const iconSize = 70
+    const halfWidth = (width - PADDING * 2) / 2
+    
+    if (has4) {
+      let rankIcon4
+      try {
+        rankIcon4 = await getRankImg(level4.major_rank, level4.minor_rank, '4', iconSize, level4.score)
+      } catch (e) {}
+      
+      const iconX4 = PADDING + 25
+      const iconY4 = y + 85
+      if (rankIcon4) {
+        ctx.drawImage(rankIcon4, iconX4, iconY4)
+      }
+      
+      const textX4 = iconX4 + iconSize + 20
+      drawText(ctx, '四麻', textX4, iconY4 + 18, 16, '#CCCCCC', 'left')
+      drawText(ctx, level4.getTag(), textX4, iconY4 + 42, 20, '#FFFFFF', 'left', 'bold')
+      drawText(ctx, level4.formatAdjustedScore(level4.score), textX4, iconY4 + 65, 16, '#FFD700', 'left')
+      
+      if (realtime && realtime.fourPlayer && realtime.isRealTime) {
+        drawText(ctx, '实时', iconX4 + iconSize / 2, iconY4 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
+      }
+    } else {
+      drawText(ctx, '四麻', PADDING + 25, y + 105, 16, '#666666', 'left')
+      drawText(ctx, '暂无数据', PADDING + 25, y + 128, 14, '#888888', 'left')
+    }
+    
+    if (has3) {
+      let rankIcon3
+      try {
+        rankIcon3 = await getRankImg(level3.major_rank, level3.minor_rank, '3', iconSize, level3.score)
+      } catch (e) {}
+      
+      const iconX3 = PADDING + halfWidth + 25
+      const iconY3 = y + 85
+      if (rankIcon3) {
+        ctx.drawImage(rankIcon3, iconX3, iconY3)
+      }
+      
+      const textX3 = iconX3 + iconSize + 20
+      drawText(ctx, '三麻', textX3, iconY3 + 18, 16, '#CCCCCC', 'left')
+      drawText(ctx, level3.getTag(), textX3, iconY3 + 42, 20, '#FFFFFF', 'left', 'bold')
+      drawText(ctx, level3.formatAdjustedScore(level3.score), textX3, iconY3 + 65, 16, '#FFD700', 'left')
+      
+      if (realtime && realtime.threePlayer && realtime.isRealTime) {
+        drawText(ctx, '实时', iconX3 + iconSize / 2, iconY3 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
+      }
+    } else {
+      drawText(ctx, '三麻', PADDING + halfWidth + 25, y + 105, 16, '#666666', 'left')
+      drawText(ctx, '暂无数据', PADDING + halfWidth + 25, y + 128, 14, '#888888', 'left')
+    }
+    
+    const lastActive = formatTimestamp(player.latest_timestamp)
+    if (lastActive) {
+      drawText(ctx, '最后活跃: ' + lastActive, width / 2, y + PLAYER_CARD_HEIGHT - 20, 14, '#666666', 'center')
+    }
+    
+    y += PLAYER_CARD_HEIGHT + CARD_GAP
+  }
+  
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', width / 2, height - 12, 12, '#ffffff', 'center', 'bold')
+  
   return canvas.toBuffer('image/jpeg', 85)
 }

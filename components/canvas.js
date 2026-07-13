@@ -1,10 +1,6 @@
 import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas'
 import path from 'path'
 
-// 注册字体
-const fontPath = path.resolve('./plugins/Majsoul-Plugin/resources/mj.otf')
-GlobalFonts.registerFromPath(fontPath, 'majsFont')
-
 // 封装简单的图像加载工具
 export async function loadResImage(subPath) {
   const fullPath = path.resolve('./plugins/Majsoul-Plugin/resources', subPath)

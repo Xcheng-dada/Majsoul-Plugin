@@ -16,8 +16,13 @@ export class PlayerLevel {
     if (majorRank < 1 || majorRank > PLAYER_RANKS_DETAIL.length) {
       majorRank = 1
     }
-    if (minorRank < 1 || minorRank > 3) {
-      minorRank = 1
+    if (majorRank >= 6) {
+      if (minorRank < 1) minorRank = 1
+      if (minorRank > 20) minorRank = 20
+    } else {
+      if (minorRank < 1 || minorRank > 3) {
+        minorRank = 1
+      }
     }
     
     this._numPlayerId = Math.floor(levelId / 10000)
@@ -31,7 +36,7 @@ export class PlayerLevel {
     this.minor_rank = this._minorRank
     
     if (this.isTenhou()) {
-      this.full_tag = this.major_rank
+      this.full_tag = `${this.major_rank}${this._minorRank}`
     } else {
       this.full_tag = `${this.major_rank}${this._minorRank}`
     }
@@ -51,7 +56,30 @@ export class PlayerLevel {
   
   _adjustRankAndScore(majorRank, minorRank, score) {
     if (majorRank >= 6) {
-      return { majorRank, minorRank, score }
+      let currentMajor = majorRank
+      let currentMinor = minorRank
+      let currentScore = score
+      
+      while (currentScore >= 20) {
+        if (currentMinor >= 20) {
+          break
+        }
+        currentMinor++
+        currentScore -= 10
+      }
+      
+      while (currentScore < 0) {
+        if (currentMinor <= 1) {
+          currentMajor = 5
+          currentMinor = 3
+          currentScore = 4500
+          break
+        }
+        currentMinor--
+        currentScore = 10 + currentScore
+      }
+      
+      return { majorRank: currentMajor, minorRank: currentMinor, score: currentScore }
     }
     
     if (score > 10000) {
@@ -137,7 +165,10 @@ export class PlayerLevel {
 
   formatAdjustedScore(score) {
     if (this.isTenhou()) {
-      return String(score)
+      if (this._minorRank >= 20) {
+        return score.toFixed(1)
+      }
+      return `${score.toFixed(1)}/20.0`
     }
     let scoreDisplay = this.getScoreDisplay(score)
     if (!this.getMaxPoint()) {

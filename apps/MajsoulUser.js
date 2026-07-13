@@ -2,6 +2,8 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel } from '../utils/PlayerLevel.js';
+import BotLink from '../utils/BotLink.js';
+import { drawSearchResultImg } from '../components/render.js';
 
 export class MajsoulUser extends plugin {
     constructor() {
@@ -50,28 +52,113 @@ export class MajsoulUser extends plugin {
                 return true;
             }
             
-            const players = await this.api.searchPlayer(playerName);
+            const [players4, players3] = await Promise.all([
+                this.api.searchPlayer(playerName, 4).catch(() => []),
+                this.api.searchPlayer(playerName, 3).catch(() => [])
+            ]);
+            
+            const mergedPlayers = {};
+            
+            for (const p of players4) {
+                const uid = p.id.toString();
+                const level4 = { ...p.level };
+                if (level4.delta) {
+                    level4.score = (level4.score || 0) + level4.delta;
+                }
+                if (!mergedPlayers[uid]) {
+                    mergedPlayers[uid] = {
+                        id: p.id,
+                        nickname: p.nickname,
+                        level4: level4,
+                        level3: null,
+                        latest_timestamp: p.latest_timestamp
+                    };
+                } else {
+                    mergedPlayers[uid].level4 = level4;
+                    if (p.latest_timestamp > (mergedPlayers[uid].latest_timestamp || 0)) {
+                        mergedPlayers[uid].latest_timestamp = p.latest_timestamp;
+                    }
+                }
+            }
+            
+            for (const p of players3) {
+                const uid = p.id.toString();
+                const level3 = { ...p.level };
+                if (level3.delta) {
+                    level3.score = (level3.score || 0) + level3.delta;
+                }
+                if (!mergedPlayers[uid]) {
+                    mergedPlayers[uid] = {
+                        id: p.id,
+                        nickname: p.nickname,
+                        level4: null,
+                        level3: level3,
+                        latest_timestamp: p.latest_timestamp
+                    };
+                } else {
+                    mergedPlayers[uid].level3 = level3;
+                    if (p.latest_timestamp > (mergedPlayers[uid].latest_timestamp || 0)) {
+                        mergedPlayers[uid].latest_timestamp = p.latest_timestamp;
+                    }
+                }
+            }
+            
+            const players = Object.values(mergedPlayers);
             
             if (players.length === 0) {
                 await e.reply('暂未搜索到该玩家ID噢~\n提示: 需要在金之间有一定数量的对局才能被搜索到！');
                 return true;
             }
             
-            let message = '🔍 搜索结果：\n\n';
-            for (let i = 0; i < players.length; i++) {
-                const player = players[i];
-                // 假设 PlayerLevel 是一个命名导出，且构造函数接受 levelId 和 score
-                const playerLevel = new PlayerLevel(player.level.id, player.level.score); 
-                
-                message += `【${i + 1}】${player.nickname}\n`;
-                message += `   ID: ${player.id}\n`;
-                message += `   段位: ${playerLevel.getTag()} (${playerLevel.formatAdjustedScore(player.level.score)})\n\n`;
+            for (const player of players) {
+                try {
+                    if (player.level4) {
+                        const stats4 = await this.api.getPlayerStats(player.id, 4);
+                        if (stats4 && stats4.level) {
+                            player.level4 = stats4.level;
+                        }
+                    }
+                    if (player.level3) {
+                        const stats3 = await this.api.getPlayerStats(player.id, 3);
+                        if (stats3 && stats3.level) {
+                            player.level3 = stats3.level;
+                        }
+                    }
+                } catch (e) {
+                    logger.warn(`[MajsoulUser] 获取玩家 ${player.id} 统计信息失败:`, e);
+                }
             }
             
-            message += '💡 提示：使用【雀魂绑定+ID】进行角色绑定\n';
-            message += '📊 使用【雀魂查询+ID】查看详细数据';
+            const realtimeData = {};
             
-            await e.reply(message);
+            if (e.group_id) {
+                try {
+                    logger.info('[MajsoulUser] 尝试获取实时PT数据...');
+                    const ptResult = await BotLink.queryPT(playerName, e.group_id);
+                    
+                    if (ptResult && ptResult.isRealTime) {
+                        if (ptResult.uid) {
+                            realtimeData[ptResult.uid] = ptResult;
+                        }
+                        
+                        for (const player of players) {
+                            if (realtimeData[player.id.toString()]) {
+                                continue;
+                            }
+                            
+                            if (ptResult.nickname && player.nickname === ptResult.nickname) {
+                                realtimeData[player.id.toString()] = ptResult;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    logger.warn('[MajsoulUser] 获取实时PT数据失败:', error);
+                }
+            }
+            
+            const imgBuffer = await drawSearchResultImg(players, realtimeData);
+            
+            await e.reply(segment.image(imgBuffer));
             
         } catch (error) {
             logger.error('[MajsoulUser] 搜索玩家失败:', error);

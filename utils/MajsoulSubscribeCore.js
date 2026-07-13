@@ -6,9 +6,6 @@ import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import MajsoulApi from './MajsoulApi.js';
 import { getRoomName, isThreePlayerMode, PlayerLevel } from './PlayerLevel.js';
 
-const fontPath = path.resolve('./plugins/Majsoul-Plugin/resources/mj.otf');
-GlobalFonts.registerFromPath(fontPath, 'majsFont');
-
 async function loadResImage(subPath) {
     const fullPath = path.resolve('./plugins/Majsoul-Plugin/resources', subPath);
     return await loadImage(fullPath);

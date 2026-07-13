@@ -103,11 +103,6 @@ class BotLink {
                     if (rankMatch) {
                         const rankName = rankMatch[1].trim();
                         
-                        if (rankName.includes('魂天')) {
-                            console.log('[BotLink] 检测到魂天段位，跳过该模式实时数据（魂天格式特殊，使用牌谱屋数据）');
-                            continue;
-                        }
-                        
                         const rankInfo = {
                             rank: rankName,
                             score: parseInt(rankMatch[2]),
@@ -120,21 +115,44 @@ class BotLink {
                             result.threePlayer = rankInfo;
                         }
                     } else {
-                        console.log('[BotLink] 段位块格式不匹配分数格式:', block);
+                        const tenTenMatch = block.match(/\[魂天(\d+)\s+([\d.]+)\]/);
+                        if (tenTenMatch) {
+                            let rankLevel = parseInt(tenTenMatch[1]);
+                            let score = parseFloat(tenTenMatch[2]);
+                            
+                            if (rankLevel > 20) {
+                                console.log('[BotLink] 魂天等级超过20，修正等级为20，分数将使用牌谱屋数据');
+                                rankLevel = 20;
+                                score = null;
+                            }
+                            
+                            const rankInfo = {
+                                rank: `魂天${rankLevel}`,
+                                score: score,
+                                maxScore: 200,
+                                useApiScore: score === null
+                            };
+                            
+                            if (i === 0) {
+                                result.fourPlayer = rankInfo;
+                            } else {
+                                result.threePlayer = rankInfo;
+                            }
+                            console.log('[BotLink] 解析到魂天段位:', rankInfo);
+                        } else {
+                            console.log('[BotLink] 段位块格式不匹配:', block);
+                        }
                     }
                 }
             }
             
-            if (text.includes('实时') || text.includes('同步')) {
+            if (text.includes('实时') || text.includes('同步') || text.includes('未查找到')) {
                 result.isRealTime = true;
             }
             
             console.log('[BotLink] 解析结果:', JSON.stringify(result));
             
-            if (result.fourPlayer || result.threePlayer) {
-                return result;
-            }
-            return null;
+            return result;
         } catch (e) {
             console.error('[BotLink] 解析PT响应失败:', e);
             return null;

@@ -61,6 +61,11 @@ export class MajsoulInfo extends plugin {
                 uid = String(players[0].id);
                 searchPlayerName = players[0].nickname;
                 logger.info(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
+            } else if (uid) {
+                searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 3 : 4);
+                if (searchPlayerName) {
+                    logger.info(`[MajsoulInfo] 通过UID获取昵称: ${searchPlayerName}`);
+                }
             }
             
             let realtimePT = null;
