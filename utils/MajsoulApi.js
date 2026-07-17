@@ -101,11 +101,27 @@ class HostProber {
      */
     selectNextHost(excludeCurrent = true) {
         const currentIndex = this.hosts.indexOf(this.currentHost);
+        
+        // 优先使用探测结果
         let candidates = this.probeResults
             .filter((r, i) => r.success && (!excludeCurrent || i !== currentIndex))
             .sort((a, b) => a.latency - b.latency);
         
-        // 如果没有预先探测的结果，直接选择下一个节点
+        // 如果没有预先探测结果，使用完整列表，但跳过已知不可用的节点
+        if (candidates.length === 0) {
+            candidates = this.hosts
+                .filter((_, i) => !excludeCurrent || i !== currentIndex)
+                .map(h => ({ host: h, latency: 0, success: true }));
+        }
+        
+        // 跳过无法解析的节点（记录在probeResults中失败的）
+        const failedHosts = this.probeResults
+            .filter(r => !r.success)
+            .map(r => r.host);
+        
+        candidates = candidates.filter(c => !failedHosts.includes(c.host));
+        
+        // 如果没有候选节点，尝试所有未排除的节点（包括之前失败的）
         if (candidates.length === 0) {
             candidates = this.hosts
                 .filter((_, i) => !excludeCurrent || i !== currentIndex)
@@ -121,7 +137,6 @@ class HostProber {
             return true;
         }
         
-        // 如果没有其他可用节点，保持当前节点
         this.logger.warn('[HostProber] 没有可用的备用节点');
         return false;
     }
@@ -474,12 +489,8 @@ export default class MajsoulApi {
         /** @type {string[]} API主机列表 */
         this.apiHosts = options.customHosts || [
             "1.data.amae-koromo.com",
-            "2.data.amae-koromo.com", 
-            "3.data.amae-koromo.com",
             "4.data.amae-koromo.com",
-            "5-data.amae-koromo.com",
-            "ak-data-1.sapk.ch",
-            "ak-data-2.sapk.ch"
+            "ak-data-1.sapk.ch"
         ];
 
         /** @type {HostProber} 主机探测实例（传递logger） */
@@ -532,8 +543,32 @@ export default class MajsoulApi {
 
     /**
      * 切换到下一个API节点
+     * @param {Error} [lastError] - 上一次请求失败的错误
      */
-    _switchEndpoint() {
+    async _switchEndpoint(lastError = null) {
+        // 如果遇到DNS解析失败，立即重新探测所有节点
+        if (lastError && (lastError.message.includes('ENOTFOUND') || lastError.message.includes('EAI_AGAIN'))) {
+            this.logger.info('[MajsoulApi] 检测到DNS解析失败，重新探测所有节点...');
+            await this.hostProber.reProbe();
+            this.baseUrl = `https://${this.hostProber.currentHost}/api/v2`;
+            this.logger.info(`[MajsoulApi] 切换到API节点: ${this.hostProber.currentHost}`);
+            return;
+        }
+        
+        // 如果遇到429，等待一段时间后切换到下一个节点
+        if (lastError && lastError.message.includes('HTTP 429')) {
+            const waitTime = 30000;
+            this.logger.info(`[MajsoulApi] 请求过于频繁(429)，等待 ${waitTime}ms 后切换节点...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            // 切换到下一个节点
+            const success = this.hostProber.selectNextHost();
+            if (success) {
+                this.baseUrl = `https://${this.hostProber.currentHost}/api/v2`;
+                this.logger.info(`[MajsoulApi] 切换到API节点: ${this.hostProber.currentHost}`);
+            }
+            return;
+        }
+        
         const success = this.hostProber.selectNextHost();
         if (success) {
             this.baseUrl = `https://${this.hostProber.currentHost}/api/v2`;
@@ -609,7 +644,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 搜索玩家失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -711,7 +746,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -771,7 +806,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 获取玩家昵称失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -825,7 +860,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 获取玩家统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -879,7 +914,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -982,7 +1017,7 @@ export default class MajsoulApi {
                 this.logger.warn(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    this._switchEndpoint();
+                    await this._switchEndpoint(error);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));

@@ -38,12 +38,12 @@ export default class MajsoulSchedule {
         this.logger.info('[MajsoulSchedule] 启动定时任务');
         this.isRunning = true;
         
-        // 四麻：每3分钟检查一次（与Majsoul_bot一致）
+        // 四麻：每5分钟检查一次（与三麻一致，避免频繁请求导致429）
         this.checkInterval4p = setInterval(() => {
             this.performCheck(4);
-        }, 3 * 60 * 1000);
+        }, 5 * 60 * 1000);
         
-        // 三麻：每5分钟检查一次（与Majsoul_bot一致）
+        // 三麻：每5分钟检查一次
         this.checkInterval3p = setInterval(() => {
             this.performCheck(3);
         }, 5 * 60 * 1000);
