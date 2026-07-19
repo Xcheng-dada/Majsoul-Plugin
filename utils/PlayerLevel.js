@@ -164,13 +164,14 @@ export class PlayerLevel {
   }
 
   formatAdjustedScore(score) {
+    const displayScore = score !== undefined ? score : this._adjustedScore
     if (this.isTenhou()) {
       if (this._minorRank >= 20) {
-        return score.toFixed(1)
+        return displayScore.toFixed(1)
       }
-      return `${score.toFixed(1)}/20.0`
+      return `${displayScore.toFixed(1)}/20.0`
     }
-    let scoreDisplay = this.getScoreDisplay(score)
+    let scoreDisplay = this.getScoreDisplay(displayScore)
     if (!this.getMaxPoint()) {
       return scoreDisplay
     }

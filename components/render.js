@@ -129,7 +129,7 @@ async function getRankIcon(level, stats, extended, mode = '4') {
   const ctx = canvas.getContext('2d')
   ctx.drawImage(rankbg, 0, 0)
   
-  const rankIcon = await getRankImg(level.major_rank, level.minor_rank, mode, 156, level.score)
+  const rankIcon = await getRankImg(level.major_rank, level.minor_rank, mode, 156, level._adjustedScore)
   ctx.drawImage(rankIcon, 51, 28)
   
   const avgRank = stats.avg_rank ? stats.avg_rank.toFixed(2) : "0.00"
@@ -183,26 +183,26 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   let data4, data3, extended4, extended3
   
   try {
-    // 始终获取两个模式的数据，用于显示段位卡片
-    // 使用 Promise.all 并行获取，提高效率
-    [data4, data3, extended4, extended3] = await Promise.all([
-      api.getPlayerStats(uid, 4).catch(e => {
-        console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
-        return JSON.parse(JSON.stringify(playerStatsZero))
-      }),
+    data4 = await api.getPlayerStats(uid, 4).catch(e => {
+      console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
+      return JSON.parse(JSON.stringify(playerStatsZero))
+    })
+    extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
+      console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
+      return JSON.parse(JSON.stringify(playerExtendZero))
+    })
+    const result3 = await Promise.all([
       api.getPlayerStats(uid, 3).catch(e => {
         console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
         return JSON.parse(JSON.stringify(playerStatsZero))
-      }),
-      api.getPlayerExtendedStats(uid, 4).catch(e => {
-        console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
-        return JSON.parse(JSON.stringify(playerExtendZero))
       }),
       api.getPlayerExtendedStats(uid, 3).catch(e => {
         console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
         return JSON.parse(JSON.stringify(playerExtendZero))
       })
     ])
+    data3 = result3[0]
+    extended3 = result3[1]
   } catch (e) {
     console.error(`[render.js] 获取玩家数据失败: ${e.message}`)
     return `获取玩家数据失败: ${e.message}\n可能原因：\n1. 网络连接问题\n2. UID不正确\n3. 玩家数据尚未同步到服务器`
@@ -516,7 +516,8 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       }
       level4 = new PlayerLevel(levelId, score)
     } else if (player.level4) {
-      level4 = new PlayerLevel(player.level4.id, player.level4.score)
+      const level4Score = player.level4.score + (player.level4.delta || 0)
+      level4 = new PlayerLevel(player.level4.id, level4Score)
     }
     
     if (realtime && realtime.threePlayer) {
@@ -534,7 +535,8 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       }
       level3 = new PlayerLevel(levelId, score)
     } else if (player.level3) {
-      level3 = new PlayerLevel(player.level3.id, player.level3.score)
+      const level3Score = player.level3.score + (player.level3.delta || 0)
+      level3 = new PlayerLevel(player.level3.id, level3Score)
     }
     
     const iconSize = 70
@@ -543,7 +545,7 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     if (has4) {
       let rankIcon4
       try {
-        rankIcon4 = await getRankImg(level4.major_rank, level4.minor_rank, '4', iconSize, level4.score)
+        rankIcon4 = await getRankImg(level4.major_rank, level4.minor_rank, '4', iconSize, level4._adjustedScore)
       } catch (e) {}
       
       const iconX4 = PADDING + 25
@@ -555,20 +557,21 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       const textX4 = iconX4 + iconSize + 20
       drawText(ctx, '四麻', textX4, iconY4 + 18, 16, '#CCCCCC', 'left')
       drawText(ctx, level4.getTag(), textX4, iconY4 + 42, 20, '#FFFFFF', 'left', 'bold')
-      drawText(ctx, level4.formatAdjustedScore(level4.score), textX4, iconY4 + 65, 16, '#FFD700', 'left')
+      drawText(ctx, level4.formatAdjustedScore(), textX4, iconY4 + 65, 16, '#FFD700', 'left')
       
       if (realtime && realtime.fourPlayer && realtime.isRealTime) {
         drawText(ctx, '实时', iconX4 + iconSize / 2, iconY4 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
       }
     } else {
       drawText(ctx, '四麻', PADDING + 25, y + 105, 16, '#666666', 'left')
-      drawText(ctx, '暂无数据', PADDING + 25, y + 128, 14, '#888888', 'left')
+      drawText(ctx, '暂未查询到数据', PADDING + 25, y + 128, 14, '#888888', 'left')
+      drawText(ctx, '可单独查询获取', PADDING + 25, y + 145, 12, '#666666', 'left')
     }
     
     if (has3) {
       let rankIcon3
       try {
-        rankIcon3 = await getRankImg(level3.major_rank, level3.minor_rank, '3', iconSize, level3.score)
+        rankIcon3 = await getRankImg(level3.major_rank, level3.minor_rank, '3', iconSize, level3._adjustedScore)
       } catch (e) {}
       
       const iconX3 = PADDING + halfWidth + 25
@@ -580,14 +583,15 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       const textX3 = iconX3 + iconSize + 20
       drawText(ctx, '三麻', textX3, iconY3 + 18, 16, '#CCCCCC', 'left')
       drawText(ctx, level3.getTag(), textX3, iconY3 + 42, 20, '#FFFFFF', 'left', 'bold')
-      drawText(ctx, level3.formatAdjustedScore(level3.score), textX3, iconY3 + 65, 16, '#FFD700', 'left')
+      drawText(ctx, level3.formatAdjustedScore(), textX3, iconY3 + 65, 16, '#FFD700', 'left')
       
       if (realtime && realtime.threePlayer && realtime.isRealTime) {
         drawText(ctx, '实时', iconX3 + iconSize / 2, iconY3 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
       }
     } else {
       drawText(ctx, '三麻', PADDING + halfWidth + 25, y + 105, 16, '#666666', 'left')
-      drawText(ctx, '暂无数据', PADDING + halfWidth + 25, y + 128, 14, '#888888', 'left')
+      drawText(ctx, '暂未查询到数据', PADDING + halfWidth + 25, y + 128, 14, '#888888', 'left')
+      drawText(ctx, '可单独查询获取', PADDING + halfWidth + 25, y + 145, 12, '#666666', 'left')
     }
     
     const lastActive = formatTimestamp(player.latest_timestamp)

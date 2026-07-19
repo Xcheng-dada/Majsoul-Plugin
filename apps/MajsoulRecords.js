@@ -213,13 +213,13 @@ export class MajsoulRecords extends plugin {
             if (isNumeric) {
                 const stats = await this.api.getPlayerStats(playerName, mode);
                 if (!stats || !stats.nickname) {
-                    return { success: false, message: `未找到ID为 ${playerName} 的玩家` };
+                    return { success: false, message: `未找到ID为 ${playerName} 的玩家或API暂时不可用` };
                 }
                 players = [{ id: parseInt(playerName), nickname: stats.nickname }];
             } else {
                 players = await this.api.searchPlayer(playerName.trim(), mode);
                 if (!players || players.length === 0) {
-                    return { success: false, message: `未找到昵称包含 "${playerName}" 的玩家\n提示：需要在金之间有对局记录才能被搜索到` };
+                    return { success: false, message: `未找到昵称包含 "${playerName}" 的玩家\n提示：需要在金之间有对局记录才能被搜索到，或API暂时不可用` };
                 }
             }
             

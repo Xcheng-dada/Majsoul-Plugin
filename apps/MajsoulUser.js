@@ -61,20 +61,20 @@ export class MajsoulUser extends plugin {
             
             for (const p of players4) {
                 const uid = p.id.toString();
-                const level4 = { ...p.level };
-                if (level4.delta) {
-                    level4.score = (level4.score || 0) + level4.delta;
-                }
+                const level4 = p.level && p.level.id >= 10000 && p.level.id < 20000 ? { ...p.level } : null;
                 if (!mergedPlayers[uid]) {
                     mergedPlayers[uid] = {
                         id: p.id,
                         nickname: p.nickname,
                         level4: level4,
                         level3: null,
+                        playedModes4: p.played_modes || [],
+                        playedModes3: [],
                         latest_timestamp: p.latest_timestamp
                     };
                 } else {
                     mergedPlayers[uid].level4 = level4;
+                    mergedPlayers[uid].playedModes4 = p.played_modes || [];
                     if (p.latest_timestamp > (mergedPlayers[uid].latest_timestamp || 0)) {
                         mergedPlayers[uid].latest_timestamp = p.latest_timestamp;
                     }
@@ -83,20 +83,20 @@ export class MajsoulUser extends plugin {
             
             for (const p of players3) {
                 const uid = p.id.toString();
-                const level3 = { ...p.level };
-                if (level3.delta) {
-                    level3.score = (level3.score || 0) + level3.delta;
-                }
+                const level3 = p.level && p.level.id >= 20000 && p.level.id < 30000 ? { ...p.level } : null;
                 if (!mergedPlayers[uid]) {
                     mergedPlayers[uid] = {
                         id: p.id,
                         nickname: p.nickname,
                         level4: null,
                         level3: level3,
+                        playedModes4: [],
+                        playedModes3: p.played_modes || [],
                         latest_timestamp: p.latest_timestamp
                     };
                 } else {
                     mergedPlayers[uid].level3 = level3;
+                    mergedPlayers[uid].playedModes3 = p.played_modes || [];
                     if (p.latest_timestamp > (mergedPlayers[uid].latest_timestamp || 0)) {
                         mergedPlayers[uid].latest_timestamp = p.latest_timestamp;
                     }
@@ -111,21 +111,52 @@ export class MajsoulUser extends plugin {
             }
             
             for (const player of players) {
-                try {
-                    if (player.level4) {
+                const level4Backup = player.level4;
+                const level3Backup = player.level3;
+                
+                player.level4 = null;
+                player.level3 = null;
+                
+                if (level4Backup) {
+                    try {
                         const stats4 = await this.api.getPlayerStats(player.id, 4);
                         if (stats4 && stats4.level) {
-                            player.level4 = stats4.level;
+                            const levelId4 = stats4.level.id;
+                            if (levelId4 >= 10000 && levelId4 < 20000) {
+                                player.level4 = stats4.level;
+                            } else {
+                                player.level4 = level4Backup;
+                            }
+                        } else {
+                            player.level4 = level4Backup;
                         }
+                    } catch (e) {
+                        logger.debug(`[MajsoulUser] 获取玩家 ${player.id} 四麻统计信息失败，使用搜索数据: ${e.message || e}`);
+                        player.level4 = level4Backup;
                     }
-                    if (player.level3) {
+                } else {
+                    player.level4 = null;
+                }
+                
+                if (level3Backup) {
+                    try {
                         const stats3 = await this.api.getPlayerStats(player.id, 3);
                         if (stats3 && stats3.level) {
-                            player.level3 = stats3.level;
+                            const levelId3 = stats3.level.id;
+                            if (levelId3 >= 20000 && levelId3 < 30000) {
+                                player.level3 = stats3.level;
+                            } else {
+                                player.level3 = level3Backup;
+                            }
+                        } else {
+                            player.level3 = level3Backup;
                         }
+                    } catch (e) {
+                        logger.debug(`[MajsoulUser] 获取玩家 ${player.id} 三麻统计信息失败，使用搜索数据: ${e.message || e}`);
+                        player.level3 = level3Backup;
                     }
-                } catch (e) {
-                    logger.warn(`[MajsoulUser] 获取玩家 ${player.id} 统计信息失败:`, e);
+                } else {
+                    player.level3 = null;
                 }
             }
             

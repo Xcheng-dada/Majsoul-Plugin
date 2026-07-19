@@ -502,11 +502,18 @@ export default class MajsoulApi {
         /** @type {number} 请求超时时间（毫秒） */
         this.timeout = options.timeout || 15000;
 
-        /** @type {RateLimiter} 请求频率限制器（传递logger） */
-        this.rateLimiter = new RateLimiter(
-            options.maxRequestsPerMinute || 15, 
+        /** @type {RateLimiter} 四麻请求频率限制器（极低频率，避免429） */
+        this.rateLimiter4 = new RateLimiter(
+            options.maxRequestsPerMinute || 1, 
             60000, 
-            { logger: this.logger }
+            { logger: this.logger, maxWaitTime: 600000 }
+        );
+
+        /** @type {RateLimiter} 三麻请求频率限制器（正常频率，三麻API不限流） */
+        this.rateLimiter3 = new RateLimiter(
+            options.maxRequestsPerMinute3 || 30, 
+            60000, 
+            { logger: this.logger, maxWaitTime: 30000 }
         );
 
         /** @type {string} 固定时间戳 (2010-01-01) */
@@ -544,8 +551,9 @@ export default class MajsoulApi {
     /**
      * 切换到下一个API节点
      * @param {Error} [lastError] - 上一次请求失败的错误
+     * @param {number} [retryCount=0] - 当前重试次数
      */
-    async _switchEndpoint(lastError = null) {
+    async _switchEndpoint(lastError = null, retryCount = 0) {
         // 如果遇到DNS解析失败，立即重新探测所有节点
         if (lastError && (lastError.message.includes('ENOTFOUND') || lastError.message.includes('EAI_AGAIN'))) {
             this.logger.info('[MajsoulApi] 检测到DNS解析失败，重新探测所有节点...');
@@ -555,17 +563,13 @@ export default class MajsoulApi {
             return;
         }
         
-        // 如果遇到429，等待一段时间后切换到下一个节点
+        // 如果遇到429，使用指数退避策略等待后重试（不切换节点，只等待）
         if (lastError && lastError.message.includes('HTTP 429')) {
-            const waitTime = 30000;
-            this.logger.info(`[MajsoulApi] 请求过于频繁(429)，等待 ${waitTime}ms 后切换节点...`);
+            const baseWaitTime = 10000;
+            const maxWaitTime = 300000;
+            const waitTime = Math.min(baseWaitTime * Math.pow(2, retryCount), maxWaitTime);
+            this.logger.debug(`[MajsoulApi] 请求过于频繁(429)，第 ${retryCount + 1} 次重试，等待 ${waitTime}ms...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
-            // 切换到下一个节点
-            const success = this.hostProber.selectNextHost();
-            if (success) {
-                this.baseUrl = `https://${this.hostProber.currentHost}/api/v2`;
-                this.logger.info(`[MajsoulApi] 切换到API节点: ${this.hostProber.currentHost}`);
-            }
             return;
         }
         
@@ -585,7 +589,8 @@ export default class MajsoulApi {
      * @returns {Promise<PlayerInfo[]>} - 玩家信息数组
      */
     async searchPlayer(playerName, mode = 4) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -641,10 +646,15 @@ export default class MajsoulApi {
                 throw new Error('API返回的数据格式不正确');
 
             } catch (error) {
+                if (error.message.includes('HTTP 429')) {
+                    this.logger.debug(`[MajsoulApi] 搜索玩家遇到429限流，继续重试: ${error.message}`);
+                    continue;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 搜索玩家失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -662,10 +672,17 @@ export default class MajsoulApi {
      * @returns {Promise<Object[]>} - 对局记录数组
      */
     async getPlayerRecords(playerId, mode = 4) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
+        if (mode === 4) {
+            const preWait = 30000;
+            this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 对局记录请求前等待 ${preWait}ms`);
+            await new Promise(resolve => setTimeout(resolve, preWait));
+        }
         const maxRetries = this.apiHosts.length;
+        let totalWaitTime = 0;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+        for (let attempt = 0; ; attempt++) {
             try {
                 const modeStr = mode.toString();
                 const modeName = modeStr === '4' ? '四麻' : '三麻';
@@ -743,18 +760,32 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.message.includes('HTTP 429')) {
+                    const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 对局记录遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
             }
         }
-
-        return [];
     }
 
     /**
@@ -764,7 +795,8 @@ export default class MajsoulApi {
      * @returns {Promise<string|null>} - 玩家昵称
      */
     async getPlayerNickname(playerId, mode = 4) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -803,10 +835,15 @@ export default class MajsoulApi {
                 throw new Error('未找到昵称信息');
 
             } catch (error) {
+                if (error.message.includes('HTTP 429')) {
+                    this.logger.debug(`[MajsoulApi] 获取玩家昵称遇到429限流，跳过重试: ${error.message}`);
+                    return null;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 获取玩家昵称失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
@@ -824,10 +861,12 @@ export default class MajsoulApi {
      * @returns {Promise<Object>} - 统计信息
      */
     async getPlayerStats(playerId, mode = 4) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
+        let totalWaitTime = 0;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+        for (let attempt = 0; ; attempt++) {
             try {
                 const modeStr = mode.toString();
                 const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
@@ -850,25 +889,60 @@ export default class MajsoulApi {
 
                 clearTimeout(timeoutId);
 
+                if (response.status === 404) {
+                    this.logger.debug(`[MajsoulApi] 玩家 ${playerId} 在${modeStr === '4' ? '四麻' : '三麻'}模式下无数据，返回404`);
+                    throw new Error(handleApiError('-404'));
+                }
+
+                if (response.status === 429) {
+                    const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
+                    const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
-                return await response.json();
+                const result = await response.json();
+                if (attempt > 0 || totalWaitTime > 0) {
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
+                }
+                return result;
 
             } catch (error) {
+                if (error.message === '资源未找到') {
+                    throw error;
+                }
+                
+                if (error.message.includes('HTTP 429')) {
+                    const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 获取玩家统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    this.logger.debug(`[MajsoulApi] 四麻请求失败，等待 ${waitTime}ms 后重试`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
             }
         }
-
-        return null;
     }
 
     /**
@@ -878,10 +952,12 @@ export default class MajsoulApi {
      * @returns {Promise<Object>} - 扩展统计信息
      */
     async getPlayerExtendedStats(playerId, mode = 4) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
+        let totalWaitTime = 0;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+        for (let attempt = 0; ; attempt++) {
             try {
                 const modeStr = mode.toString();
                 const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
@@ -904,25 +980,51 @@ export default class MajsoulApi {
 
                 clearTimeout(timeoutId);
 
+                if (response.status === 429) {
+                    const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
+                    const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
-                return await response.json();
+                const result = await response.json();
+                if (attempt > 0 || totalWaitTime > 0) {
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
+                }
+                return result;
 
             } catch (error) {
+                if (error.message.includes('HTTP 429')) {
+                    const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    this.logger.debug(`[MajsoulApi] 四麻请求失败，等待 ${waitTime}ms 后重试`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
             }
         }
-
-        return null;
     }
 
     /**
@@ -933,10 +1035,17 @@ export default class MajsoulApi {
      * @returns {Promise<Object[]>} - 对局记录数组
      */
     async getRecentRecords(playerId, mode = 4, limit = 10) {
-        await this.rateLimiter.acquire();
+        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        await rateLimiter.acquire();
+        if (mode === 4) {
+            const preWait = 30000;
+            this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 最近对局请求前等待 ${preWait}ms`);
+            await new Promise(resolve => setTimeout(resolve, preWait));
+        }
         const maxRetries = this.apiHosts.length;
+        let totalWaitTime = 0;
 
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
+        for (let attempt = 0; ; attempt++) {
             try {
                 const modeStr = mode.toString();
                 const modeName = modeStr === '4' ? '四麻' : '三麻';
@@ -1014,18 +1123,32 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.message.includes('HTTP 429')) {
+                    const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 最近对局遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+                
                 this.logger.warn(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 最近对局请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
                 if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error);
+                    await this._switchEndpoint(error, attempt);
                 } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
             }
         }
-
-        return [];
     }
 }
 
