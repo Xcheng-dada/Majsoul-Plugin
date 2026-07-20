@@ -38,17 +38,19 @@ export default class MajsoulSchedule {
         this.logger.info('[MajsoulSchedule] 启动定时任务');
         this.isRunning = true;
         
-        // 四麻：每5分钟检查一次（与三麻一致，避免频繁请求导致429）
+        // 四麻：每5分钟检查一次
         this.checkInterval4p = setInterval(() => {
             this.performCheck(4);
         }, 5 * 60 * 1000);
         
-        // 三麻：每5分钟检查一次
-        this.checkInterval3p = setInterval(() => {
-            this.performCheck(3);
-        }, 5 * 60 * 1000);
+        // 三麻：延迟60秒启动，每5分钟检查一次（错开四麻检查时间）
+        setTimeout(() => {
+            this.checkInterval3p = setInterval(() => {
+                this.performCheck(3);
+            }, 5 * 60 * 1000);
+        }, 60000);
         
-        // 立即执行一次检查（四麻和三麻各一次）
+        // 立即执行一次检查（四麻先执行，三麻延迟5秒）
         setTimeout(() => this.performCheck(4), 3000);
         setTimeout(() => this.performCheck(3), 5000);
         
@@ -74,6 +76,14 @@ export default class MajsoulSchedule {
     async performCheck(mode = 4) {
         const modeName = mode === 4 ? '四麻' : '三麻';
         const jobName = mode === 4 ? 'record_scheduled' : 'Trirecord_scheduled';
+        
+        if (this.checking) {
+            console.log(`[雀魂对局订阅] INFO: ${modeName}检查跳过，已有检查任务在运行中`);
+            this.logger.info(`[MajsoulSchedule] ${modeName}检查跳过，已有检查任务在运行中`);
+            return;
+        }
+        
+        this.checking = true;
         
         try {
             // 使用 console.log 确保控制台可见（模拟 Majsoul_bot 的输出格式）
@@ -116,6 +126,8 @@ export default class MajsoulSchedule {
         } catch (error) {
             console.error(`[雀魂对局订阅] ERROR: 检查${modeName}更新失败: ${error.message}`);
             this.logger.error(`[MajsoulSchedule] 检查${modeName}更新失败: ${error.message}`);
+        } finally {
+            this.checking = false;
         }
     }
     
@@ -207,6 +219,12 @@ export default class MajsoulSchedule {
         }
         
         try {
+            if (this.checking) {
+                this.logger.info('[MajsoulSchedule] 手动检查跳过，已有检查任务在运行中');
+                return { success: false, message: '已有检查任务在运行中' };
+            }
+            
+            this.checking = true;
             this.logger.info('[MajsoulSchedule] 开始手动检查...');
             
             // 检查四麻
@@ -238,6 +256,8 @@ export default class MajsoulSchedule {
         } catch (error) {
             this.logger.error('[MajsoulSchedule] 手动检查失败:', error);
             return { success: false, message: `检查失败: ${error.message}` };
+        } finally {
+            this.checking = false;
         }
     }
 }

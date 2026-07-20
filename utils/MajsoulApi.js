@@ -488,6 +488,7 @@ export default class MajsoulApi {
 
         /** @type {string[]} API主机列表 */
         this.apiHosts = options.customHosts || [
+            "5-data.amae-koromo.com",
             "1.data.amae-koromo.com",
             "4.data.amae-koromo.com",
             "ak-data-1.sapk.ch"
@@ -502,9 +503,9 @@ export default class MajsoulApi {
         /** @type {number} 请求超时时间（毫秒） */
         this.timeout = options.timeout || 15000;
 
-        /** @type {RateLimiter} 四麻请求频率限制器（极低频率，避免429） */
+        /** @type {RateLimiter} 四麻请求频率限制器（10次/分钟） */
         this.rateLimiter4 = new RateLimiter(
-            options.maxRequestsPerMinute || 1, 
+            options.maxRequestsPerMinute || 10, 
             60000, 
             { logger: this.logger, maxWaitTime: 600000 }
         );
@@ -674,11 +675,6 @@ export default class MajsoulApi {
     async getPlayerRecords(playerId, mode = 4) {
         const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
         await rateLimiter.acquire();
-        if (mode === 4) {
-            const preWait = 30000;
-            this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 对局记录请求前等待 ${preWait}ms`);
-            await new Promise(resolve => setTimeout(resolve, preWait));
-        }
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 
@@ -1037,11 +1033,6 @@ export default class MajsoulApi {
     async getRecentRecords(playerId, mode = 4, limit = 10) {
         const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
         await rateLimiter.acquire();
-        if (mode === 4) {
-            const preWait = 30000;
-            this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 最近对局请求前等待 ${preWait}ms`);
-            await new Promise(resolve => setTimeout(resolve, preWait));
-        }
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 

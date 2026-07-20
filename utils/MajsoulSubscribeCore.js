@@ -487,10 +487,6 @@ export default class MajsoulSubscribeCore {
                     
                     const records = await this.api.getPlayerRecords(sub.id, mode);
                     
-                    if (mode === 4) {
-                        await new Promise(resolve => setTimeout(resolve, 10000));
-                    }
-                    
                     if (!records || records.length === 0) {
                         this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 无对局记录`);
                         successCount++;
