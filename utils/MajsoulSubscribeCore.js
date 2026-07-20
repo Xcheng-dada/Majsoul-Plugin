@@ -507,7 +507,7 @@ export default class MajsoulSubscribeCore {
                         this._logger.info(`[MajsoulSubscribeCore] 发现新对局: ${sub.nickname || sub.id}`);
                         
                         // 生成播报消息（使用工具函数）
-                        const msg = await this._generateBroadcastMessage(latestRecord);
+                        const msg = await this._generateBroadcastMessage(latestRecord, sub);
                         
                         updates.push({
                             groupId: sub.gid,
@@ -552,7 +552,7 @@ export default class MajsoulSubscribeCore {
     }
     
     // 生成播报消息
-    async _generateBroadcastMessage(record) {
+    async _generateBroadcastMessage(record, sub) {
         try {
             const roomName = getRoomName(record.modeId);
             const paipuUrl = generatePaipuUrl(record.uuid);
