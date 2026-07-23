@@ -1,4 +1,4 @@
-// plugins/Majsoul-Plugin/core/GachaCore.js
+// plugins/Majsoul-Plugin/utils/GachaCore.js
 import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
@@ -95,14 +95,14 @@ export default class GachaCore {
 
     // 加载卡池配置 gacha.json
     async gachaLoader() {
-        const filePath = path.join(this.resourcesRoot, 'gacha.json');
+        const filePath = path.join(this.resourcesRoot, '..', 'config', 'gacha.json');
         const data = await fs.readFile(filePath, 'utf-8');
         return JSON.parse(data);
     }
 
     // 加载群组卡池配置 group_pool.json
     async groupPoolLoader() {
-        const filePath = path.join(this.resourcesRoot, 'group_pool.json');
+        const filePath = path.join(this.resourcesRoot, '..', 'data', 'group_pool.json');
         try {
             const data = await fs.readFile(filePath, 'utf-8');
             return JSON.parse(data);
@@ -114,7 +114,7 @@ export default class GachaCore {
 
     // 保存群组卡池配置（用于切换卡池时调用）
     async saveGroupPool(data) {
-        const filePath = path.join(this.resourcesRoot, 'group_pool.json');
+        const filePath = path.join(this.resourcesRoot, '..', 'data', 'group_pool.json');
         await fs.writeFile(filePath, JSON.stringify(data, null, 4), 'utf-8');
     }
 

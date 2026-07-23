@@ -79,3 +79,15 @@ export function drawText(ctx, text, x, y, size = 30, color = '#FFFFFF', align = 
   ctx.textBaseline = 'middle'
   ctx.fillText(text, x, y)
 }
+
+// 带蒙版抠图：把 src 按 mask 的 alpha 通道抠出来，返回新的 Canvas（对应 Python 的 paste(im, box, mask)）
+export function applyMask(srcCanvas, maskCanvas) {
+  const c = createCanvas(srcCanvas.width, srcCanvas.height)
+  const ctx = c.getContext('2d')
+  ctx.drawImage(srcCanvas, 0, 0)
+  ctx.globalCompositeOperation = 'destination-in'
+  // 将 mask 拉伸到 src 实际尺寸，避免 mask 与头像原图尺寸不一致导致头像被裁切/偏移
+  ctx.drawImage(maskCanvas, 0, 0, maskCanvas.width, maskCanvas.height, 0, 0, srcCanvas.width, srcCanvas.height)
+  ctx.globalCompositeOperation = 'source-over'
+  return c
+}

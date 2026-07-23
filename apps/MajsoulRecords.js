@@ -373,7 +373,7 @@ export class MajsoulRecords extends plugin {
         const ctx = canvas.getContext('2d');
         
         try {
-            const bgImage = await loadResImage('utils_texture/bg.jpg');
+            const bgImage = await loadResImage('bg.jpg');
             const scale = Math.max(CARD_WIDTH / bgImage.width, totalHeight / bgImage.height);
             const x = (CARD_WIDTH - bgImage.width * scale) / 2;
             const y = (totalHeight - bgImage.height * scale) / 2;

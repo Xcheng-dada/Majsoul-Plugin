@@ -2,9 +2,9 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import path from 'path';
-import GachaCore from '../core/GachaCore.js';
+import GachaCore from '../utils/GachaCore.js';
 import DailyLimiter from '../utils/DailyLimiter.js';
-import { ITEM_TYPE } from '../core/GachaCore.js';
+import { ITEM_TYPE } from '../utils/GachaCore.js';
 
 export class MajsoulGacha extends plugin {
     constructor() {

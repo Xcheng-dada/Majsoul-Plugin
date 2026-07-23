@@ -2,62 +2,27 @@
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
-// 获取当前文件的绝对路径
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// 计算正确的 plugin.js 路径（使用相对路径）
-const pluginRelativePath = '../../lib/plugins/plugin.js';
-const pluginPath = join(__dirname, pluginRelativePath);
-
-// 使用 pathToFileURL 将 Windows 路径转换为正确的 file:// URL
-const pluginUrl = pathToFileURL(pluginPath).href;
-
-// 使用动态导入
-let plugin;
-try {
-    console.log(`[Majsoul-Plugin] 尝试导入 plugin.js，路径: ${pluginUrl}`);
-    const module = await import(pluginUrl);
-    plugin = module.default || module;
-    console.log('[Majsoul-Plugin] 成功导入 plugin.js');
-} catch (error) {
-    console.error(`[Majsoul-Plugin] 无法导入 plugin.js: ${error.message}`);
-    console.error(`[Majsoul-Plugin] 尝试的路径: ${pluginUrl}`);
-    
-    // 如果失败，尝试其他可能的路径
-    const alternativePaths = [
-        join(__dirname, '../../../lib/plugins/plugin.js'),  // 多一层
-        join(__dirname, '../../../../../lib/plugins/plugin.js'), // 更多层
-        'file:///F:/桌面/BOT/YunzaiBOT/Yunzai/TRSS-Yunzai/lib/plugins/plugin.js' // 绝对路径
-    ];
-    
-    for (const altPath of alternativePaths) {
-        try {
-            const altUrl = altPath.startsWith('file://') ? altPath : pathToFileURL(altPath).href;
-            console.log(`[Majsoul-Plugin] 尝试备用路径: ${altUrl}`);
-            const module = await import(altUrl);
-            plugin = module.default || module;
-            console.log(`[Majsoul-Plugin] 使用备用路径成功导入: ${altUrl}`);
-            break;
-        } catch (altError) {
-            console.error(`[Majsoul-Plugin] 备用路径 ${altPath} 也失败: ${altError.message}`);
-        }
-    }
-    
-    if (!plugin) {
-        throw new Error('[Majsoul-Plugin] 无法找到 plugin.js，请检查 Yunzai 的安装路径');
-    }
-}
-
-// 导入其他模块
 import { MajsoulGacha } from './apps/MajsoulGacha.js';
 import { MajsoulUser } from './apps/MajsoulUser.js';
 import { MajsoulSubscribe } from './apps/MajsoulSubscribe.js';
 import { MajsoulRecords } from './apps/MajsoulRecords.js';
 import { MajsoulInfo } from './apps/MajsoulInfo.js';
+import { MajsoulReview } from './apps/MajsoulReview.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 
+// 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pluginModule = await import(pathToFileURL(join(__dirname, '../../lib/plugins/plugin.js')).href);
+const plugin = pluginModule.default || pluginModule.Plugin || pluginModule;
+
+// 模块级定时任务管理器（多实例共享，避免重复启动）
 let scheduleManager = null;
+
+// 定时检查配置：四麻每 3 分钟，三麻每 5 分钟
+const SCHEDULES = [
+  { type: 4, interval: 3 * 60 * 1000, label: '四麻' },
+  { type: 3, interval: 5 * 60 * 1000, label: '三麻' },
+];
 
 export class majsoul extends plugin {
   constructor() {
@@ -245,177 +210,144 @@ export class majsoul extends plugin {
           reg: '^#?查询三麻\\s+(.+)$',
           fnc: 'majsoulInfo',
           permission: 'group'
+        },
+        
+        // AI 牌谱分析相关指令
+        {
+          reg: '^#?(牌谱Review|牌谱review|Review|review)\\s+(.+)$',
+          fnc: 'majsoulReview',
+          permission: 'group'
+        },
+        {
+          reg: '^#?(雀魂场况|场况|牌谱详情)\\s+(.+)$',
+          fnc: 'majsoulRenderLog',
+          permission: 'group'
+        },
+        // 雀魂账号登录（获取真实昵称/头像，并持久化登录态以支持自动续期）
+        {
+          reg: '^#?雀魂登录\\s+(\\S+)\\s+(.+)$',
+          fnc: 'majsoulLogin',
+          permission: 'group'
         }
       ]
     });
     
-    // 现在可以安全地初始化各个功能模块
-    this._gachaModule = new MajsoulGacha();
-    this._userModule = new MajsoulUser();
-    this._subscribeModule = new MajsoulSubscribe();
-    this._recordsModule = new MajsoulRecords();
-    this._infoModule = new MajsoulInfo();
+    // 实例化各功能模块
+    this.modules = {
+      gacha: new MajsoulGacha(),
+      user: new MajsoulUser(),
+      subscribe: new MajsoulSubscribe(),
+      records: new MajsoulRecords(),
+      info: new MajsoulInfo(),
+      review: new MajsoulReview(),
+    };
   }
   
   // 指令路由 - 抽卡相关
   async majsoulGacha(e) {
-    return await this._gachaModule.handle(e);
+    return await this.modules.gacha.handle(e);
   }
   
   // 指令路由 - 用户管理相关
   async majsoulUser(e) {
-    return await this._userModule.handle(e);
+    return await this.modules.user.handle(e);
   }
   
   // 指令路由 - 对局订阅相关
   async majsoulSubscribe(e) {
-    return await this._subscribeModule.handle(e);
+    return await this.modules.subscribe.handle(e);
   }
   
   // 指令路由 - 对局查询相关
   async majsoulRecords(e) {
-    return await this._recordsModule.handle(e);
+    return await this.modules.records.handle(e);
   }
   
   // 指令路由 - 玩家信息查询相关
   async majsoulInfo(e) {
-    return await this._infoModule.handle(e);
+    return await this.modules.info.handle(e);
+  }
+  
+  // 指令路由 - AI 牌谱分析相关
+  async majsoulReview(e) {
+    return await this.modules.review.reviewCommand(e);
+  }
+  
+  async majsoulRenderLog(e) {
+    return await this.modules.review.renderLog(e);
+  }
+
+  // 指令路由 - 雀魂登录
+  async majsoulLogin(e) {
+    return await this.modules.review.loginCommand(e);
   }
 
   // 插件加载时的初始化
   async init() {
     console.log('[Majsoul-Plugin] 雀魂插件初始化...');
-    
-    try {
-      // 初始化抽卡模块
-      await this._gachaModule.init?.();
-      console.log('[Majsoul-Plugin] 抽卡模块初始化完成');
-      
-      // 初始化用户管理模块
-      await this._userModule.init?.();
-      console.log('[Majsoul-Plugin] 用户管理模块初始化完成');
-      
-      // 初始化订阅模块
-      await this._subscribeModule.init?.();
-      console.log('[Majsoul-Plugin] 对局订阅模块初始化完成');
-      
-      // 启动定时任务
-      this._startSchedule();
-      
-    } catch (error) {
-      console.error('[Majsoul-Plugin] 模块初始化失败:', error);
+    for (const [key, mod] of Object.entries(this.modules)) {
+      try {
+        await mod.init?.();
+        console.log(`[Majsoul-Plugin] ${key} 模块初始化完成`);
+      } catch (error) {
+        console.error(`[Majsoul-Plugin] ${key} 模块初始化失败:`, error);
+      }
     }
+    this._startSchedule();
   }
   
   // 启动定时任务
   _startSchedule() {
-    // 获取 Bot 实例
-    let botInstance = null;
-    if (typeof global.Bot !== 'undefined') {
-      botInstance = global.Bot;
-    } else if (this.bot) {
-      botInstance = this.bot;
-    }
-    
-    // 初始化 scheduleManager
-    if (!scheduleManager) {
-      scheduleManager = new MajsoulSchedule();
-      if (botInstance) {
-        scheduleManager.setBot(botInstance);
-      }
-    }
-    
-    // 如果定时任务已在运行，不再重复启动
-    if (scheduleManager.isRunning) {
+    if (scheduleManager && scheduleManager.isRunning) {
       console.log('[Majsoul-Plugin] 定时任务已在运行中');
       return;
     }
-    
-    // 使用 setInterval 实现定时检查
-    // 四麻：每3分钟
-    const interval4p = setInterval(async () => {
-      try {
-        console.log('[Majsoul-Plugin] 开始四麻定时检查...');
-        
-        // 确保有 Bot 实例
-        if (!scheduleManager.bot && typeof global.Bot !== 'undefined') {
-          scheduleManager.setBot(global.Bot);
+
+    scheduleManager = new MajsoulSchedule();
+    if (typeof global.Bot !== 'undefined') scheduleManager.setBot(global.Bot);
+    else if (this.bot) scheduleManager.setBot(this.bot);
+
+    for (const { type, interval, label } of SCHEDULES) {
+      const timer = setInterval(async () => {
+        try {
+          if (!scheduleManager.bot && typeof global.Bot !== 'undefined') scheduleManager.setBot(global.Bot);
+          await scheduleManager.performCheck(type);
+          console.log(`[Majsoul-Plugin] ${label}定时检查完成`);
+        } catch (error) {
+          console.error(`[Majsoul-Plugin] ${label}定时检查失败:`, error);
         }
-        
-        await scheduleManager.performCheck(4);
-        console.log('[Majsoul-Plugin] 四麻定时检查完成');
-      } catch (error) {
-        console.error('[Majsoul-Plugin] 四麻定时检查失败:', error);
-      }
-    }, 3 * 60 * 1000);
-    
-    // 三麻：每5分钟
-    const interval3p = setInterval(async () => {
-      try {
-        console.log('[Majsoul-Plugin] 开始三麻定时检查...');
-        
-        // 确保有 Bot 实例
-        if (!scheduleManager.bot && typeof global.Bot !== 'undefined') {
-          scheduleManager.setBot(global.Bot);
-        }
-        
-        await scheduleManager.performCheck(3);
-        console.log('[Majsoul-Plugin] 三麻定时检查完成');
-      } catch (error) {
-        console.error('[Majsoul-Plugin] 三麻定时检查失败:', error);
-      }
-    }, 5 * 60 * 1000);
-    
-    // 保存定时器引用用于停止
-    scheduleManager.interval4p = interval4p;
-    scheduleManager.interval3p = interval3p;
+      }, interval);
+      scheduleManager['interval' + type + 'p'] = timer;
+    }
+
     scheduleManager.isRunning = true;
-    
     console.log('[Majsoul-Plugin] 定时任务启动成功（四麻3分钟/三麻5分钟）');
-    
-    // 立即执行一次检查
+
+    // 启动后稍作延迟执行一次初始检查
     setTimeout(async () => {
-      console.log('[Majsoul-Plugin] 执行初始检查...');
-      await scheduleManager.performCheck(4);
-      await scheduleManager.performCheck(3);
+      for (const { type } of SCHEDULES) await scheduleManager.performCheck(type);
     }, 5000);
   }
 
   // 插件卸载时的清理
   async uninstall() {
     console.log('[Majsoul-Plugin] 正在卸载插件...');
-    
-    // 停止定时任务
+
     if (scheduleManager) {
-      try {
-        // 清除 setInterval 定时器
-        if (scheduleManager.interval4p) {
-          clearInterval(scheduleManager.interval4p);
-        }
-        if (scheduleManager.interval3p) {
-          clearInterval(scheduleManager.interval3p);
-        }
-        // 调用 scheduleManager 的 stop 方法
-        if (typeof scheduleManager.stop === 'function') {
-          scheduleManager.stop();
-        }
-        console.log('[Majsoul-Plugin] 定时任务已停止');
-      } catch (error) {
-        console.error('[Majsoul-Plugin] 停止定时任务时出错:', error);
-      }
+      clearInterval(scheduleManager.interval4p);
+      clearInterval(scheduleManager.interval3p);
+      await scheduleManager.stop?.();
       scheduleManager = null;
     }
-    
-    // 清理各个模块
-    try {
-      await this._gachaModule.uninstall?.();
-      await this._userModule.uninstall?.();
-      await this._subscribeModule.uninstall?.();
-      console.log('[Majsoul-Plugin] 各模块已清理');
-    } catch (error) {
-      console.error('[Majsoul-Plugin] 模块清理时出错:', error);
+
+    for (const [key, mod] of Object.entries(this.modules)) {
+      try {
+        await mod.uninstall?.();
+      } catch (error) {
+        console.error(`[Majsoul-Plugin] ${key} 模块清理失败:`, error);
+      }
     }
-    
+
     console.log('[Majsoul-Plugin] 插件卸载完成');
   }
   
@@ -434,5 +366,3 @@ export class majsoul extends plugin {
   }
 }
 
-// 保持原有的导出，确保向后兼容
-export { MajsoulGacha, MajsoulUser, MajsoulSubscribe, MajsoulRecords };

@@ -672,7 +672,7 @@ export default class MajsoulApi {
      * @param {number} [mode=4] - 模式（3=三麻，4=四麻）
      * @returns {Promise<Object[]>} - 对局记录数组
      */
-    async getPlayerRecords(playerId, mode = 4) {
+    async getPlayerRecords(playerId, mode = 4, limit = 2) {
         const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
         await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
@@ -715,7 +715,7 @@ export default class MajsoulApi {
                 this.logger.debug(`[MajsoulApi] 统计信息count值: ${count}`);
 
                 // 步骤2: 获取对局记录（限制2条，按时间降序）
-                const recordsUrl = `${this.baseUrl}/pl${modeStr}/player_records/${playerId}/${currentTimestamp}/${this.startDateTimestamp}?limit=2&mode=${modeParams}&descending=true&tag=${count}`;
+                const recordsUrl = `${this.baseUrl}/pl${modeStr}/player_records/${playerId}/${currentTimestamp}/${this.startDateTimestamp}?limit=${limit}&mode=${modeParams}&descending=true&tag=${count}`;
                 this.logger.debug(`[MajsoulApi] 获取对局记录: ${recordsUrl}`);
 
                 const recordsController = new AbortController();

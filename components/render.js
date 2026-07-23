@@ -1,9 +1,468 @@
-import { createCanvas } from '@napi-rs/canvas'
-import { loadResImage, drawText, drawRoundRect } from './canvas.js'
+import { createCanvas, loadImage } from '@napi-rs/canvas'
+import { loadResImage, drawText, drawRoundRect, applyMask } from './canvas.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
 import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+// ---- 头像渲染（移植自 MajsoulUID-plugin）：avatar_id → lqc.json 路径 → CDN 下载 bighead.png ----
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const pluginRoot = path.resolve(__dirname, '..')
+const avatarCacheRoot = path.join(pluginRoot, 'data', 'charactor')
+let avatarConfigCache = null
+
+function readJsonIfExists(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function loadAvatarConfig() {
+  if (avatarConfigCache) return avatarConfigCache
+  const lqcPaths = [
+    path.join(pluginRoot, 'config', 'lqc.json'),
+    path.join(pluginRoot, 'data', 'lqc.json')
+  ]
+  for (const lqcPath of lqcPaths) {
+    const lqc = readJsonIfExists(lqcPath)
+    if (!lqc) continue
+    const extendRes = readJsonIfExists(path.join(path.dirname(lqcPath), 'extendRes.json')) || {}
+    avatarConfigCache = { lqc, extendRes }
+    return avatarConfigCache
+  }
+  avatarConfigCache = { lqc: {}, extendRes: {} }
+  return avatarConfigCache
+}
+
+function findExtendResEntry(extendRes, assetPath) {
+  if (extendRes[assetPath]) return assetPath
+  const normalized = assetPath.replace(/\\/g, '/')
+  return Object.keys(extendRes).find(key => key === normalized || key.endsWith(`/${normalized}`)) || ''
+}
+
+function isSupportedImageBuffer(buffer) {
+  if (!buffer || buffer.length < 12) return false
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return true
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true
+  if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return true
+  if (buffer.subarray(0, 3).toString('ascii') === 'GIF') return true
+  return false
+}
+
+function xorMajsoulImageBuffer(buffer) {
+  const decoded = Buffer.alloc(buffer.length)
+  for (let i = 0; i < buffer.length; i++) decoded[i] = buffer[i] ^ 73
+  return decoded
+}
+
+function normalizeMajsoulImageBuffer(buffer) {
+  if (isSupportedImageBuffer(buffer)) return buffer
+  const decoded = xorMajsoulImageBuffer(buffer)
+  return isSupportedImageBuffer(decoded) ? decoded : buffer
+}
+
+async function fetchImageToFile(url, filePath) {
+  const fetchImpl = globalThis.fetch || (await import('node-fetch')).default
+  const res = await fetchImpl(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const buffer = normalizeMajsoulImageBuffer(Buffer.from(await res.arrayBuffer()))
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, buffer)
+}
+
+async function loadImageFromCache(filePath) {
+  const original = fs.readFileSync(filePath)
+  const normalized = normalizeMajsoulImageBuffer(original)
+  if (normalized !== original) fs.writeFileSync(filePath, normalized)
+  return loadImage(normalized)
+}
+
+async function loadAvatarImage(avatarId) {
+  const { lqc, extendRes } = loadAvatarConfig()
+  const avatarInfo = lqc[String(avatarId)] || lqc['400000']
+  if (!avatarInfo?.path) return null
+
+  const charDirName = path.basename(avatarInfo.path)
+  const localPath = path.join(avatarCacheRoot, charDirName, 'bighead.png')
+  if (fs.existsSync(localPath)) {
+    try {
+      return await loadImageFromCache(localPath)
+    } catch (err) {
+      if (typeof logger !== 'undefined') logger.warn(`[render.js] 本地头像缓存不可用 ${avatarId}: ${err.message}`)
+    }
+  }
+
+  const defaultAssetPath = `${avatarInfo.path}/bighead.png`
+  const matchedPath = findExtendResEntry(extendRes, defaultAssetPath)
+  const assetPath = matchedPath || defaultAssetPath
+  const prefix = matchedPath ? extendRes[matchedPath] : 'v0.11.14.w'
+  const url = `https://game.maj-soul.com/1/${prefix}/${assetPath}`
+
+  try {
+    await fetchImageToFile(url, localPath)
+    return await loadImageFromCache(localPath)
+  } catch (err) {
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像加载失败 ${avatarId}: ${err.message}`)
+    return null
+  }
+}
+
+// 将 @napi-rs/canvas Image 转成 Canvas（便于 applyMask 抠图）
+async function getAvatarCanvas(avatarId) {
+  const img = await loadAvatarImage(avatarId)
+  if (!img) return null
+  const c = createCanvas(img.width, img.height)
+  const ctx = c.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+  return c
+}
+
+// 牌谱分析渲染相关函数
+const typeMap = {
+  dahai: "打", ankan: "暗杠", tsumo: "自摸", ron: "荣和",
+  reach: "立直", ronpinfu: "荣和", daburi: "切", hora: "和", none: "跳过",
+  chi: "吃", pon: "碰", kan: "杠", kakan: "加杠"
+}
+
+// 牌名显示映射：雀魂内部记法 -> 日麻标准记法
+// 红宝牌 5mr/5pr/5sr -> 0m/0p/0s；字牌 E/S/W/N/P/F/C -> 1z~7z
+function formatTileName(tile) {
+  if (!tile) return tile
+  const map = {
+    '5mr': '0m', '5pr': '0p', '5sr': '0s',
+    'E': '1z', 'S': '2z', 'W': '3z', 'N': '4z', 'P': '5z', 'F': '6z', 'C': '7z'
+  }
+  return map[tile] || tile
+}
+
+// 同花色牌连写时省略重复后缀，仅保留最后一个后缀（日麻标准记法：11z / 00p / 234m）
+function formatTileGroup(tiles) {
+  if (!Array.isArray(tiles) || tiles.length === 0) return ""
+  const groups = {}
+  for (const t of tiles.map(formatTileName)) {
+    const suit = t.slice(-1)
+    const num = t.slice(0, -1)
+    if (!groups[suit]) groups[suit] = []
+    groups[suit].push(num)
+  }
+  return Object.keys(groups).map(suit => groups[suit].join('') + suit).join('')
+}
+
+const targetMap = { 1: "上家", 2: "对家", 3: "下家" }
+
+function getDiff(a, b) {
+  if (a < 0 || b < 0 || a === undefined || b === undefined) return "未知"
+  if (a === b) return "自己"
+  let diff = 0
+  while (a !== b && diff < 4) {
+    a = (a - 1 + 4) % 4
+    diff++
+  }
+  return targetMap[diff] || "未知"
+}
+
+function getColor(rate) {
+  if (rate <= 0.65) return '#FF0000'
+  if (rate <= 0.75) return '#FFA100'
+  if (rate >= 0.86) return '#4AFF00'
+  return '#FFFFFF'
+}
+
+function kyokuToString(kyoku) {
+  const rounds = ["东", "南", "西", "北"]
+  const wind = Math.floor(kyoku / 4)
+  const number = (kyoku % 4) + 1
+  return `${rounds[wind]}${number}局`
+}
+
+async function drawEnBg(en, index, _actorId) {
+  const tehai = en.state.tehai || []
+  const fuuros = en.state.fuuros || []
+  const ai = en.expected
+  const actual = en.actual
+  const nowPai = en.tile
+  const lastActor = en.last_actor
+  const isEqual = en.is_equal
+
+  const actorId = actual.actor !== undefined ? actual.actor : _actorId
+
+  const actualType = actual.type
+  const aiType = ai.type
+
+  // 立直(actual 无 pai)时，从 details 里同 actor 的 dahai 推导真正的立直打牌
+  function getReachDiscardPai(act, actor) {
+    if (act && act.pai) return act.pai
+    for (const det of (en.details || [])) {
+      const a = det && det.action
+      if (a && a.type === 'dahai' && a.actor === actor && a.pai) return a.pai
+    }
+    return null
+  }
+  const reachPai = actualType === 'reach' ? getReachDiscardPai(actual, actorId) : null
+  const aiReachPai = aiType === 'reach' ? getReachDiscardPai(ai, actorId) : null
+  // dahai 用 actual.pai；reach 用推导出的立直打牌
+  const discardPai = actualType === 'reach' ? reachPai : (actual.pai || null)
+  const aiDiscardPai = aiType === 'reach' ? aiReachPai : (ai.pai || null)
+  // 摸切：打出的牌 == 刚摸到的牌（tsumogiri 或 立直打牌==摸牌）
+  const isTsumogiri = actualType === 'dahai'
+    ? (actual.tsumogiri === true)
+    : (actualType === 'reach' ? (discardPai === nowPai) : false)
+  const isTsumogiriAi = aiType === 'dahai'
+    ? (ai.tsumogiri === true)
+    : (aiType === 'reach' ? (aiDiscardPai === nowPai) : false)
+
+function getActionText(action) {
+  if (!action || !action.type) return '未知'
+  // 自摸（target 指向自己）显示“自摸”以区分；荣和仍显示“和”
+  if (action.type === "hora") {
+    if (typeof action.target === 'number' && action.actor === action.target) return "自摸"
+    return "和"
+  }
+  return typeMap[action.type] || '未知'
+}
+
+  function formatAction(action, fallbackPai) {
+    if (!action) return ""
+    const consumed = action.consumed && action.consumed.length ? formatTileGroup(action.consumed) : ""
+    if (consumed) {
+      return `${formatTileName(action.pai || "")}(${consumed})`
+    }
+    return formatTileName(action.pai || fallbackPai || "")
+  }
+
+  const aiDehai = formatAction(ai, aiDiscardPai)
+  const actualDehai = formatAction(actual, discardPai)
+
+  const aiStr = `AI选择: ${getActionText(ai)} ${aiDehai}`
+  const actualStr = `你选择: ${getActionText(actual)} ${actualDehai}`
+  const condStr = `${aiStr}  |  ${actualStr}`
+
+  let frameName = ''
+  let frameStr = ''
+
+  // 是否“摸到牌”的回合（摸牌后打牌/立直/暗杠）。
+  // 判定依据：摸到的牌在手里(en.tile ∈ tehai)，或摸切(tsumogiri)为真。
+  // 碰/吃后的打牌属于“不摸牌”回合：en.tile 是别人打出的牌（不在手里），
+  // 且此时 at_self_chi_pon 为真，需排除，避免把别人的牌误判成自己摸到。
+  let isSelfDraw = false
+  if (actualType === 'dahai' || actualType === 'reach') {
+    isSelfDraw = !en.at_self_chi_pon && (tehai.includes(nowPai) || isTsumogiri)
+  } else if (actualType === 'ankan') {
+    isSelfDraw = true
+  }
+
+  // 自摸（和牌且 target 指向自己）：自摸的牌只显示在右侧，左手不放入
+  const isTsumo = actualType === 'hora' && actual.actor === actual.target
+
+  if (actualType === "hora") {
+    frameName = 'hora.png'
+    if (actual.actor === actual.target) {
+      frameStr = "自摸"
+    } else {
+      // 荣和需标明来源（上家/对家/下家），否则看不出荣和谁
+      frameStr = `荣和${getDiff(actual.actor, actual.target)}`
+    }
+  } else if (isSelfDraw) {
+    // 摸牌后打牌（含摸切与非摸切，只要本轮摸到牌），显示"自己摸到"
+    frameName = 'mo.png'
+    frameStr = "自己摸到"
+  } else if (actualType === "dahai" || actualType === "reach") {
+    // 碰/吃后的打牌，不显示"出牌"，因为上边已经显示了操作类型
+    frameName = ''
+    frameStr = ''
+  } else if (actualType !== "ankan") {
+    // 碰/吃/杠等反应操作，显示"xxx出牌"
+    frameName = 'action.png'
+    const targetStr = getDiff(actorId, lastActor)
+    frameStr = `${targetStr}出牌`
+  } else {
+    // 暗杠，不显示出牌
+    frameName = ''
+    frameStr = ''
+  }
+
+  let bgName = ''
+  if (isEqual) bgName = 'yes.png'
+  else {
+    let warning = false
+    for (let proba of (en.details || [])) {
+      if (proba.action === en.actual && proba.prob >= 0.3) { warning = true; break }
+    }
+    bgName = warning ? 'warning.png' : 'no.png'
+  }
+
+  const enBg = await loadResImage(`review_texture/${bgName}`)
+  const canvas = createCanvas(enBg.width, enBg.height)
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(enBg, 0, 0)
+
+  drawText(ctx, condStr, 232, 27, 24, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+  drawText(ctx, `【第${index}巡】`, 111, 27, 24, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+
+  let actualPais = []
+  if (actualType === "ankan") actualPais = actual.consumed || []
+  else if (actualType === "hora") {
+    // 荣和/自摸的牌来自牌河或刚摸进，不在自己手牌里，因此不在手中抬起高亮
+    actualPais = []
+  } else if (actualType === "reach") {
+    // 立直打牌：actual 无 pai 时用推导出的 discardPai；摸切(打出==摸到)时左手不抬
+    actualPais = isTsumogiri ? [] : (discardPai ? [discardPai] : (tehai.length > 0 ? [tehai[0]] : []))
+  } else if (['chi', 'pon', 'kan', 'kakan'].includes(actualType)) {
+    // 碰/吃/杠：高亮抬起的是手上被消耗的牌（做副露动作），而非对方打出的那一张
+    if (actual.consumed && actual.consumed.length > 0) {
+      actualPais = actual.consumed
+    } else if (nowPai) {
+      actualPais = [nowPai]
+    } else {
+      actualPais = actual.pai ? [actual.pai] : []
+    }
+  } else if (actualType !== "none") {
+    // dahai：摸切(打出==摸到)时打出的牌已显示在右侧，左手不抬；否则抬打出的牌
+    if (isTsumogiri) actualPais = []
+    else if (actual.consumed && actual.consumed.length > 0) actualPais = actual.consumed
+    else actualPais = actual.pai ? [actual.pai] : []
+  }
+
+  let aiPais = []
+  if (aiType === "ankan") aiPais = ai.consumed || []
+  else if (aiType === "hora") aiPais = []
+  else if (aiType === "reach") {
+    // 同上：立直打牌用推导出的 aiDiscardPai；摸切时左手不抬
+    aiPais = isTsumogiriAi ? [] : (aiDiscardPai ? [aiDiscardPai] : (tehai.length > 0 ? [tehai[0]] : []))
+  } else if (aiType !== "none") {
+    if (isTsumogiriAi) aiPais = []
+    else if (ai.consumed && ai.consumed.length > 0) aiPais = ai.consumed
+    else aiPais = ai.pai ? [ai.pai] : []
+  }
+
+  function countOccurrences(arr) {
+    const counts = {}
+    for (const item of arr) {
+      counts[item] = (counts[item] || 0) + 1
+    }
+    return counts
+  }
+
+  const actualPaiCounts = countOccurrences(actualPais)
+  const aiPaiCounts = countOccurrences(aiPais)
+  const highlightedCounts = {}
+
+  let xTile = 0
+  const aiFrame = await loadResImage(`review_texture/ai.png`)
+
+  // 自摸/摸牌回合：本巡摸到的牌(nowPai)不放入左手，改放右侧高亮显示。
+  // 仅跳过“最后一张”等于 nowPai 的牌（即刚摸到的那张），保留手牌中原本的同号牌在其原位，
+  // 避免把原本手牌的同号牌误移到最右侧（如摸到2p时，手牌原有2p应留在原位置）。
+  const drawnActive = isSelfDraw || isTsumo
+  const drawnTotal = drawnActive ? tehai.filter(h => h === nowPai).length : 0
+  let drawnCount = 0
+
+  for (let hai of tehai) {
+    if (drawnActive && hai === nowPai) {
+      drawnCount++
+      if (drawnCount === drawnTotal) continue  // 跳过最后一张（刚摸到的牌）
+    }
+    let y = 83
+    let haiImg
+    try { haiImg = await loadResImage(`review_texture/pai/${hai}.png`) } catch(e) { continue }
+    
+    const key = `${hai}-${(highlightedCounts[hai] || 0)}`
+    const actualCount = actualPaiCounts[hai] || 0
+    const aiCount = aiPaiCounts[hai] || 0
+    const currentIndex = highlightedCounts[hai] || 0
+    
+    if (currentIndex < actualCount) {
+      y -= 28
+      drawText(ctx, "▲ 你", 128 + xTile, 236, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+      highlightedCounts[hai] = (highlightedCounts[hai] || 0) + 1
+    }
+    
+    if (currentIndex < aiCount) {
+      const hc = createCanvas(haiImg.width, haiImg.height)
+      const hctx = hc.getContext('2d')
+      hctx.drawImage(haiImg, 0, 0)
+      hctx.drawImage(aiFrame, 0, 0)
+      haiImg = hc
+      if (!isEqual && currentIndex >= (actualPaiCounts[hai] || 0)) {
+        drawText(ctx, "▲ AI", 128 + xTile, 236, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+      }
+      if (currentIndex >= (highlightedCounts[hai] || 0)) {
+        highlightedCounts[hai] = (highlightedCounts[hai] || 0) + 1
+      }
+    }
+    
+    ctx.drawImage(haiImg, 88 + xTile, y)
+    xTile += 81
+  }
+
+  xTile = 1170
+  for (let fuuro of fuuros) {
+    let pais = []
+    if (fuuro.pai) pais.push(fuuro.pai)
+    if (fuuro.consumed) pais.push(...fuuro.consumed)
+
+    let rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+
+    for (let pindex = 0; pindex < pais.length; pindex++) {
+      let _fuuroPai = pais[pindex]
+      let pimg
+      try { pimg = await loadResImage(`review_texture/pai/${_fuuroPai}.png`) } catch(e) { continue }
+      
+      const pc = createCanvas(57, 91)
+      const pctx = pc.getContext('2d')
+      pctx.drawImage(pimg, 0, 0, 57, 91)
+      pimg = pc
+
+      if ((rotate === 3 && pindex === pais.length - 1) || (rotate === 1 && pindex === 0) || (rotate === 2 && pindex === 1)) {
+        const rc = createCanvas(91, 57)
+        const rctx = rc.getContext('2d')
+        rctx.translate(45.5, 28.5)
+        rctx.rotate(90 * Math.PI / 180)
+        rctx.drawImage(pimg, -28.5, -45.5)
+        pimg = rc
+        let fuuroY = 155
+        xTile -= 34
+        ctx.drawImage(pimg, xTile, fuuroY)
+        xTile -= 46
+      } else {
+        let fuuroY = 121
+        ctx.drawImage(pimg, xTile, fuuroY)
+        xTile -= 57
+      }
+    }
+    xTile -= 10
+  }
+
+  let nowHaiImg
+  // 仅当右侧牌是"摸到/吃碰来源的牌"时才绘制：
+  // 1. 自摸打牌显示摸到的牌
+  // 2. 碰/吃/杠显示获得的牌
+  // 3. 荣和显示荣和的牌（对方打出的牌）
+  // 碰/吃后的打牌其 tile 是副露牌，不应再画在右侧。
+  // none（上家打牌、玩家跳过）时也把上家打出的牌显示在右侧；
+  // 自摸打牌（isSelfDraw）显示"自己摸到"；碰/吃/杠显示获得的牌；荣和显示荣和的牌。
+  if (nowPai && (isSelfDraw || ['pon', 'chi', 'kan', 'kakan', 'hora', 'none'].includes(actualType))) {
+    try { 
+      nowHaiImg = await loadResImage(`review_texture/pai/${nowPai}.png`) 
+      const frameImg = await loadResImage(`review_texture/${frameName}`)
+      const ncanvas = createCanvas(nowHaiImg.width, nowHaiImg.height)
+      const nctx = ncanvas.getContext('2d')
+      nctx.drawImage(nowHaiImg, 0, 0)
+      nctx.drawImage(frameImg, 0, 0)
+      // 摸切（打出==摸到）：右侧同样向上抬起 28px 以强调动作
+      const raiseY = isTsumogiri ? 28 : 0
+      ctx.drawImage(ncanvas, 1265, 83 - raiseY)
+    } catch(e) {}
+  }
+
+  drawText(ctx, frameStr, 1307, 236, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+
+  return { canvas, actorId }
+}
 
 const api = new MajsoulApi()
 
@@ -20,6 +479,19 @@ function getRandomPersonFull() {
   }
 }
 
+function getRandomPersonAvatar() {
+  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person')
+  try {
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
+    if (files.length === 0) return null
+    const randomIndex = Math.floor(Math.random() * files.length)
+    return `person/${files[randomIndex]}`
+  } catch (e) {
+    console.error('[render] 读取person目录失败:', e)
+    return null
+  }
+}
+
 
 
 function getRate(value) {
@@ -29,7 +501,30 @@ function getRate(value) {
 
 async function getLzBar(title, v1, v2, v3 = null) {
   if (v3 === null) v3 = 1 - v1 - v2
-  const bar = await loadResImage(`info_texture/lz_${title}.png`)
+  
+  let bar;
+  try {
+    bar = await loadResImage(`info_texture/lz_${title}.png`)
+  } catch(e) {
+    try {
+      bar = await loadResImage(`info_texture/lz_bar.png`)
+    } catch(e2) {
+      const canvas = createCanvas(872, 132)
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#1c2128'
+      ctx.fillRect(0, 0, 872, 132)
+      ctx.strokeStyle = '#30363d'
+      ctx.lineWidth = 1
+      ctx.strokeRect(1, 1, 870, 130)
+      ctx.fillStyle = '#6e7681'
+      ctx.font = '14px "Microsoft YaHei", sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('暂无数据', 436, 66)
+      return canvas
+    }
+  }
+  
   const canvas = createCanvas(bar.width, bar.height)
   const ctx = canvas.getContext('2d')
   ctx.drawImage(bar, 0, 0)
@@ -288,7 +783,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   let level4 = new PlayerLevel(data4.level?.id || 10101, level4Score)
   let level3 = new PlayerLevel(data3.level?.id || 10101, level3Score)
 
-  const bg = await loadResImage('utils_texture/bg.jpg')
+  const bg = await loadResImage('bg.jpg')
   const detailBg = await loadResImage('info_texture/detail_bg.png')
   const mid = await loadResImage('info_texture/mid.png')
   const title = await loadResImage('info_texture/title.png')
@@ -444,7 +939,7 @@ function formatTimestamp(timestamp) {
 }
 
 export async function drawSearchResultImg(players, realtimeData = {}) {
-  const bg = await loadResImage('utils_texture/bg.jpg')
+  const bg = await loadResImage('bg.jpg')
   
   const PLAYER_CARD_HEIGHT = 230
   const PADDING = 15
@@ -605,4 +1100,208 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
   drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', width / 2, height - 12, 12, '#ffffff', 'center', 'bold')
   
   return canvas.toBuffer('image/jpeg', 85)
+}
+
+export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0) {
+  const reviewData = data.data.review
+  if (!reviewData.kyokus || kyokuId >= reviewData.kyokus.length) return "该Game未存在该局ID"
+  
+  const kyokus = reviewData.kyokus[kyokuId]
+  
+  const kh = `${kyokuToString(kyokus.kyoku)} ${kyokus.honba}本场`
+  
+  const w = 2800
+  const hNum = Math.floor((kyokus.entries.length - 1) / 2) + 1
+  
+  const bg = await loadResImage('bg.jpg')
+  const title = await loadResImage('review_texture/title.png')
+  const actorFile = await loadResImage('review_texture/actor_file.png')
+  const spliter = await loadResImage('review_texture/spliter.png')
+  const reviewInfo = await loadResImage('review_texture/review_info.png')
+  const barImg = await loadResImage('review_texture/bar.png')
+  let maskImg = null
+  try { maskImg = await loadResImage('review_texture/mask.png') } catch(e) {}
+  
+  const titleHeight = title.height || 396
+  const reviewInfoHeight = reviewInfo.height || 350
+  const footerHeight = 50
+  
+  const spliterY = titleHeight + reviewInfoHeight
+  const h = spliterY + spliter.height + hNum * 255 + footerHeight
+  
+  const finalCanvas = createCanvas(w, h)
+  const finalCtx = finalCanvas.getContext('2d')
+  
+  for(let i = 0; i < w; i += bg.width) {
+    for(let j = 0; j < h; j += bg.height) {
+      finalCtx.drawImage(bg, i, j)
+    }
+  }
+  
+  finalCtx.drawImage(title, 0, 0)
+  
+  // ---- 玩家信息条（依据 MajsoulUID draw_bar 的坐标实现）----
+  // reviewData.player_id 即被分析玩家的座号（0~3）
+  const seat = (data && data.data && data.data.player_id) ||
+               (data && data.player_id) || 0
+
+  // 名字优先用 raw 注入的真实昵称（mortalLog.name，由 review 命令从雀魂公开 API 获取），
+  // 其次 review.json 的占位名（A/B/C/D），最后兜底
+  const name = (mortalLog && mortalLog.name && mortalLog.name[seat]) ||
+               (reviewData.name && reviewData.name[seat]) || '未知玩家'
+  // 段位名 / 段位分直接用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 split_logs[0]）
+  const rawDan = ((mortalLog && mortalLog.dan && mortalLog.dan[seat]) ||
+                  (reviewData.dan && reviewData.dan[seat]) || '')
+  // 由牌谱 dan 字符串解析 major/minor（繁体→简体统一），供段位图 / 简体段位名 / 升段分使用
+  let danMajor = 1, danMinor = 1
+  const m = /^([一-龥]+)★?(\d*)$/.exec(rawDan)
+  if (m) {
+    const majorMap = { '初心': 1, '雀士': 2, '雀傑': 3, '雀豪': 4, '雀聖': 5, '魂天': 6 }
+    danMajor = majorMap[m[1]] || 1
+    danMinor = m[2] ? parseInt(m[2], 10) : 1
+  }
+  // 简体段位名映射（雀魂原始为繁体「雀聖★2」，统一显示简体「雀圣2」）
+  const SIMPLE_RANKS = { 1: '初心', 2: '雀士', 3: '雀杰', 4: '雀豪', 5: '雀圣', 6: '魂天' }
+  const danText = `${SIMPLE_RANKS[danMajor] || '初心'}${danMinor > 1 ? danMinor : ''}`
+  // 段位分：当前 rating / 升段所需分。升段阈值取自 PlayerLevel._getMaxPoint（如 雀圣3 → 9000）
+  let rateText = ''
+  if (mortalLog && mortalLog.rate && mortalLog.rate[seat] != null) {
+    const rateVal = mortalLog.rate[seat]
+    if (danMajor < 6) {
+      try {
+        const danLevel = new PlayerLevel(danMajor * 100 + danMinor, 0)
+        const maxPoint = danLevel.getMaxPoint()
+        rateText = maxPoint > 0 ? `${rateVal}/${maxPoint}` : String(rateVal)
+      } catch (e) {
+        rateText = String(rateVal)
+      }
+    } else {
+      // 魂天段位计分特殊（/100 制），仅显示当前 rating
+      rateText = String(rateVal)
+    }
+  } else if (reviewData.rate && reviewData.rate[seat] != null) {
+    rateText = String(reviewData.rate[seat])
+  }
+  const avatarId = (mortalLog && mortalLog.avatarId && mortalLog.avatarId[seat])
+
+  const actorCanvas = createCanvas(actorFile.width, actorFile.height)
+  const actorCtx = actorCanvas.getContext('2d')
+  actorCtx.drawImage(actorFile, 0, 0)
+
+  // 在独立的 bar 画布上按 bar 原始坐标绘制内容，再整体缩放贴入 actorFile，
+  // 严格对应 Python：bar.resize((1450,222)) + actor_file.paste(bar, (-27,106))
+  const barCanvas = createCanvas(barImg.width, barImg.height)
+  const barCtx = barCanvas.getContext('2d')
+  barCtx.drawImage(barImg, 0, 0)
+
+  // 头像：bar 内 (69,15) 128x128，扣 mask；avatar_id → lqc.json 路径 → CDN 下载 bighead.png
+  // 加载失败时不做任何占位（保持透明，不画灰色圆），由底层 bar 背景呈现。
+  if (avatarId) {
+    try {
+      const avatarCanvas = await getAvatarCanvas(avatarId)
+      if (avatarCanvas) {
+        const out = createCanvas(128, 128)
+        const octx = out.getContext('2d')
+        const av = maskImg ? applyMask(avatarCanvas, maskImg) : avatarCanvas
+        octx.drawImage(av, 0, 0, 128, 128)
+        barCtx.drawImage(out, 69, 15)
+      }
+    } catch (e) {
+      if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像绘制失败 ${avatarId}: ${e.message}`)
+    }
+  }
+
+          // 段位图：bar 内 (234,32) 94x94，使用 getRankImg 绘制徽章 + 星星/花朵（与记录图一致）
+          try {
+            const rankName = SIMPLE_RANKS[danMajor] || '初心'
+            // 魂天用 minorRank 近似花朵数所需的 score（0~19，对应 getRankImg 内 0/5/10/15 阈值）
+            const rankScore = danMajor >= 6 ? Math.min(19, Math.max(0, danMinor - 1)) : 0
+            let rankImg = null
+            for (const mode of ['4', '3']) {
+              try {
+                rankImg = await getRankImg(rankName, danMinor, mode, 94, rankScore)
+                break
+              } catch (e4) {}
+            }
+            if (rankImg) barCtx.drawImage(rankImg, 234, 32, 94, 94)
+          } catch (e) {}
+
+  // 玩家名 (355,80) lm；段位文字 (653,80) mm；段位分 (817,80) mm
+  // 段位名 / 段位分已优先使用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 26508~26518 行）
+  drawText(barCtx, name, 355, 80, 34, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+  drawText(barCtx, danText || '未知段位', 653, 80, 44, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  drawText(barCtx, rateText || '-', 817, 80, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+
+  // 整体缩放 bar 到 1450x222 并贴入 actorFile 的 (-27,106)
+  actorCtx.drawImage(barCanvas, -27, 106, 1450, 222)
+
+  finalCtx.drawImage(actorCanvas, 0, titleHeight)
+  
+  let actorId = reviewData.player_id || 0
+  let nowReviewed = 0, nowMatches = 0, nowWarning = 0
+  
+  for (let index = 0; index < kyokus.entries.length; index++) {
+    const en = kyokus.entries[index]
+    nowReviewed++
+    
+    const { canvas: enBg, actorId: aId } = await drawEnBg(en, index, actorId)
+    actorId = aId
+    
+    if (en.is_equal) nowMatches++
+    else {
+      let warning = false
+      for (let proba of (en.details || [])) {
+        if (proba.action === en.actual && proba.prob >= 0.3) { warning = true; break }
+      }
+      if (warning) nowWarning++
+    }
+    
+    let _x = index < hNum ? 0 : 1400
+    finalCtx.drawImage(enBg, _x, spliterY + spliter.height + ((index % hNum) * 255))
+  }
+  
+  const totalReviewed = reviewData.total_reviewed
+  const totalMatches = reviewData.total_matches
+  
+  const totalRating = `${((totalMatches / totalReviewed) * 100).toFixed(2)}%`
+  const nowRating = `${((nowMatches / nowReviewed) * 100).toFixed(2)}%`
+  
+  const totalStr = `${totalMatches} / ${totalReviewed}`
+  const nowStr = `${nowMatches} / ${nowReviewed}`
+  const nowWStr = `${nowWarning} / ${nowReviewed}`
+  const nowScore = (nowWarning * 0.6 + nowMatches) / nowReviewed
+  const nowScoreStr = `${(nowScore * 100).toFixed(2)}%`
+  
+  const totalColor = getColor(totalMatches / totalReviewed)
+  const nowColor = getColor(nowMatches / nowReviewed)
+  const nowScoreColor = getColor(nowScore)
+  
+  const riCanvas = createCanvas(reviewInfo.width, reviewInfo.height)
+  const riCtx = riCanvas.getContext('2d')
+  riCtx.drawImage(reviewInfo, 0, 0)
+  
+  const dataMap = [
+    [nowScoreStr, nowScoreColor],
+    [nowRating, nowColor],
+    [nowStr, '#4AFF00'],
+    [nowWStr, '#FFA100'],
+    [totalRating, totalColor],
+    [totalStr, totalColor]
+  ]
+  
+  dataMap.forEach((item, index) => {
+    drawText(riCtx, item[0], Math.floor(170 + index * 209.4), 200, 40, item[1], 'center', 'bold', 'Microsoft YaHei')
+  })
+  
+  finalCtx.drawImage(riCanvas, 1390, titleHeight)
+  
+  const sCanvas = createCanvas(spliter.width, spliter.height)
+  const sCtx = sCanvas.getContext('2d')
+  sCtx.drawImage(spliter, 0, 0)
+  drawText(sCtx, `【${kh}】`, 1400, 35, 50, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  finalCtx.drawImage(sCanvas, 0, spliterY)
+  
+  drawText(finalCtx, 'Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng', w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  
+  return finalCanvas.toBuffer('image/jpeg', 85)
 }

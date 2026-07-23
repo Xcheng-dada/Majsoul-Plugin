@@ -1,54 +1,27 @@
-# 用户隐私配置文件
-resources/group_pool.json
-
-# 插件数据文件夹
+# 运行时/隐私数据（含明文密码的登录态、订阅信息、牌谱缓存、Chrome缓存等）
 data/
-apps/*/data/
-plugins/*/data/
 
-# Node.js相关
+# 框架临时上传目录
+.uploads/
+
+# Node.js
 node_modules/
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
-# 日志文件
+# 日志
 *.log
 logs/
 
 # 环境变量
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-# 编辑器文件
+# 编辑器
 .vscode/
 .idea/
 .trae/
 *.swp
-*.swo
 
 # 系统文件
 .DS_Store
 Thumbs.db
-
-# 临时文件
-*.tmp
-*.temp
-.cache/
-.temp/
-
-# 编译文件
-dist/
-build/
-*.exe
-
-# 其他可能需要忽略的
-*.cache
-*.pid
-*.seed
-
-# 推送脚本
-push-update.ps1

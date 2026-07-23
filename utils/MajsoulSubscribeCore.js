@@ -84,14 +84,18 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
             pt: PADDING + 650
         };
         
-        const totalHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + 
+        const baseHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + 
             sortedPlayers.length * PLAYER_ROW_HEIGHT + FOOTER_HEIGHT;
+        const TOP_PADDING_PERCENT = 0.1;
+        const topPadding = Math.floor(baseHeight * TOP_PADDING_PERCENT);
+        const bottomPadding = topPadding;
+        const totalHeight = baseHeight + topPadding + bottomPadding;
         
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
         const ctx = canvas.getContext('2d');
         
         try {
-            const bgImage = await loadResImage('utils_texture/bg.jpg');
+            const bgImage = await loadResImage('bg.jpg');
             const scale = Math.max(CARD_WIDTH / bgImage.width, totalHeight / bgImage.height);
             const x = (CARD_WIDTH - bgImage.width * scale) / 2;
             const y = (totalHeight - bgImage.height * scale) / 2;
@@ -101,10 +105,10 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
             ctx.fillRect(0, 0, CARD_WIDTH, totalHeight);
         }
         
-        let currentY = 0;
+        let currentY = topPadding;
         
         drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, 
-            totalHeight - FOOTER_HEIGHT, 12, '#1c2128');
+            baseHeight - FOOTER_HEIGHT, 12, '#1c2128');
         ctx.lineWidth = 1;
         ctx.strokeStyle = '#30363d';
         ctx.stroke();
@@ -208,7 +212,34 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
             currentY += PLAYER_ROW_HEIGHT;
         }
         
-        drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, totalHeight - 20, 12, '#ffffff', 'center', 'bold');
+        const footerY = totalHeight - bottomPadding;
+        const footerCanvas = createCanvas(CARD_WIDTH, FOOTER_HEIGHT);
+        const footerCtx = footerCanvas.getContext('2d');
+        
+        const footerGradient = footerCtx.createLinearGradient(0, 0, 0, FOOTER_HEIGHT);
+        footerGradient.addColorStop(0, '#1c2128');
+        footerGradient.addColorStop(1, '#0d1117');
+        footerCtx.fillStyle = footerGradient;
+        footerCtx.fillRect(0, 0, CARD_WIDTH, FOOTER_HEIGHT);
+        
+        footerCtx.strokeStyle = '#30363d';
+        footerCtx.lineWidth = 1;
+        footerCtx.beginPath();
+        footerCtx.moveTo(PADDING, 0);
+        footerCtx.lineTo(CARD_WIDTH - PADDING, 0);
+        footerCtx.stroke();
+        
+        footerCtx.font = 'bold 11px "Microsoft YaHei", sans-serif';
+        footerCtx.fillStyle = '#8b949e';
+        footerCtx.textAlign = 'center';
+        footerCtx.textBaseline = 'middle';
+        footerCtx.fillText('Majsoul-Plugin by 小橙c', CARD_WIDTH / 2, FOOTER_HEIGHT / 2 - 4);
+        
+        footerCtx.font = '10px "Microsoft YaHei", sans-serif';
+        footerCtx.fillStyle = '#6e7681';
+        footerCtx.fillText('Data: amae-koromo | Version D.1.6', CARD_WIDTH / 2, FOOTER_HEIGHT / 2 + 8);
+        
+        ctx.drawImage(footerCanvas, 0, footerY);
         
         return canvas.toBuffer('image/png');
     } catch (error) {
