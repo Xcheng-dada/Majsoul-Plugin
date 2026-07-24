@@ -332,6 +332,12 @@ export async function reviewMortal(mortalLog, token, engine) {
     return '❌ 提交牌谱失败，请稍后重试!'
   }
 
+  // reportUrl 应是 "/..." 形式的路径（如 /?data=xxx）。若因游戏日志下载失败/牌谱失效，
+  // solveTurnstileAndSubmit 返回了整页 HTML，直接报错，避免后续长时间空轮询。
+  if (!reportUrl.startsWith('/') || reportUrl.includes('<')) {
+    return '❌ 下载游戏日志失败，可能是网络波动，请稍后重试！'
+  }
+
   logger.info(`开始获取报告: ${BASE_URL}${reportUrl}`)
 
   for (let i = 0; i < 60; i++) {
@@ -347,11 +353,22 @@ export async function reviewMortal(mortalLog, token, engine) {
           logger.info('报告尚未生成，继续等待...')
           continue
         }
+        const errText = await reportRes.text()
+        if (/failed to download game log/i.test(errText)) {
+          return '❌ 下载游戏日志失败，可能是网络波动或牌谱已失效，请稍后重试！'
+        }
         return `❌ 获取报告失败! status: ${reportRes.status}`
       }
       
-      logger.info('开始解析JSON...')
-      const reportData = await reportRes.json()
+      logger.info('开始解析响应...')
+      const text = await reportRes.text()
+      // mjai 下载游戏日志失败（网络波动/牌谱失效）时可能返回 HTML 错误页（含 "failed to download game log"）而非 JSON，需立即报错避免空轮询
+      if (/failed to download game log|<html|<!doctype html/i.test(text)) {
+        logger.info('检测到牌谱失效/错误页面，立即返回错误')
+        return '❌ 下载游戏日志失败，可能是网络波动或牌谱已失效，请稍后重试！'
+      }
+      
+      const reportData = JSON.parse(text)
       logger.info(`报告数据结构: ${JSON.stringify(Object.keys(reportData))}`)
       
       // 提取段位信息

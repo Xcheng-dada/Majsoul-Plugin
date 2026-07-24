@@ -1102,16 +1102,19 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
   return canvas.toBuffer('image/jpeg', 85)
 }
 
-export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0) {
+export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId = 0) {
   const reviewData = data.data.review
-  if (!reviewData.kyokus || kyokuId >= reviewData.kyokus.length) return "该Game未存在该局ID"
+  if (!reviewData.kyokus || kyokuId >= reviewData.kyokus.length || kyokuId < 0) return "该Game未存在该局ID"
   
   const kyokus = reviewData.kyokus[kyokuId]
   
   const kh = `${kyokuToString(kyokus.kyoku)} ${kyokus.honba}本场`
   
+  // meguruId>0 时只渲染到第 N 手（1-based），否则渲染整局
+  const limit = meguruId > 0 ? Math.min(meguruId, kyokus.entries.length) : kyokus.entries.length
+  
   const w = 2800
-  const hNum = Math.floor((kyokus.entries.length - 1) / 2) + 1
+  const hNum = Math.floor((limit - 1) / 2) + 1
   
   const bg = await loadResImage('bg.jpg')
   const title = await loadResImage('review_texture/title.png')
@@ -1240,7 +1243,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0) {
   let actorId = reviewData.player_id || 0
   let nowReviewed = 0, nowMatches = 0, nowWarning = 0
   
-  for (let index = 0; index < kyokus.entries.length; index++) {
+  for (let index = 0; index < limit; index++) {
     const en = kyokus.entries[index]
     nowReviewed++
     
@@ -1301,7 +1304,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0) {
   drawText(sCtx, `【${kh}】`, 1400, 35, 50, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   finalCtx.drawImage(sCanvas, 0, spliterY)
   
-  drawText(finalCtx, 'Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng', w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  drawText(finalCtx, `${meguruId > 0 ? `（展示前 ${limit} 手） ` : ''}Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng`, w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   
   return finalCanvas.toBuffer('image/jpeg', 85)
 }

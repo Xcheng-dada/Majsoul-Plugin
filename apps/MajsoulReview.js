@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import net from 'net'
 import { reviewMortal } from '../components/review.js'
-import { MajsoulPaipuParser } from '../components/parser.js'
 import { drawReviewInfoImg } from '../components/render.js'
 import common from '../../../lib/common/common.js'
 import { MajsoulBrowserBridge } from '../utils/MajsoulBrowserBridge.js'
@@ -179,16 +178,6 @@ export class MajsoulReview extends plugin {
     })
   }
 
-  async getMortalLog(gameId) {
-    const rawPath = path.resolve(`./plugins/Majsoul-Plugin/data/paipu/${gameId} - raw.json`)
-    if (fs.existsSync(rawPath)) {
-      const rawData = JSON.parse(fs.readFileSync(rawPath, 'utf8'))
-      const parser = new MajsoulPaipuParser()
-      return parser.handleGameRecord(rawData)
-    }
-    return null
-  }
-
   async fetchPaipuFromUrl(url) {
     const paipuDir = path.resolve('./plugins/Majsoul-Plugin/data/paipu')
     
@@ -201,15 +190,6 @@ export class MajsoulReview extends plugin {
     }
 
     if (!gameId) return null
-
-    const rawPath = path.resolve(`${paipuDir}/${gameId} - raw.json`)
-    if (fs.existsSync(rawPath)) {
-      const rawData = JSON.parse(fs.readFileSync(rawPath, 'utf8'))
-      const parser = new MajsoulPaipuParser()
-      const mortalLog = parser.handleGameRecord(rawData)
-      mortalLog._originalUrl = url
-      return mortalLog
-    }
 
     const mortalLog = {
       ref: gameId,
@@ -240,7 +220,7 @@ export class MajsoulReview extends plugin {
       return e.reply('❌ 未登录雀魂，无法获取主视角昵称/头像，已禁止使用牌谱分析。\n请先登录：#雀魂登录 账号 密码')
     }
 
-    e.reply('⏳ 正在提交牌谱至 mjai.ekyu.moe 进行AI分析，请稍候...')
+    e.reply('⏳ 正在提交牌谱至 Mortal 进行AI分析，请稍候...')
 
     const mortalLog = await this.fetchPaipuFromUrl(paipuUrl)
     if (!mortalLog) return e.reply('❌ 无法解析牌谱!')
@@ -358,30 +338,81 @@ export class MajsoulReview extends plugin {
   async renderLog(e) {
     let et = e.msg.replace(/^#?(雀魂场况|场况|牌谱详情) /, '').trim().replace(/，/g, ',').replace(/,/g, ' ')
     let args = et.split(' ').filter(Boolean)
-    if (args.length !== 3) return e.reply('❌ 请输入有效的格式!\n例如：雀魂场况 241118 1 1')
+    if (args.length < 2 || args.length > 3) {
+      return e.reply('❌ 请输入有效的格式!\n例如：雀魂场况 <牌谱链接或ID> <局数> [巡数]\n提示：局数、巡数均从 1 开始，巡数可省略（展示整局）')
+    }
 
-    let [paipuId, kyokuId, meguruId] = args
-    kyokuId = parseInt(kyokuId)
-    meguruId = parseInt(meguruId)
+    let [paipuArg, kyokuArg, meguruArg] = args
+    // 支持直接粘贴牌谱链接（自动提取 paipu 参数），无需记忆长串牌谱ID
+    const m = paipuArg.match(/[?&]paipu=([^&\s]+)/)
+    if (m) paipuArg = m[1]
+    let kyokuId = parseInt(kyokuArg) - 1  // 用户输入为 1-based，内部转 0-based 索引
+    let meguruId = meguruArg ? parseInt(meguruArg) : 0  // 0 表示整局
+
+    if (isNaN(kyokuId) || kyokuId < 0) {
+      return e.reply('❌ 局数无效，请输入大于等于 1 的整数!')
+    }
+
+    // 牌谱分析（含场况查看）需先登录雀魂，以获取真实昵称/头像，与 #牌谱Review 保持一致
+    if (!isLoginAvailable()) {
+      return e.reply('❌ 未登录雀魂，无法获取真实昵称/头像，已禁止使用牌谱场况。\n请先登录：#雀魂登录 账号 密码')
+    }
 
     const paipuDir = path.resolve('./plugins/Majsoul-Plugin/data/paipu')
     if (!fs.existsSync(paipuDir)) return e.reply('❌ 未找到有效牌谱!\n请先使用[牌谱Review <URL>]')
 
-    let matchedId = paipuId
-    let found = false
+    let matchedId = null
     const files = fs.readdirSync(paipuDir)
     for (let file of files) {
-      if (file.startsWith(paipuId) && file.endsWith('- raw.json')) {
-        matchedId = file.replace(' - raw.json', '').trim()
-        found = true
+      // 匹配 #牌谱Review 实际落盘的 review.json
+      if (file.startsWith(paipuArg) && file.endsWith(' - review.json')) {
+        matchedId = file.replace(' - review.json', '').trim()
         break
       }
     }
 
-    if (!found) return e.reply('❌ 未找到有效牌谱!\n请先使用[牌谱Review <URL>]')
+    if (!matchedId) return e.reply('❌ 未找到有效牌谱!\n请先使用[牌谱Review <URL>]')
 
-    const mortalLog = await this.getMortalLog(matchedId)
-    if (!mortalLog) return e.reply('❌ 无法解析该牌谱!')
+    // 从 review.json 的 split_logs 重建绘图所需的昵称/段位/头像（下方登录态下再用浏览器桥拉真实数据覆盖占位名）
+    const rj = JSON.parse(fs.readFileSync(path.resolve(`${paipuDir}/${matchedId} - review.json`), 'utf8'))
+    const split0 = (rj.split_logs && rj.split_logs[0]) || {}
+    const mortalLog = {
+      name: split0.name || (rj.review && rj.review.name) || ['', '', '', ''],
+      dan: split0.dan || (rj.review && rj.review.dan) || [],
+      rate: split0.rate || (rj.review && rj.review.rate) || [],
+      avatarId: split0.avatarId || (rj.review && rj.review.avatarId) || []
+    }
+
+    // 与 #牌谱Review 一致：登录态下按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
+    try {
+      const logs = isLoginAvailable() ? await fetchRealHead(matchedId) : null
+      const realHead = logs && logs.head
+      if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {
+        // 桥返回的 head.accounts 数组顺序可能与牌谱座位不对齐（实测上家被安到主视角），
+        // 必须按 seat 字段对齐后再用，否则昵称/头像会串位。
+        const bySeat = {}
+        let seatOk = true
+        for (const a of realHead.accounts) {
+          const s = typeof a.seat === 'number' ? a.seat
+            : (typeof a.seat === 'string' ? parseInt(a.seat, 10) : NaN)
+          if (!Number.isInteger(s) || s < 0 || s > 3) { seatOk = false; break }
+          bySeat[s] = a
+        }
+        const list = seatOk ? bySeat : realHead.accounts
+        for (let i = 0; i < 4; i++) {
+          const a = list[i]
+          if (!a) continue
+          if (!Array.isArray(mortalLog.avatarId)) mortalLog.avatarId = []
+          if (!mortalLog.avatarId[i]) mortalLog.avatarId[i] = a.avatar_id
+          const cur = mortalLog.name[i]
+          if (!cur || cur === '' || /^[A-D](?:さん|n)?$/.test(cur)) {
+            mortalLog.name[i] = a.nickname || cur
+          }
+        }
+      }
+    } catch (err) {
+      if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] #场况 获取真实昵称/头像失败: ${err.message}`)
+    }
 
     const reviewPath = path.resolve(`${paipuDir}/${matchedId} - review.json`)
     if (!fs.existsSync(reviewPath)) {
@@ -390,7 +421,10 @@ export class MajsoulReview extends plugin {
 
     const res = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
     const adaptRes = { data: { review: res.review, player_id: res.player_id } }
-    const imgBuffer = await drawReviewInfoImg(mortalLog, adaptRes, kyokuId)
+    if (kyokuId >= (adaptRes.data.review.kyokus || []).length) {
+      return e.reply(`❌ 局数超出范围! 该牌谱共 ${(adaptRes.data.review.kyokus || []).length} 局（从 1 开始编号）`)
+    }
+    const imgBuffer = await drawReviewInfoImg(mortalLog, adaptRes, kyokuId, meguruId)
     
     if (typeof imgBuffer === 'string') return e.reply(imgBuffer)
     e.reply(segment.image(imgBuffer))

@@ -9,6 +9,7 @@ import { MajsoulRecords } from './apps/MajsoulRecords.js';
 import { MajsoulInfo } from './apps/MajsoulInfo.js';
 import { MajsoulReview } from './apps/MajsoulReview.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
+import { cleanupPaipu, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -323,10 +324,29 @@ export class majsoul extends plugin {
     scheduleManager.isRunning = true;
     console.log('[Majsoul-Plugin] 定时任务启动成功（四麻3分钟/三麻5分钟）');
 
+    // 牌谱文件定时清理：每 24 小时执行一次，删除超过 ${PAIPU_CLEANUP_DAYS} 天的旧牌谱
+    const paipuCleanupTimer = setInterval(() => {
+      try {
+        cleanupPaipu(PAIPU_CLEANUP_DAYS);
+      } catch (error) {
+        logger?.error?.(`[Majsoul-Plugin] 牌谱清理失败: ${error.message}`);
+      }
+    }, 24 * 60 * 60 * 1000);
+    scheduleManager.paipuCleanupTimer = paipuCleanupTimer;
+
     // 启动后稍作延迟执行一次初始检查
     setTimeout(async () => {
       for (const { type } of SCHEDULES) await scheduleManager.performCheck(type);
     }, 5000);
+
+    // 启动后稍作延迟执行一次牌谱清理（避免刚启动就清理，给予缓冲）
+    setTimeout(() => {
+      try {
+        cleanupPaipu(PAIPU_CLEANUP_DAYS);
+      } catch (error) {
+        logger?.error?.(`[Majsoul-Plugin] 牌谱初始清理失败: ${error.message}`);
+      }
+    }, 60000);
   }
 
   // 插件卸载时的清理
@@ -336,6 +356,7 @@ export class majsoul extends plugin {
     if (scheduleManager) {
       clearInterval(scheduleManager.interval4p);
       clearInterval(scheduleManager.interval3p);
+      clearInterval(scheduleManager.paipuCleanupTimer);
       await scheduleManager.stop?.();
       scheduleManager = null;
     }
