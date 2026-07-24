@@ -658,49 +658,58 @@ export class MajsoulBrowserBridge {
     return logs ? logs.head : null
   }
 
-  async fetchGameRecordByOfficialPage(paipuId, logId, timeoutMs = 90000) {
+  async fetchGameRecordByOfficialPage(paipuId, logId, timeoutMs = 90000, retries = 3) {
     await this.installWebSocketBridge()
-    await this.page.evaluate(`globalThis.__MajsoulRawWsBridge && globalThis.__MajsoulRawWsBridge.clearGatewayFrames()`)
     const paipuUrl = `https://game.maj-soul.com/1/?paipu=${encodeURIComponent(paipuId)}`
-    await this.page.send('Page.navigate', { url: paipuUrl })
 
-    const requests = new Map()
-    const start = Date.now()
     let lastError = null
-
-    while (Date.now() - start < timeoutMs) {
-      const frames = await this.drainGatewayFramesSafe()
-
-      for (const frame of frames || []) {
-        try {
-          if (frame.direction === 'out') {
-            const requestInfo = decodeBrowserRequest(frame)
-            if (requestInfo?.methodName === '.lq.Lobby.fetchGameRecord') {
-              requests.set(requestInfo.reqIndex, requestInfo)
-              if (typeof logger !== 'undefined') {
-                logger.info(`[Majsoul-Plugin] 捕获官方 fetchGameRecord: req=${requestInfo.reqIndex}, uuid=${requestInfo.payload?.game_uuid}`)
-              }
-            }
-          } else if (frame.direction === 'in') {
-            for (const requestInfo of requests.values()) {
-              const response = decodeBrowserResponse(frame, requestInfo)
-              if (!response) continue
-              if (response.error && response.error.code) {
-                lastError = `官方页面 fetchGameRecord 返回 code ${response.error.code}`
-                continue
-              }
-              if (requestInfo.payload?.game_uuid && requestInfo.payload.game_uuid !== logId) {
-                continue
-              }
-              return response
-            }
-          }
-        } catch (err) {
-          lastError = err.message
-        }
+    // 官方页面偶发无响应（fetchGameRecord 超时），复用已启动的 Chrome 重新导航重试，
+    // 直到拿到响应或重试次数用尽，避免直接输出缺头像/缺昵称的残缺牌谱图。
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (attempt > 0 && typeof logger !== 'undefined') {
+        logger.warn(`[Majsoul-Plugin] fetchGameRecord 第 ${attempt} 次重试（共 ${retries} 次）...`)
       }
+      await this.page.evaluate(`globalThis.__MajsoulRawWsBridge && globalThis.__MajsoulRawWsBridge.clearGatewayFrames()`)
+      await this.page.send('Page.navigate', { url: paipuUrl })
 
-      await sleep(200)
+      const requests = new Map()
+      const start = Date.now()
+
+      while (Date.now() - start < timeoutMs) {
+        const frames = await this.drainGatewayFramesSafe()
+
+        for (const frame of frames || []) {
+          try {
+            if (frame.direction === 'out') {
+              const requestInfo = decodeBrowserRequest(frame)
+              if (requestInfo?.methodName === '.lq.Lobby.fetchGameRecord') {
+                requests.set(requestInfo.reqIndex, requestInfo)
+                if (typeof logger !== 'undefined') {
+                  logger.info(`[Majsoul-Plugin] 捕获官方 fetchGameRecord: req=${requestInfo.reqIndex}, uuid=${requestInfo.payload?.game_uuid}`)
+                }
+              }
+            } else if (frame.direction === 'in') {
+              for (const requestInfo of requests.values()) {
+                const response = decodeBrowserResponse(frame, requestInfo)
+                if (!response) continue
+                if (response.error && response.error.code) {
+                  lastError = `官方页面 fetchGameRecord 返回 code ${response.error.code}`
+                  continue
+                }
+                if (requestInfo.payload?.game_uuid && requestInfo.payload.game_uuid !== logId) {
+                  continue
+                }
+                return response
+              }
+            }
+          } catch (err) {
+            lastError = err.message
+          }
+        }
+
+        await sleep(200)
+      }
+      // 本轮超时，进入下一轮重试（lastError 已记录）
     }
 
     throw new Error(lastError || '等待官方页面 fetchGameRecord 响应超时')

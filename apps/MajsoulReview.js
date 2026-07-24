@@ -149,12 +149,16 @@ function pickDanRateFromReport(report) {
 }
 
 // 拉取真实玩家信息（含 head + data）：仅走浏览器桥
+// 返回值约定：
+//   null                          —— 未登录/无浏览器配置，属正常情况，调用方用占位名输出牌谱图
+//   { __fetchFailed: true, ... }  —— 已登录但拉取超时/失败，调用方不应输出牌谱图（头像/昵称出不来）
+//   { head, data }                —— 拉取成功
 async function fetchRealHead(gameId) {
   try {
     return await fetchRealHeadViaBridge(gameId)
   } catch (err) {
     if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 浏览器桥获取牌谱失败: ${err.message}`)
-    return null
+    return { __fetchFailed: true, error: err.message }
   }
 }
 
@@ -242,6 +246,12 @@ export class MajsoulReview extends plugin {
     const res = await reviewMortal(mortalLog, token, engine)
     const logs = await headPromise
     if (typeof res === 'string') return e.reply(res)
+
+    // 已登录但拉取真实玩家信息（昵称/头像）超时/失败：头像与昵称出不来，
+    // 输出残缺牌谱图无意义，直接提示稍后重试，不输出牌谱图。
+    if (logs && logs.__fetchFailed) {
+      return e.reply('❌ 获取玩家昵称/头像超时（官方页面无响应），牌谱图暂不输出。\n请稍后重试：#牌谱Review <牌谱URL>')
+    }
 
     const realHead = logs && logs.head
     if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {
@@ -386,6 +396,10 @@ export class MajsoulReview extends plugin {
     // 与 #牌谱Review 一致：登录态下按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
     try {
       const logs = isLoginAvailable() ? await fetchRealHead(matchedId) : null
+      // 已登录但拉取超时/失败：昵称/头像出不来，不输出残缺场况图，提示稍后重试
+      if (logs && logs.__fetchFailed) {
+        return e.reply('❌ 获取玩家昵称/头像超时（官方页面无响应），场况图暂不输出。\n请稍后重试：#雀魂场况 <牌谱ID> <局数> <巡数>')
+      }
       const realHead = logs && logs.head
       if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {
         // 桥返回的 head.accounts 数组顺序可能与牌谱座位不对齐（实测上家被安到主视角），
