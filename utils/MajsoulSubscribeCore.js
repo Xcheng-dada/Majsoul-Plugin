@@ -357,6 +357,9 @@ export default class MajsoulSubscribeCore {
                 allMatches: players
             };
         } catch (error) {
+            if (error && error.code === 'TOKEN_REQUIRED') {
+                return { success: false, message: MajsoulApi.TOKEN_HINT };
+            }
             this._logger.error(`[MajsoulSubscribeCore] 搜索玩家失败: ${error.message}`);
             return { success: false, message: '搜索玩家时网络出错，请稍后重试。' };
         }
@@ -406,6 +409,9 @@ export default class MajsoulSubscribeCore {
                 data: newSubscription
             };
         } catch (error) {
+            if (error && error.code === 'TOKEN_REQUIRED') {
+                return { success: false, message: MajsoulApi.TOKEN_HINT };
+            }
             this._logger.error(`[MajsoulSubscribeCore] 添加订阅失败: ${error.message}`);
             return { success: false, message: '订阅过程中出现错误。' };
         }
@@ -492,6 +498,8 @@ export default class MajsoulSubscribeCore {
     
     // 6. 定时任务：检查指定模式的订阅更新（单独检查四麻或三麻）
     async checkSubscriptionsByMode(mode = 4) {
+        // 未配置牌谱屋 token 时静默跳过，避免定时任务反复刷日志/报错
+        if (!this.api.token) return [];
         const updates = [];
         const modeName = mode === 4 ? '四麻' : '三麻';
         let successCount = 0;
@@ -516,7 +524,7 @@ export default class MajsoulSubscribeCore {
                     // 获取该玩家最新的一场对局
                     this._logger.info(`[MajsoulSubscribeCore] 正在检测更新${sub.nickname || sub.id}的${modeName}对局数据`);
                     
-                    const records = await this.api.getPlayerRecords(sub.id, mode);
+                    const records = await this.api.getPlayerRecords(sub.id, mode, 30);
                     
                     if (!records || records.length === 0) {
                         this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 无对局记录`);
@@ -524,36 +532,37 @@ export default class MajsoulSubscribeCore {
                         continue;
                     }
                     
-                    const latestRecord = records[0];
+                    // 收集所有比本地 endTime 更新的对局（按时间升序：旧->新），逐场补发，避免长期离线后中间场次漏报
+                    const newRecords = records
+                        .filter(r => r && r.endTime && (!sub.endTime || r.endTime > sub.endTime))
+                        .sort((a, b) => a.endTime - b.endTime);
                     
-                    // 验证数据完整性
-                    if (!latestRecord.endTime) {
-                        this._logger.warn(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 的对局记录时间为空`);
+                    if (newRecords.length === 0) {
                         successCount++;
                         continue;
                     }
                     
-                    // 通过比对 endTime 判断是否为新对局
-                    if (latestRecord.endTime > sub.endTime) {
-                        this._logger.info(`[MajsoulSubscribeCore] 发现新对局: ${sub.nickname || sub.id}`);
-                        
+                    // 单轮补发上限，避免长期离线后一次性消息轰炸
+                    const MAX_BACKFILL = 10;
+                    const toSend = newRecords.slice(0, MAX_BACKFILL);
+                    for (const rec of toSend) {
                         // 生成播报消息（使用工具函数）
-                        const msg = await this._generateBroadcastMessage(latestRecord, sub);
-                        
+                        const msg = await this._generateBroadcastMessage(rec, sub);
                         updates.push({
                             groupId: sub.gid,
                             message: msg.text,
                             image: msg.image,
                             playerId: sub.id,
                             playerNickname: sub.nickname,
-                            uuid: latestRecord.uuid
+                            uuid: rec.uuid,
+                            endTime: rec.endTime,
+                            mode: mode
                         });
-                        
-                        // 更新本地存储的记录
-                        sub.uuid = latestRecord.uuid || sub.uuid;
-                        sub.endTime = latestRecord.endTime || sub.endTime;
-                        
-                        this._logger.info(`[MajsoulSubscribeCore] 更新玩家 ${sub.nickname || sub.id} 的记录`);
+                    }
+                    
+                    this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 待播报新对局 ${newRecords.length} 场（本轮 ${toSend.length} 场）`);
+                    if (newRecords.length > MAX_BACKFILL) {
+                        this._logger.warn(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 积压 ${newRecords.length} 场，单轮仅补 ${MAX_BACKFILL} 场，剩余将在后续轮次继续补发`);
                     }
                     
                     successCount++;
@@ -564,22 +573,28 @@ export default class MajsoulSubscribeCore {
                     continue;
                 }
             }
-            
-            // 保存本轮检查后的状态（如果有更新）
-            if (updates.length > 0) {
-                try {
-                    await this._saveSubscriptions(subscriptions, mode);
-                    this._logger.info(`[MajsoulSubscribeCore] ${modeName}订阅数据已保存`);
-                } catch (saveError) {
-                    this._logger.error(`[MajsoulSubscribeCore] 保存${modeName}订阅数据失败: ${saveError.message}`);
-                }
-            }
         } catch (error) {
             this._logger.error(`[MajsoulSubscribeCore] 检查${modeName}订阅失败: ${error.message}`);
         }
         
         this._logger.info(`[MajsoulSubscribeCore] ${modeName}检查完成，发现 ${updates.length} 个新对局 (成功: ${successCount}, 失败: ${failCount})`);
         return updates;
+    }
+    
+    // 播报发送成功后标记该对局已处理（仅成功才更新 endTime，避免漏报）
+    async markBroadcasted(update) {
+        try {
+            const subscriptions = await this._loadSubscriptions(update.mode);
+            const sub = subscriptions.find(s => s.id === update.playerId && String(s.gid) === String(update.groupId));
+            if (sub) {
+                sub.uuid = update.uuid || sub.uuid;
+                sub.endTime = update.endTime;
+                await this._saveSubscriptions(subscriptions, update.mode);
+                this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 的播报已确认送达`);
+            }
+        } catch (error) {
+            this._logger.error(`[MajsoulSubscribeCore] 标记已播报失败: ${error.message}`);
+        }
     }
     
     // 生成播报消息

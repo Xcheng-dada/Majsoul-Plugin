@@ -1,5 +1,43 @@
 // plugins/Majsoul-Plugin/utils/MajsoulApi.js
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+
+// 牌谱屋（amae-koromo 数据节点）Bearer token。
+// 作者要求：作为标准 Bearer token 添加到请求 header，并保持最大 1 QPS。
+// 注意：该 token 为【使用者个人所有】，需各自联系牌谱屋作者获取，切勿共用他人 token。
+// 仅从 data/token.json 读取（{"token":"你的token"}），无任何代码内置默认值。
+// 该 token 与 AI 牌谱分析功能无关，仅用于：玩家查询 / 对局订阅 / 对局记录 / 雀魂搜索。
+// 未配置时返回 null（不注入 Authorization，部分接口可能受限或被拒）。
+const PAIPU_TOKEN_PATH = path.resolve('./plugins/Majsoul-Plugin/data/token.json')
+
+function readPaipuToken() {
+    try {
+        if (fs.existsSync(PAIPU_TOKEN_PATH)) {
+            const cfg = JSON.parse(fs.readFileSync(PAIPU_TOKEN_PATH, 'utf8'))
+            if (cfg && cfg.token && String(cfg.token).trim()) return String(cfg.token).trim()
+        }
+    } catch (e) {
+        // 忽略读取/解析错误
+    }
+    return null
+}
+
+// 写入牌谱屋 token 到 data/token.json（文件不存在则自动创建），内容形如 {"token":"xxx"}
+// 返回是否写入成功
+function savePaipuToken(token) {
+    try {
+        const value = String(token || '').trim()
+        if (!value) return false
+        fs.writeFileSync(PAIPU_TOKEN_PATH, JSON.stringify({ token: value }, null, 2), 'utf8')
+        return true
+    } catch (e) {
+        return false
+    }
+}
+
+// 未配置牌谱屋 token 时面向最终用户的提示（与 AI 牌谱分析无关，仅影响玩家查询/对局订阅/对局记录/雀魂搜索）
+const TOKEN_HINT = '⚠️ 未配置牌谱屋 Bearer token，玩家查询 / 对局订阅 / 对局记录 / 雀魂搜索等功能不可用。\n请先自行联系牌谱屋（amae-koromo）作者获取专属 token，再【私聊机器人】发送：设置token [你的token] 完成配置。'
 
 /**
  * 主机探测类 - 自动选择最优API节点
@@ -29,7 +67,7 @@ class HostProber {
 
         try {
             // 使用GET请求测试玩家搜索接口，因为HEAD请求可能被拒绝
-            const response = await fetch(`https://${host}/api/v2/pl4/search_player/test`, {
+            const response = await this._apiFetch(`https://${host}/api/v2/pl4/search_player/test`, {
                 method: 'GET',
                 signal: controller.signal,
                 headers: {
@@ -486,6 +524,10 @@ export default class MajsoulApi {
         /** @type {console|object} */
         this.logger = global.logger || console;
 
+        /** @type {string} 牌谱屋 Bearer token（请求时注入 Authorization 头） */
+        this.token = options.token || readPaipuToken();
+        // 未配置 token 时不在此打日志；相关功能入口会检测 this.token 并向用户提示，避免定时任务等自动场景反复刷日志。
+
         /** @type {string[]} API主机列表 */
         this.apiHosts = options.customHosts || [
             "5-data.amae-koromo.com",
@@ -531,6 +573,26 @@ export default class MajsoulApi {
 
         /** @type {boolean} 是否启用调试模式 */
         this.debug = options.debug || false;
+    }
+
+    /**
+     * 统一的 fetch 封装：自动注入牌谱屋 Bearer token（Authorization 头）。
+     * 所有对 amae-koromo 数据节点的请求都应走此方法。
+     * @param {string} url 
+     * @param {object} [options] 
+     * @returns {Promise<Response>}
+     */
+    async _apiFetch(url, options = {}) {
+        if (!this.token) {
+            throw new MajsoulApiError('TOKEN_REQUIRED', TOKEN_HINT);
+        }
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
+            'Accept': 'application/json',
+            ...(options.headers || {})
+        }
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+        return fetch(url, { ...options, headers })
     }
 
     /**
@@ -610,7 +672,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const response = await fetch(fullUrl, {
+                const response = await this._apiFetch(fullUrl, {
                     method: 'GET',
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
@@ -647,6 +709,7 @@ export default class MajsoulApi {
                 throw new Error('API返回的数据格式不正确');
 
             } catch (error) {
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     this.logger.debug(`[MajsoulApi] 搜索玩家遇到429限流，继续重试: ${error.message}`);
                     continue;
@@ -695,7 +758,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const statsResponse = await fetch(statsUrl, {
+                const statsResponse = await this._apiFetch(statsUrl, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -721,7 +784,7 @@ export default class MajsoulApi {
                 const recordsController = new AbortController();
                 const recordsTimeoutId = setTimeout(() => recordsController.abort(), this.timeout);
 
-                const recordsResponse = await fetch(recordsUrl, {
+                const recordsResponse = await this._apiFetch(recordsUrl, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -756,6 +819,7 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
@@ -808,7 +872,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const response = await fetch(url, {
+                const response = await this._apiFetch(url, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -831,6 +895,7 @@ export default class MajsoulApi {
                 throw new Error('未找到昵称信息');
 
             } catch (error) {
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     this.logger.debug(`[MajsoulApi] 获取玩家昵称遇到429限流，跳过重试: ${error.message}`);
                     return null;
@@ -875,7 +940,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const response = await fetch(url, {
+                const response = await this._apiFetch(url, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -914,6 +979,7 @@ export default class MajsoulApi {
                     throw error;
                 }
                 
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
@@ -966,7 +1032,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const response = await fetch(url, {
+                const response = await this._apiFetch(url, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -996,6 +1062,7 @@ export default class MajsoulApi {
                 return result;
 
             } catch (error) {
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
@@ -1053,7 +1120,7 @@ export default class MajsoulApi {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-                const statsResponse = await fetch(statsUrl, {
+                const statsResponse = await this._apiFetch(statsUrl, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -1079,7 +1146,7 @@ export default class MajsoulApi {
                 const recordsController = new AbortController();
                 const recordsTimeoutId = setTimeout(() => recordsController.abort(), this.timeout);
 
-                const recordsResponse = await fetch(recordsUrl, {
+                const recordsResponse = await this._apiFetch(recordsUrl, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0',
                         'Accept': 'application/json'
@@ -1114,6 +1181,7 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
@@ -1142,6 +1210,11 @@ export default class MajsoulApi {
         }
     }
 }
+
+// 未配置 token 时的用户提示（静态挂在类上，便于各功能入口直接引用）
+MajsoulApi.TOKEN_HINT = TOKEN_HINT;
+// 写入 token.json 的静态方法
+MajsoulApi.savePaipuToken = savePaipuToken;
 
 // 导出辅助函数和类
 export { 

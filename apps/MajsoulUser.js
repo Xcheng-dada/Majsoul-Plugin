@@ -32,6 +32,10 @@ export class MajsoulUser extends plugin {
                 {
                     reg: '^#?雀魂我的绑定$',
                     fnc: 'myBindings'
+                },
+                {
+                    reg: '^#?设置token\\s+(\\S+)$',
+                    fnc: 'setPaipuToken'
                 }
             ]
         });
@@ -47,6 +51,10 @@ export class MajsoulUser extends plugin {
             if (!match) return false;
             
             const playerName = match[1].trim();
+            if (!this.api.token) {
+                await e.reply(MajsoulApi.TOKEN_HINT);
+                return true;
+            }
             if (!playerName) {
                 await e.reply('请输入要搜索的玩家名称');
                 return true;
@@ -363,7 +371,38 @@ export class MajsoulUser extends plugin {
             return null;
         }
     }
-    
+
+    // 设置牌谱屋 Bearer token（仅机器人主人 master 私聊可操作，写入 data/token.json，避免群聊泄露）
+    async setPaipuToken(e) {
+        try {
+            if (e.message_type !== 'private') {
+                await e.reply('⚠️ 为安全起见，设置 token 仅支持私聊机器人使用');
+                return true;
+            }
+            if (!e.isMaster) {
+                await e.reply('⚠️ 该指令仅机器人主人可使用');
+                return true;
+            }
+            const token = e.msg.match(/^#?设置token\s+(\S+)$/)[1].trim();
+            if (!token) {
+                await e.reply('请输入有效的 token，格式：设置token [你的token]');
+                return true;
+            }
+            const ok = MajsoulApi.savePaipuToken(token);
+            if (ok) {
+                // 立即刷新当前实例的 token，无需重启
+                this.api.token = token;
+                await e.reply('✅ 牌谱屋 token 已保存至 data/token.json\n玩家查询 / 对局订阅 / 对局记录 / 雀魂搜索等功能已生效。');
+            } else {
+                await e.reply('❌ token 保存失败，请检查插件 data 目录写入权限。');
+            }
+        } catch (error) {
+            logger.error('[MajsoulUser] 设置 token 失败:', error);
+            await e.reply('设置 token 时出现错误');
+        }
+        return true;
+    }
+
     // ========== 数据库操作方法 ==========
     
     // 获取用户的所有绑定

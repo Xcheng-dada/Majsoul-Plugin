@@ -678,26 +678,33 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   let data4, data3, extended4, extended3
   
   try {
-    data4 = await api.getPlayerStats(uid, 4).catch(e => {
-      console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
-      return JSON.parse(JSON.stringify(playerStatsZero))
-    })
-    extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
-      console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
-      return JSON.parse(JSON.stringify(playerExtendZero))
-    })
-    const result3 = await Promise.all([
-      api.getPlayerStats(uid, 3).catch(e => {
-        console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
+    if (!api.token) {
+      data4 = JSON.parse(JSON.stringify(playerStatsZero))
+      extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+      data3 = JSON.parse(JSON.stringify(playerStatsZero))
+      extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+    } else {
+      data4 = await api.getPlayerStats(uid, 4).catch(e => {
+        console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
         return JSON.parse(JSON.stringify(playerStatsZero))
-      }),
-      api.getPlayerExtendedStats(uid, 3).catch(e => {
-        console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
+      })
+      extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
+        console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
         return JSON.parse(JSON.stringify(playerExtendZero))
       })
-    ])
-    data3 = result3[0]
-    extended3 = result3[1]
+      const result3 = await Promise.all([
+        api.getPlayerStats(uid, 3).catch(e => {
+          console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
+          return JSON.parse(JSON.stringify(playerStatsZero))
+        }),
+        api.getPlayerExtendedStats(uid, 3).catch(e => {
+          console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
+          return JSON.parse(JSON.stringify(playerExtendZero))
+        })
+      ])
+      data3 = result3[0]
+      extended3 = result3[1]
+    }
   } catch (e) {
     console.error(`[render.js] 获取玩家数据失败: ${e.message}`)
     return `获取玩家数据失败: ${e.message}\n可能原因：\n1. 网络连接问题\n2. UID不正确\n3. 玩家数据尚未同步到服务器`
@@ -1165,7 +1172,9 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   }
   // 简体段位名映射（雀魂原始为繁体「雀聖★2」，统一显示简体「雀圣2」）
   const SIMPLE_RANKS = { 1: '初心', 2: '雀士', 3: '雀杰', 4: '雀豪', 5: '雀圣', 6: '魂天' }
-  const danText = `${SIMPLE_RANKS[danMajor] || '初心'}${danMinor > 1 ? danMinor : ''}`
+  // 雀魂原始段位文本一星省略星标（如「雀聖」对应雀圣一星），故 minor 恒显星数，
+  // 避免雀圣一星只显示「雀圣」而丢「1」（二/三星原本就正常）
+  const danText = `${SIMPLE_RANKS[danMajor] || '初心'}${danMinor || ''}`
   // 段位分：当前 rating / 升段所需分。升段阈值取自 PlayerLevel._getMaxPoint（如 雀圣3 → 9000）
   let rateText = ''
   if (mortalLog && mortalLog.rate && mortalLog.rate[seat] != null) {

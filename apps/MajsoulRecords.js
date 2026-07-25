@@ -197,6 +197,9 @@ export class MajsoulRecords extends plugin {
      */
     async _getRecords(playerName, mode = 4, limit = 5) {
         try {
+            if (!this.api.token) {
+                return { success: false, message: MajsoulApi.TOKEN_HINT };
+            }
             if (!playerName || playerName.trim().length === 0) {
                 return { success: false, message: '请输入玩家昵称' };
             }

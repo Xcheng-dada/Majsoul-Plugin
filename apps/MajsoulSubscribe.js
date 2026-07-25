@@ -1,6 +1,7 @@
 // plugins/Majsoul-Plugin/apps/MajsoulSubscribe.js
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulSubscribeCore from '../utils/MajsoulSubscribeCore.js';
+import MajsoulApi from '../utils/MajsoulApi.js';
 
 export class MajsoulSubscribe extends plugin {
     constructor() {
@@ -87,6 +88,10 @@ export class MajsoulSubscribe extends plugin {
     
     // 通用的订阅处理逻辑
     async processSubscribe(e, nickname, mode = 4) {
+        if (!this.core.api?.token) {
+            await e.reply(MajsoulApi.TOKEN_HINT);
+            return true;
+        }
         const modeName = mode === 4 ? '四麻' : '三麻';
         
         // 1. 搜索玩家
@@ -152,6 +157,10 @@ export class MajsoulSubscribe extends plugin {
     
     // 通用的开启/关闭逻辑
     async processToggleSubscribe(e, nickname, mode, setActive) {
+        if (!this.core.api?.token) {
+            await e.reply(MajsoulApi.TOKEN_HINT);
+            return true;
+        }
         // 1. 搜索玩家
         const searchResult = await this.core.searchPlayerForSubscribe(nickname, mode);
         if (!searchResult.success) {
@@ -187,6 +196,10 @@ export class MajsoulSubscribe extends plugin {
     }
     
     async processDeleteSubscribe(e, nickname, mode) {
+        if (!this.core.api?.token) {
+            await e.reply(MajsoulApi.TOKEN_HINT);
+            return true;
+        }
         // 1. 搜索玩家
         const searchResult = await this.core.searchPlayerForSubscribe(nickname, mode);
         if (!searchResult.success) {

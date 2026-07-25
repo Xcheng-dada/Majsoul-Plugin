@@ -8,6 +8,7 @@ export default class MajsoulSchedule {
         this.checkInterval4p = null; // 四麻检查定时器
         this.checkInterval3p = null; // 三麻检查定时器
         this.bot = null;
+        this._onlineListenerAttached = false; // 防止重复注册上线监听
         // 使用全局 logger 或 console（确保使用 console.log 级别确保控制台可见）
         this.logger = global.logger || console;
         
@@ -24,6 +25,25 @@ export default class MajsoulSchedule {
         this.bot = botInstance;
         console.log('[雀魂对局订阅] INFO: Bot实例已设置');
         this.logger.info('[MajsoulSchedule] Bot实例已设置');
+        // 注册上线监听，Bot 上线/重连后立即补发积压播报
+        this._attachOnlineListener();
+    }
+    
+    // 监听 Bot 上线事件，连接成功后立即触发一次补发检查（避免离线期间漏报）
+    _attachOnlineListener() {
+        if (this._onlineListenerAttached) return;
+        const bot = this.bot;
+        if (!bot || typeof bot.on !== 'function') return;
+        this._onlineListenerAttached = true;
+        bot.on('online', () => {
+            this.logger.info('[MajsoulSchedule] Bot 已上线，延迟3秒后补发积压的订阅播报');
+            setTimeout(() => {
+                // 利用 performCheck 内置的 checking 锁防止与定时检查并发
+                this.performCheck(4);
+                setTimeout(() => this.performCheck(3), 3000);
+            }, 3000);
+        });
+        this.logger.debug('[MajsoulSchedule] 已注册 Bot 上线补发监听');
     }
     
     // 启动定时检查
@@ -112,7 +132,13 @@ export default class MajsoulSchedule {
             let sentCount = 0;
             for (const update of updates) {
                 const success = await this.sendGroupMessage(update.groupId, update.message, update.image);
-                if (success) sentCount++;
+                if (success) {
+                    sentCount++;
+                    // 仅发送成功才标记为已播报，失败则保留待下次检查补发
+                    await this.core.markBroadcasted(update);
+                } else {
+                    this.logger.warn(`[MajsoulSchedule] 群 ${update.groupId} 播报暂未送达，将在下次检查时补发`);
+                }
                 // 避免消息轰炸，每条消息间隔1秒
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
@@ -138,10 +164,34 @@ export default class MajsoulSchedule {
         await this.performCheck(3);
     }
     
+    // 选取当前在线的 bot 实例用于发送（避免用离线 bot 触发"等待上线超时"卡死）
+    _pickOnlineBot() {
+        const candidates = [];
+        if (this.bot) candidates.push(this.bot);
+        if (typeof global.Bot !== 'undefined' && global.Bot) candidates.push(global.Bot);
+        if (typeof global.Bots === 'object' && global.Bots) {
+            for (const botId in global.Bots) {
+                if (global.Bots[botId]) candidates.push(global.Bots[botId]);
+            }
+        }
+        const hasSender = (b) => b && (typeof b.sendGroupMsg === 'function' || typeof b.pickGroup === 'function');
+        const isOnline = (b) => hasSender(b) && (
+            b.stat?.online === true ||
+            b.isOnline === true ||
+            b.status === 'online' ||
+            b.connected === true
+        );
+        for (const b of candidates) {
+            if (isOnline(b)) return b;
+        }
+        return null;
+    }
+
     // 发送群消息（支持文字+图片合并发送）
     async sendGroupMessage(groupId, message, imageBuffer = null) {
-        if (!this.bot) {
-            this.logger.error(`[MajsoulSchedule] 未设置Bot实例，无法发送消息到群 ${groupId}`);
+        const bot = this._pickOnlineBot();
+        if (!bot) {
+            this.logger.warn(`[MajsoulSchedule] 当前无在线的Bot实例，暂缓播报群 ${groupId}（将在下次检查时补发）`);
             return false;
         }
         
@@ -159,13 +209,13 @@ export default class MajsoulSchedule {
                         `\n${message}`
                     ];
                     
-                    if (typeof this.bot.sendGroupMsg === 'function') {
-                        await this.bot.sendGroupMsg(parseInt(groupId), msgChain);
+                    if (typeof bot.sendGroupMsg === 'function') {
+                        await bot.sendGroupMsg(parseInt(groupId), msgChain);
                         this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
                         return true;
                     }
-                    else if (typeof this.bot.pickGroup === 'function') {
-                        await this.bot.pickGroup(parseInt(groupId)).sendMsg(msgChain);
+                    else if (typeof bot.pickGroup === 'function') {
+                        await bot.pickGroup(parseInt(groupId)).sendMsg(msgChain);
                         this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
                         return true;
                     }
@@ -173,34 +223,17 @@ export default class MajsoulSchedule {
             }
             
             // 没有图片或图片发送失败，只发送文字（文字消息已包含完整内容）
-            let sent = false;
-            
-            if (typeof this.bot.sendGroupMsg === 'function') {
-                await this.bot.sendGroupMsg(parseInt(groupId), message);
-                sent = true;
-            }
-            else if (typeof this.bot.pickGroup === 'function') {
-                await this.bot.pickGroup(parseInt(groupId)).sendMsg(message);
-                sent = true;
-            }
-            else if (typeof global.Bot === 'object' && typeof global.Bot.sendGroupMsg === 'function') {
-                await global.Bot.sendGroupMsg(parseInt(groupId), message);
-                sent = true;
-            }
-            else if (typeof global.Bots === 'object') {
-                for (const [, bot] of Object.entries(global.Bots)) {
-                    if (typeof bot.sendGroupMsg === 'function') {
-                        await bot.sendGroupMsg(parseInt(groupId), message);
-                        sent = true;
-                        break;
-                    }
-                }
-            }
-            
-            if (sent) {
+            if (typeof bot.sendGroupMsg === 'function') {
+                await bot.sendGroupMsg(parseInt(groupId), message);
                 this.logger.debug(`[MajsoulSchedule] 消息已发送到群 ${groupId}`);
                 return true;
-            } else {
+            }
+            else if (typeof bot.pickGroup === 'function') {
+                await bot.pickGroup(parseInt(groupId)).sendMsg(message);
+                this.logger.debug(`[MajsoulSchedule] 消息已发送到群 ${groupId}`);
+                return true;
+            }
+            else {
                 this.logger.error(`[MajsoulSchedule] 无法找到可用的消息发送方法`);
                 return false;
             }
@@ -241,7 +274,10 @@ export default class MajsoulSchedule {
             
             // 发送消息
             for (const update of [...updates4p, ...updates3p]) {
-                await this.sendGroupMessage(update.groupId, update.message, update.image);
+                const success = await this.sendGroupMessage(update.groupId, update.message, update.image);
+                if (success) {
+                    await this.core.markBroadcasted(update);
+                }
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             

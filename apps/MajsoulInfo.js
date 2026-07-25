@@ -39,6 +39,10 @@ export class MajsoulInfo extends plugin {
                 }
             }
             
+            if (!api.token) {
+                await e.reply(MajsoulApi.TOKEN_HINT);
+                return true;
+            }
             if (!uid && !playerName) {
                 const qid = String(e.user_id);
                 uid = await this.getMainUid(qid);
