@@ -524,7 +524,7 @@ export default class MajsoulSubscribeCore {
                     // 获取该玩家最新的一场对局
                     this._logger.info(`[MajsoulSubscribeCore] 正在检测更新${sub.nickname || sub.id}的${modeName}对局数据`);
                     
-                    const records = await this.api.getPlayerRecords(sub.id, mode, 30);
+                    const records = await this.api.getPlayerRecords(sub.id, mode, 5);
                     
                     if (!records || records.length === 0) {
                         this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 无对局记录`);
@@ -542,8 +542,8 @@ export default class MajsoulSubscribeCore {
                         continue;
                     }
                     
-                    // 单轮补发上限，避免长期离线后一次性消息轰炸
-                    const MAX_BACKFILL = 10;
+                    // 单轮补发上限，避免长期离线后一次性消息轰炸（与对局记录查询的"最近5场"保持一致）
+                    const MAX_BACKFILL = 5;
                     const toSend = newRecords.slice(0, MAX_BACKFILL);
                     for (const rec of toSend) {
                         // 生成播报消息（使用工具函数）
