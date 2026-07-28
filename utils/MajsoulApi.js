@@ -509,6 +509,14 @@ function handleApiError(error) {
  */
 
 /**
+ * 限流器单例：所有 MajsoulApi 实例（订阅/搜索/对局记录/查询…）共用同一个牌谱屋 token，
+ * 必须用同一个限流器，否则各实例预算叠加会远超 token 的真实限额（作者要求 max 1 QPS）。
+ * 首次构造时按传入 options 创建，之后所有实例复用。
+ * @type {RateLimiter|null}
+ */
+let sharedRateLimiter = null;
+
+/**
  * 雀魂API封装类
  * @class MajsoulApi
  */
@@ -545,19 +553,13 @@ export default class MajsoulApi {
         /** @type {number} 请求超时时间（毫秒） */
         this.timeout = options.timeout || 15000;
 
-        /** @type {RateLimiter} 四麻请求频率限制器（10次/分钟） */
-        this.rateLimiter4 = new RateLimiter(
-            options.maxRequestsPerMinute || 10, 
-            60000, 
+        // 所有请求共用同一个牌谱屋 token，必须使用全局唯一的限流器（单例）。
+        // 默认 30 次/分钟，低于 token 作者要求的 max 1 QPS（60/min）以留余量。
+        this.rateLimiter = sharedRateLimiter || (sharedRateLimiter = new RateLimiter(
+            options.maxRequestsPerMinute || 30,
+            60000,
             { logger: this.logger, maxWaitTime: 600000 }
-        );
-
-        /** @type {RateLimiter} 三麻请求频率限制器（正常频率，三麻API不限流） */
-        this.rateLimiter3 = new RateLimiter(
-            options.maxRequestsPerMinute3 || 30, 
-            60000, 
-            { logger: this.logger, maxWaitTime: 30000 }
-        );
+        ));
 
         /** @type {string} 固定时间戳 (2010-01-01) */
         this.startDateTimestamp = '1262304000000';
@@ -652,12 +654,12 @@ export default class MajsoulApi {
      * @returns {Promise<PlayerInfo[]>} - 玩家信息数组
      */
     async searchPlayer(playerName, mode = 4) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
-        await rateLimiter.acquire();
+        const rateLimiter = this.rateLimiter;
         const maxRetries = this.apiHosts.length;
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
+                await rateLimiter.acquire();
                 const modeStr = mode.toString();
                 const url = `${this.baseUrl}/pl${modeStr}/search_player/${encodeURIComponent(playerName)}`;
                 const params = new URLSearchParams({
@@ -711,7 +713,9 @@ export default class MajsoulApi {
             } catch (error) {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
-                    this.logger.debug(`[MajsoulApi] 搜索玩家遇到429限流，继续重试: ${error.message}`);
+                    const waitTime = Math.min(10000 * Math.pow(2, attempt), 300000);
+                    this.logger.info(`[MajsoulApi] 搜索玩家遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
                 
@@ -736,13 +740,15 @@ export default class MajsoulApi {
      * @returns {Promise<Object[]>} - 对局记录数组
      */
     async getPlayerRecords(playerId, mode = 4, limit = 2) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
-        await rateLimiter.acquire();
+        const rateLimiter = this.rateLimiter;
+        const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 
         for (let attempt = 0; ; attempt++) {
             try {
+                // 每次实际请求都先过共享限流器（含重试），避免绕开限流把请求量堆高
+                await rateLimiter.acquire();
                 const modeStr = mode.toString();
                 const modeName = modeStr === '4' ? '四麻' : '三麻';
 
@@ -778,6 +784,7 @@ export default class MajsoulApi {
                 this.logger.debug(`[MajsoulApi] 统计信息count值: ${count}`);
 
                 // 步骤2: 获取对局记录（限制2条，按时间降序）
+                await rateLimiter.acquire();
                 const recordsUrl = `${this.baseUrl}/pl${modeStr}/player_records/${playerId}/${currentTimestamp}/${this.startDateTimestamp}?limit=${limit}&mode=${modeParams}&descending=true&tag=${count}`;
                 this.logger.debug(`[MajsoulApi] 获取对局记录: ${recordsUrl}`);
 
@@ -821,9 +828,13 @@ export default class MajsoulApi {
             } catch (error) {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 对局记录遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
@@ -855,7 +866,7 @@ export default class MajsoulApi {
      * @returns {Promise<string|null>} - 玩家昵称
      */
     async getPlayerNickname(playerId, mode = 4) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
+        const rateLimiter = this.rateLimiter;
         await rateLimiter.acquire();
         const maxRetries = this.apiHosts.length;
 
@@ -922,13 +933,14 @@ export default class MajsoulApi {
      * @returns {Promise<Object>} - 统计信息
      */
     async getPlayerStats(playerId, mode = 4) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
-        await rateLimiter.acquire();
+        const rateLimiter = this.rateLimiter;
+        const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 
         for (let attempt = 0; ; attempt++) {
             try {
+                await rateLimiter.acquire();
                 const modeStr = mode.toString();
                 const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
                 const currentTimestamp = Date.now();
@@ -956,6 +968,10 @@ export default class MajsoulApi {
                 }
 
                 if (response.status === 429) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
                     const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
                     totalWaitTime += waitTime;
@@ -981,6 +997,10 @@ export default class MajsoulApi {
                 
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
                     this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
@@ -1014,13 +1034,14 @@ export default class MajsoulApi {
      * @returns {Promise<Object>} - 扩展统计信息
      */
     async getPlayerExtendedStats(playerId, mode = 4) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
-        await rateLimiter.acquire();
+        const rateLimiter = this.rateLimiter;
+        const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 
         for (let attempt = 0; ; attempt++) {
             try {
+                await rateLimiter.acquire();
                 const modeStr = mode.toString();
                 const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
                 const currentTimestamp = Date.now();
@@ -1043,6 +1064,10 @@ export default class MajsoulApi {
                 clearTimeout(timeoutId);
 
                 if (response.status === 429) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
                     const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
                     totalWaitTime += waitTime;
@@ -1064,6 +1089,10 @@ export default class MajsoulApi {
             } catch (error) {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
                     this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
@@ -1098,13 +1127,14 @@ export default class MajsoulApi {
      * @returns {Promise<Object[]>} - 对局记录数组
      */
     async getRecentRecords(playerId, mode = 4, limit = 10) {
-        const rateLimiter = mode === 4 ? this.rateLimiter4 : this.rateLimiter3;
-        await rateLimiter.acquire();
+        const rateLimiter = this.rateLimiter;
+        const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
 
         for (let attempt = 0; ; attempt++) {
             try {
+                await rateLimiter.acquire();
                 const modeStr = mode.toString();
                 const modeName = modeStr === '4' ? '四麻' : '三麻';
 
@@ -1140,6 +1170,7 @@ export default class MajsoulApi {
                 this.logger.debug(`[MajsoulApi] 统计信息count值: ${count}`);
 
                 // 步骤2: 获取对局记录（按指定数量限制）
+                await rateLimiter.acquire();
                 const recordsUrl = `${this.baseUrl}/pl${modeStr}/player_records/${playerId}/${currentTimestamp}/${this.startDateTimestamp}?limit=${limit}&mode=${modeParams}&descending=true&tag=${count}`;
                 this.logger.debug(`[MajsoulApi] 获取对局记录: ${recordsUrl}`);
 
@@ -1183,9 +1214,13 @@ export default class MajsoulApi {
             } catch (error) {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
+                    if (attempt >= MAX_429_RETRIES) {
+                        this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
+                        throw new Error(handleApiError('-429'));
+                    }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 最近对局遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
