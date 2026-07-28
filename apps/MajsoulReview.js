@@ -183,8 +183,6 @@ export class MajsoulReview extends plugin {
   }
 
   async fetchPaipuFromUrl(url) {
-    const paipuDir = path.resolve('./plugins/Majsoul-Plugin/data/paipu')
-    
     let gameId = ''
     try {
       const parsedUrl = new URL(url)
@@ -239,11 +237,10 @@ export class MajsoulReview extends plugin {
     }
 
     const engine = 'Mortal'
-    const token = ''
 
     // 与 AI 分析并行：拉取雀魂真实玩家信息（昵称/头像），失败不影响主流程
     const headPromise = gameId ? fetchRealHead(gameId) : Promise.resolve(null)
-    const res = await reviewMortal(mortalLog, token, engine)
+    const res = await reviewMortal(mortalLog, engine)
     const logs = await headPromise
     if (typeof res === 'string') return e.reply(res)
 

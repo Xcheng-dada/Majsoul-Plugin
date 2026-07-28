@@ -157,12 +157,6 @@ export default class MajsoulSchedule {
         }
     }
     
-    // 执行全量检查（四麻+三麻）
-    async performFullCheck() {
-        await this.performCheck(4);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        await this.performCheck(3);
-    }
     
     // 选取当前在线的 bot 实例用于发送（避免用离线 bot 触发"等待上线超时"卡死）
     _pickOnlineBot() {

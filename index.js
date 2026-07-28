@@ -95,22 +95,22 @@ export class majsoul extends plugin {
         
         // 对局订阅相关指令 (四麻)
         {
-          reg: '^#?(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?(雀魂|四麻)订阅(?!状态)\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?(关闭|取消)(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?(关闭|取消)(雀魂|四麻)订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?开启(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?开启(雀魂|四麻)订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?删除(雀魂|四麻)订阅\\s+(.+)$',
+          reg: '^#?删除(雀魂|四麻)订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
@@ -122,22 +122,22 @@ export class majsoul extends plugin {
         
         // 对局订阅相关指令 (三麻)
         {
-          reg: '^#?三麻订阅\\s+(.+)$',
+          reg: '^#?三麻订阅(?!状态)\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?(关闭|取消)三麻订阅\\s+(.+)$',
+          reg: '^#?(关闭|取消)三麻订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?开启三麻订阅\\s+(.+)$',
+          reg: '^#?开启三麻订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
         {
-          reg: '^#?删除三麻订阅\\s+(.+)$',
+          reg: '^#?删除三麻订阅\\s*(.+)?$',
           fnc: 'majsoulSubscribe',
           permission: 'admin'
         },
@@ -372,18 +372,5 @@ export class majsoul extends plugin {
     console.log('[Majsoul-Plugin] 插件卸载完成');
   }
   
-  // 用于调试的手动检查命令
-  async debugCheck() {
-    if (!scheduleManager) {
-      return '定时任务未初始化';
-    }
-    
-    try {
-      const result = await scheduleManager.manualCheck();
-      return result.message;
-    } catch (error) {
-      return `手动检查失败: ${error.message}`;
-    }
-  }
 }
 

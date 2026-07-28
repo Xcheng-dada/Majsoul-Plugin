@@ -1,7 +1,6 @@
 // plugins/Majsoul-Plugin/apps/MajsoulUser.js
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
-import { PlayerLevel } from '../utils/PlayerLevel.js';
 import BotLink from '../utils/BotLink.js';
 import { drawSearchResultImg } from '../components/render.js';
 
@@ -42,6 +41,20 @@ export class MajsoulUser extends plugin {
         
         this.api = new MajsoulApi();
         this.redisPrefix = 'majsoul:user:';
+    }
+
+    /**
+     * 统一的指令处理方法（按 this.rule 分发）
+     * @param {object} e - 事件对象
+     * @returns {Promise<boolean>}
+     */
+    async handle(e) {
+        for (const r of this.rule) {
+            if (e.msg && e.msg.match(r.reg)) {
+                return await this[r.fnc](e);
+            }
+        }
+        return false;
     }
     
     // 搜索玩家

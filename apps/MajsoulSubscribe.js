@@ -234,6 +234,13 @@ export class MajsoulSubscribe extends plugin {
     // 添加 handle 方法用于指令路由
     async handle(e) {
         try {
+            // 订阅类指令缺少昵称时统一提示
+            const subEmptyMatch = e.msg.match(/^#?(?:开启|关闭|取消|删除)?\s*(?:三麻|雀魂|四麻)?订阅(?!状态)\s*(.+)?$/);
+            if (subEmptyMatch && !subEmptyMatch[1]) {
+                await e.reply('请输入要订阅的玩家昵称，格式：雀魂订阅 [昵称]');
+                return true;
+            }
+            
             // 根据正则匹配调用对应的方法
             if (e.msg.match(/^#?(雀魂|四麻)订阅\s+(.+)$/)) {
                 return await this.subscribePlayer(e);

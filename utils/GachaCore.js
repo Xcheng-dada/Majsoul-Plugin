@@ -4,10 +4,6 @@ import path from 'path';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 
-// 获取当前文件的目录（ES Module 写法）
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // 物品类型常量定义 (提升到类级别，全局可用)
 export const ITEM_TYPE = {
     GIFT_BLUE: 1,   // 蓝色礼物
@@ -243,12 +239,6 @@ export default class GachaCore {
         
         // 特殊处理saki2卡池，它既有decoration/saki2文件夹（作为UP装饰）
         // 也有额外的装饰文件夹（如decoration/saki2的特殊装饰）
-        if (actualPoolName === 'saki2') {
-            // saki2的UP装饰已经在上面加载了
-            // 如果有额外的saki2装饰，可以额外加载
-            // const extraSaki2Decor = await this.fileLoader('decoration', 'saki2_extra');
-            // upDecorationList.push(...extraSaki2Decor);
-        }
 
         // ========== 严格按照官方概率的两阶段随机 ==========
         const typeRoll = Math.random() * 100; // 第一阶段：决定大类

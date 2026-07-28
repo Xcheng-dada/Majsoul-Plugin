@@ -3,6 +3,7 @@ import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { createCanvas } from '@napi-rs/canvas';
 import { loadResImage, drawText, drawRoundRect, drawPartialRoundRect } from '../components/canvas.js';
+import { getRankImg } from '../components/render.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 
@@ -28,7 +29,7 @@ export class MajsoulRecords extends plugin {
     async handle(e) {
         try {
             const msg = e.msg;
-            let playerName, mode;
+            let playerName, mode, fromBinding = false;
             
             // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局（不带昵称）
             let match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)$/);
@@ -92,15 +93,16 @@ export class MajsoulRecords extends plugin {
                 const boundUid = await this.getMainUid(qid);
                 
                 if (!boundUid) {
-                    await e.reply('您还没有绑定雀魂UID，请先使用【雀魂绑定+UID】进行绑定\n或使用【雀魂对局+昵称】查询其他玩家');
+                    await e.reply('您还没有绑定雀魂UID，请先通过 #雀魂绑定 UID 绑定后才能使用；也可带昵称查询：#雀魂对局 昵称');
                     return true;
                 }
                 
                 playerName = boundUid;
+                fromBinding = true;
             }
             
             // 查询对局记录
-            const result = await this._getRecords(playerName, mode, 5);
+            const result = await this._getRecords(playerName, mode, 5, fromBinding);
             
             if (!result.success) {
                 await e.reply(result.message);
@@ -195,7 +197,7 @@ export class MajsoulRecords extends plugin {
      * @param {number} limit - 返回数量限制
      * @returns {Promise<{success: boolean, message: string, records?: Array, playerName?: string, modeName?: string}>}
      */
-    async _getRecords(playerName, mode = 4, limit = 5) {
+    async _getRecords(playerName, mode = 4, limit = 5, isUid = false) {
         try {
             if (!this.api.token) {
                 return { success: false, message: MajsoulApi.TOKEN_HINT };
@@ -210,10 +212,9 @@ export class MajsoulRecords extends plugin {
             const modeName = mode === 4 ? '四麻' : '三麻';
             
             // 步骤1: 搜索玩家
+            // isUid=true 表示传入的是绑定UID，直接按ID查询；否则一律按昵称搜索（含纯数字昵称）
             let players;
-            const isNumeric = /^\d+$/.test(playerName.trim());
-            
-            if (isNumeric) {
+            if (isUid) {
                 const stats = await this.api.getPlayerStats(playerName, mode);
                 if (!stats || !stats.nickname) {
                     return { success: false, message: `未找到ID为 ${playerName} 的玩家或API暂时不可用` };
@@ -259,7 +260,7 @@ export class MajsoulRecords extends plugin {
                     const isTarget = p.accountId === playerId || p.id === playerId;
                     const ptChange = p.gradingScore || p.delta || 0;
                     const ptSign = ptChange > 0 ? '+' : '';
-                    const level = new PlayerLevel(p.level || 0, p.score || 0);
+                    const level = new PlayerLevel(p.level || 0, 0);
                     
                     message += `  ${isTarget ? '⭐' : ''}#${j + 1} [${level.getTag()}]${p.nickname}  ${p.score} (${ptSign}${ptChange})\n`;
                 }
@@ -293,20 +294,20 @@ export class MajsoulRecords extends plugin {
     }
     
     _buildImageData(playerName, modeName, records, playerId) {
-        const mode = modeName === '四麻' ? '4' : '3';
         return records.map((record, index) => {
             const sortedPlayers = [...record.players].sort((a, b) => (b.score || 0) - (a.score || 0));
             
             const players = sortedPlayers.map((p, j) => {
                 const isTarget = p.accountId === playerId || p.id === playerId;
                 const ptChange = p.gradingScore || p.delta || 0;
-                const level = new PlayerLevel(p.level || 0, p.score || 0);
+                const level = new PlayerLevel(p.level || 0, 0);
                 
                 return {
                     rank: j + 1,
                     nickname: p.nickname,
                     level: level.getTag(),
                     majorRank: level.major_rank,
+                    minorRank: level.minor_rank,
                     score: p.score || 0,
                     pt: ptChange,
                     ptText: ptChange === 0 ? '±0' : (ptChange > 0 ? `+${ptChange}` : ptChange.toString()),
@@ -470,10 +471,17 @@ export class MajsoulRecords extends plugin {
                 
                 drawText(ctx, player.nickname, COL_X.name, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#e6edf3', 'left', '500');
                 
-                const levelIconX = LEVEL_COL_CENTER - LEVEL_TEXT_OFFSET / 2;
-                await this._drawRankIcon(ctx, player.majorRank, mode, levelIconX, currentY + PLAYER_ROW_HEIGHT / 2 - LEVEL_ICON_SIZE / 2, LEVEL_ICON_SIZE);
-                
-                drawText(ctx, player.level, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
+                const LEVEL_IMG_SIZE = 46;
+                let levelImg = null;
+                try {
+                    levelImg = await getRankImg(player.majorRank, player.minorRank, mode, LEVEL_IMG_SIZE, 0);
+                } catch (e) {}
+                if (levelImg) {
+                    ctx.drawImage(levelImg, LEVEL_COL_CENTER - LEVEL_IMG_SIZE / 2, currentY + (PLAYER_ROW_HEIGHT - LEVEL_IMG_SIZE) / 2);
+                    drawText(ctx, player.level, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
+                } else {
+                    drawText(ctx, player.level, LEVEL_COL_CENTER, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'center', '500');
+                }
                 
                 drawText(ctx, player.score.toString(), COL_X.score, currentY + PLAYER_ROW_HEIGHT / 2, 14, '#e6edf3', 'center', 'bold');
                 
@@ -512,7 +520,6 @@ export class MajsoulRecords extends plugin {
             let mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
             
             if (mainUid) {
-                console.log(`[MajsoulRecords] 找到主UID: ${mainUid}`);
                 return mainUid;
             }
             
@@ -522,11 +529,9 @@ export class MajsoulRecords extends plugin {
             const bindings = bindingsStr ? JSON.parse(bindingsStr) : [];
             
             if (bindings.length > 0) {
-                console.log(`[MajsoulRecords] 从绑定列表获取UID: ${bindings[0]}`);
                 return bindings[0];
             }
             
-            console.log(`[MajsoulRecords] 未找到用户 ${qid} 的绑定UID`);
             return null;
             
         } catch (error) {

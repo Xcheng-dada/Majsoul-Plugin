@@ -11,23 +11,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const BASE_URL = 'https://mjai.ekyu.moe'
 
-function convertTile(tile) {
-  if (!tile) return ''
-  tile = tile.toLowerCase()
-  const mapping = {
-    '1m': '1m', '2m': '2m', '3m': '3m', '4m': '4m', '5m': '5m',
-    '6m': '6m', '7m': '7m', '8m': '8m', '9m': '9m',
-    '1p': '1p', '2p': '2p', '3p': '3p', '4p': '4p', '5p': '5p',
-    '6p': '6p', '7p': '7p', '8p': '8p', '9p': '9p',
-    '1s': '1s', '2s': '2s', '3s': '3s', '4s': '4s', '5s': '5s',
-    '6s': '6s', '7s': '7s', '8s': '8s', '9s': '9s',
-    'e': 'E', 's': 'S', 'w': 'W', 'n': 'N',
-    'p': 'P', 'f': 'F', 'c': 'C',
-    '5mr': '5mr', '5pr': '5pr', '5sr': '5sr'
-  }
-  return mapping[tile] || tile
-}
-
 let browserInstance = null
 
 function getChromePath() {
@@ -106,7 +89,7 @@ async function getBrowser() {
   }
 }
 
-async function solveTurnstileAndSubmit(paipuUrl, engine, gameId) {
+async function solveTurnstileAndSubmit(paipuUrl, engine) {
   const browser = await getBrowser()
   if (!browser) return null
 
@@ -175,55 +158,24 @@ async function solveTurnstileAndSubmit(paipuUrl, engine, gameId) {
         })
         await new Promise(r => setTimeout(r, 500))
 
-        try {
-          const turnstileBox = await page.evaluate(() => {
-            const iframe = document.querySelector('iframe[src*="challenges.cloudflare.com"]')
-            if (iframe) {
-              const rect = iframe.getBoundingClientRect()
-              return {
-                x: rect.left + 30,
-                y: rect.top + rect.height / 2,
-                width: rect.width,
-                height: rect.height
+        const isBtnOk = () => page.evaluate(() => { const b = document.querySelector('button[type="submit"]'); return !!(b && !b.disabled) })
+
+          // 经实测，本站点 Turnstile 验证仅 frame.click 点击 checkbox 有效
+          const before = await isBtnOk()
+          const turnstileFrames = page.frames()
+          for (const frame of turnstileFrames) {
+            if (frame.url().includes('challenges.cloudflare.com')) {
+              try {
+                await frame.click('input[type="checkbox"]', { timeout: 1000 }).catch(() => {})
+                logger.info('尝试frame.click点击checkbox')
+              } catch (e) {
               }
+              break
             }
-            return null
-          })
-
-          if (turnstileBox) {
-            await page.mouse.click(turnstileBox.x, turnstileBox.y)
-            logger.info(`尝试坐标点击Turnstile: (${turnstileBox.x}, ${turnstileBox.y})`)
           }
-        } catch (e) {
-          logger.info(`坐标点击失败: ${e.message}`)
-        }
-
-        const turnstileDiv = await page.$('.cf-turnstile')
-        if (turnstileDiv) {
-          try {
-            const box = await turnstileDiv.boundingBox()
-            if (box) {
-              await page.mouse.click(box.x + 30, box.y + box.height / 2)
-              logger.info('尝试点击cf-turnstile div区域')
-            }
-          } catch (e) {
-            logger.info('cf-turnstile点击失败')
-          }
-        }
-
-        const turnstileFrames = page.frames()
-        for (const frame of turnstileFrames) {
-          if (frame.url().includes('challenges.cloudflare.com')) {
-            try {
-              await frame.click('input[type="checkbox"]', { timeout: 1000 }).catch(() => {})
-              logger.info('尝试frame.click点击checkbox')
-            } catch (e) {
-            }
-            break
-          }
-        }
-
-        await new Promise(r => setTimeout(r, 2000))
+          await new Promise(r => setTimeout(r, 1500))
+          if (!before && await isBtnOk()) logger.info('Turnstile checkbox 点击使验证通过')
+          await new Promise(r => setTimeout(r, 300))
       }
 
     await page.waitForFunction(() => {
@@ -271,9 +223,9 @@ async function solveTurnstileAndSubmit(paipuUrl, engine, gameId) {
     }
 
     if (!currentUrl.includes('/progress')) {
-      logger.info(`最终URL: ${currentUrl}`)
+      logger.info(`最终URL: ${currentUrl}（非?data=且非分析中，判定为提交失败）`)
       const htmlContent = await page.content()
-      logger.info('获取HTML内容成功')
+      logger.info('已取回页面内容(提交失败, 用于上层失败判定)')
       return htmlContent
     }
 
@@ -295,7 +247,7 @@ async function solveTurnstileAndSubmit(paipuUrl, engine, gameId) {
   }
 }
 
-export async function reviewMortal(mortalLog, token, engine) {
+export async function reviewMortal(mortalLog, engine) {
   const gameId = mortalLog.ref
   const reviewPath = path.resolve(`./plugins/Majsoul-Plugin/data/paipu/${gameId} - review.json`)
   
@@ -323,7 +275,7 @@ export async function reviewMortal(mortalLog, token, engine) {
 
   while (attempts < maxAttempts) {
     attempts++
-    reportUrl = await solveTurnstileAndSubmit(paipuUrl, engine, gameId)
+    reportUrl = await solveTurnstileAndSubmit(paipuUrl, engine)
     if (reportUrl) break
     await new Promise(r => setTimeout(r, 5000))
   }

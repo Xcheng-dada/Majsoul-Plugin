@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import MajsoulApi from './MajsoulApi.js';
 import { getRoomName, isThreePlayerMode, PlayerLevel } from './PlayerLevel.js';
+import { getRankImg } from '../components/render.js';
 
 async function loadResImage(subPath) {
     const fullPath = path.resolve('./plugins/Majsoul-Plugin/resources', subPath);
@@ -185,19 +186,25 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
             
             let levelText = '';
             let majorRank = '';
+            let minorRank = 0;
             if (player.level !== undefined) {
-                const level = new PlayerLevel(player.level, player.gradingScore || 0);
+                const level = new PlayerLevel(player.level, 0);
                 levelText = level.full_tag;
                 majorRank = level.major_rank;
+                minorRank = level.minor_rank;
             }
-            
-            const levelIconX = LEVEL_COL_CENTER - LEVEL_TEXT_OFFSET / 2;
+
+            const LEVEL_IMG_SIZE = 46;
+            let levelImg = null;
             try {
-                const rankIcon = await loadResImage(`info_texture/${majorRank}_${mode}.png`);
-                ctx.drawImage(rankIcon, levelIconX, currentY + PLAYER_ROW_HEIGHT / 2 - LEVEL_ICON_SIZE / 2, LEVEL_ICON_SIZE, LEVEL_ICON_SIZE);
-            } catch(e) {}
-            
-            drawText(ctx, levelText, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
+                levelImg = await getRankImg(majorRank, minorRank, mode, LEVEL_IMG_SIZE, 0);
+            } catch (e) {}
+            if (levelImg) {
+                ctx.drawImage(levelImg, LEVEL_COL_CENTER - LEVEL_IMG_SIZE / 2, currentY + (PLAYER_ROW_HEIGHT - LEVEL_IMG_SIZE) / 2);
+                drawText(ctx, levelText, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
+            } else {
+                drawText(ctx, levelText, LEVEL_COL_CENTER, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'center', '500');
+            }
             
             const score = player.score || 0;
             drawText(ctx, score.toString(), COL_X.score, currentY + PLAYER_ROW_HEIGHT / 2, 14, '#e6edf3', 'center', 'bold');
@@ -636,12 +643,6 @@ export default class MajsoulSubscribeCore {
         }
     }
     
-    // 7. 定时任务：检查所有订阅的更新（四麻+三麻）
-    async checkAllSubscriptions() {
-        const updates4p = await this.checkSubscriptionsByMode(4);
-        const updates3p = await this.checkSubscriptionsByMode(3);
-        return [...updates4p, ...updates3p];
-    }
     
     // 8. 根据ID获取玩家当前昵称（与Majsoul_bot一致，使用player_stats接口）
     async getNicknameById(playerId, mode = 4) {
@@ -655,19 +656,5 @@ export default class MajsoulSubscribeCore {
         }
     }
     
-    // 9. 获取所有订阅（用于调试）
-    async getAllSubscriptions(mode = 4) {
-        return await this._loadSubscriptions(mode);
-    }
     
-    // 10. 清空所有订阅（用于调试/重置）
-    async clearAllSubscriptions(mode = 4) {
-        try {
-            await this._saveSubscriptions([], mode);
-            return true;
-        } catch (error) {
-            this._logger.error(`[MajsoulSubscribeCore] 清空订阅失败: ${error.message}`);
-            return false;
-        }
-    }
 }

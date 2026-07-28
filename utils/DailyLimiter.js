@@ -76,25 +76,6 @@ export default class DailyLimiter {
         }
     }
 
-    // 重置指定用户的抽卡次数
-    async resetUser(userId) {
-        try {
-            const key = this._getKey(userId);
-            const exists = await redis.exists(key);
-            
-            if (exists) {
-                const deleted = await redis.del(key);
-                logger.debug(`[DailyLimiter] 已重置用户 ${userId} 的抽卡记录，删除结果: ${deleted}`);
-                return deleted > 0;
-            }
-            
-            logger.debug(`[DailyLimiter] 用户 ${userId} 没有抽卡记录`);
-            return false;
-        } catch (error) {
-            logger.error('[DailyLimiter] resetUser 错误:', error);
-            return false;
-        }
-    }
 
     // 生成存储键（使用当天日期）
     _getKey(userId) {
@@ -148,37 +129,6 @@ export default class DailyLimiter {
         }
     }
 
-    // 获取所有用户的抽卡记录（管理员功能）
-    async getAllRecords() {
-        try {
-            const pattern = `${this.redisPrefix}*`;
-            logger.debug(`[DailyLimiter] 搜索模式: ${pattern}`);
-            
-            const keys = await redis.keys(pattern);
-            const records = {};
-            const todayKey = this._getKey('').replace(this.redisPrefix, '');
-            const todayDate = todayKey.split('-').slice(0, 3).join('-');
-            
-            logger.debug(`[DailyLimiter] 今天日期: ${todayDate}, 找到 ${keys.length} 个key`);
-
-            for (const key of keys) {
-                const match = key.match(new RegExp(`${this.redisPrefix}(\\d+)-(\\d{4}-\\d{2}-\\d{2})`));
-                if (match) {
-                    const userId = match[1];
-                    const date = match[2];
-                    if (date === todayDate) {
-                        const countStr = await redis.get(key);
-                        records[userId] = parseInt(countStr) || 0;
-                        logger.debug(`[DailyLimiter] 记录: ${userId} = ${records[userId]}`);
-                    }
-                }
-            }
-            return records;
-        } catch (error) {
-            logger.error('[DailyLimiter] getAllRecords 错误:', error);
-            return {};
-        }
-    }
 
     // 获取距离0点重置的剩余时间
     async getResetTime() {

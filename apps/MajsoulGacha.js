@@ -60,6 +60,20 @@ export class MajsoulGacha extends plugin {
         this.dailyLimiter = new DailyLimiter(5); // 修改为每日5次
     }
 
+    /**
+     * 统一的指令处理方法（按 this.rule 分发）
+     * @param {object} e - 事件对象
+     * @returns {Promise<boolean>}
+     */
+    async handle(e) {
+        for (const r of this.rule) {
+            if (e.msg && e.msg.match(r.reg)) {
+                return await this[r.fnc](e);
+            }
+        }
+        return false;
+    }
+
     // 十连抽卡（增加保底提示）
     async tenGacha(e) {
         // 检查是否在群聊中

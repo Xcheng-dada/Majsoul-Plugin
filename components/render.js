@@ -479,18 +479,6 @@ function getRandomPersonFull() {
   }
 }
 
-function getRandomPersonAvatar() {
-  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person')
-  try {
-    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
-    if (files.length === 0) return null
-    const randomIndex = Math.floor(Math.random() * files.length)
-    return `person/${files[randomIndex]}`
-  } catch (e) {
-    console.error('[render] 读取person目录失败:', e)
-    return null
-  }
-}
 
 
 
@@ -580,7 +568,7 @@ async function getLzBar(title, v1, v2, v3 = null) {
   return canvas
 }
 
-async function getRankImg(majorRank, minorRank, mode = '4', size = 156, score = 0) {
+export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, score = 0) {
   const canvas = createCanvas(156, 156)
   const ctx = canvas.getContext('2d')
   
