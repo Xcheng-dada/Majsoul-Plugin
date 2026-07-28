@@ -24,8 +24,8 @@ function readJsonIfExists(filePath) {
 function loadAvatarConfig() {
   if (avatarConfigCache) return avatarConfigCache
   const lqcPaths = [
-    path.join(pluginRoot, 'config', 'lqc.json'),
-    path.join(pluginRoot, 'data', 'lqc.json')
+    path.join(pluginRoot, 'data', 'lqc.json'), // 优先使用自动更新生成的（与 liqi 对称）
+    path.join(pluginRoot, 'config', 'lqc.json') // 静态兜底
   ]
   for (const lqcPath of lqcPaths) {
     const lqc = readJsonIfExists(lqcPath)
@@ -216,6 +216,19 @@ function getDiff(a, b) {
     diff++
   }
   return targetMap[diff] || "未知"
+}
+
+// 加杠(kakan) 中两张横置牌（原碰“来自对手的那张”=claimed，加杠新增的那张=added）
+// 在 pais 数组里的下标。
+// 约定（待真实牌谱校准）：解析器产出 pais = [加杠新增牌(fuuro.pai), ...原碰3张(fuuro.consumed)]，
+// 原碰“来自对手的那张”位于 consumed 子组中由 rotate 决定的位置（与 pon 一致）。
+// 若实际牌谱里 pais 顺序不同，只需在此处调整 addedIdx/claimedIdx 的映射即可。
+function kakanIndices(fuuro, pais, rotate) {
+  const addedIdx = fuuro.pai ? 0 : -1
+  const consumedBase = fuuro.pai ? 1 : 0
+  const rotInGroup = rotate === 3 ? 2 : rotate === 1 ? 0 : rotate === 2 ? 1 : 0
+  const claimedIdx = consumedBase + rotInGroup
+  return { addedIdx, claimedIdx }
 }
 
 function getColor(rate) {
@@ -461,11 +474,17 @@ function getActionText(action) {
     let pais = []
     if (fuuro.pai) pais.push(fuuro.pai)
     if (fuuro.consumed) pais.push(...fuuro.consumed)
-    let rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+    const isKakan = fuuro.type === 'kakan'
+    const rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+    let addedIdx = -1, claimedIdx = -1
+    if (isKakan) ({ addedIdx, claimedIdx } = kakanIndices(fuuro, pais, rotate))
     for (let pindex = 0; pindex < pais.length; pindex++) {
-      const isRot = (rotate === 3 && pindex === pais.length - 1) ||
-                    (rotate === 1 && pindex === 0) ||
-                    (rotate === 2 && pindex === 1)
+      if (isKakan && pindex === addedIdx) continue // 加杠新增牌叠在横置牌上方，不占额外列宽
+      const isRot = isKakan
+        ? (pindex === claimedIdx)
+        : ((rotate === 3 && pindex === pais.length - 1) ||
+           (rotate === 1 && pindex === 0) ||
+           (rotate === 2 && pindex === 1))
       fuuroTotalWidth += isRot ? 91 : 57
     }
     fuuroTotalWidth += 10
@@ -477,21 +496,29 @@ function getActionText(action) {
     if (fuuro.pai) pais.push(fuuro.pai)
     if (fuuro.consumed) pais.push(...fuuro.consumed)
 
-    let rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+    const isKakan = fuuro.type === 'kakan'
+    const rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+    let addedIdx = -1, claimedIdx = -1
+    if (isKakan) ({ addedIdx, claimedIdx } = kakanIndices(fuuro, pais, rotate))
 
     for (let pindex = 0; pindex < pais.length; pindex++) {
+      // 加杠新增牌：不单独成列，稍后叠在原碰横置牌正上方绘制
+      if (isKakan && pindex === addedIdx) continue
+
       let _fuuroPai = pais[pindex]
       let pimg
       try { pimg = await loadResImage(`review_texture/pai/${_fuuroPai}.png`) } catch(e) { continue }
-      
+
       const pc = createCanvas(57, 91)
       const pctx = pc.getContext('2d')
       pctx.drawImage(pimg, 0, 0, 57, 91)
       pimg = pc
 
-      const isRotated = (rotate === 3 && pindex === pais.length - 1) ||
-                        (rotate === 1 && pindex === 0) ||
-                        (rotate === 2 && pindex === 1)
+      const isRotated = isKakan
+        ? (pindex === claimedIdx)
+        : ((rotate === 3 && pindex === pais.length - 1) ||
+           (rotate === 1 && pindex === 0) ||
+           (rotate === 2 && pindex === 1))
 
       if (isRotated) {
         const rc = createCanvas(91, 57)
@@ -500,15 +527,28 @@ function getActionText(action) {
         rctx.rotate(90 * Math.PI / 180)
         rctx.drawImage(pimg, -28.5, -45.5)
         pimg = rc
-        // 普通副露的横置牌与竖牌底部平齐（竖牌底=121+91=212，横置牌高57 → y=155），
-        // 不向上突出；仅加杠(kakan)的横置牌需叠在横置牌上方（再上移 34px）。
-        const fuuroY = fuuro.type === 'kakan' ? 155 - 34 : 155
+        // 横置牌与竖牌底部平齐（竖牌底=121+91=212，横置牌高57 → y=155）
         xTile -= 91
-        ctx.drawImage(pimg, xTile, fuuroY)
+        ctx.drawImage(pimg, xTile, 155)
+        // 加杠(kakan)：在“原碰横置牌”正上方再叠一张横置的加杠牌（同一 x，上移 34px）
+        if (isKakan && pindex === claimedIdx && addedIdx >= 0) {
+          let aImg
+          try { aImg = await loadResImage(`review_texture/pai/${pais[addedIdx]}.png`) } catch(e) { aImg = null }
+          if (aImg) {
+            const ac = createCanvas(57, 91)
+            const actx = ac.getContext('2d')
+            actx.drawImage(aImg, 0, 0, 57, 91)
+            const arc = createCanvas(91, 57)
+            const arctx = arc.getContext('2d')
+            arctx.translate(45.5, 28.5)
+            arctx.rotate(90 * Math.PI / 180)
+            arctx.drawImage(ac, -28.5, -45.5)
+            ctx.drawImage(arc, xTile, 155 - 34)
+          }
+        }
       } else {
-        const fuuroY = 121
         xTile -= 57
-        ctx.drawImage(pimg, xTile, fuuroY)
+        ctx.drawImage(pimg, xTile, 121)
       }
     }
     xTile -= 10

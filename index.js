@@ -10,6 +10,7 @@ import { MajsoulInfo } from './apps/MajsoulInfo.js';
 import { MajsoulReview } from './apps/MajsoulReview.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 import { cleanupPaipu, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
+import { updateLqc } from './utils/lqcUpdater.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -283,9 +284,11 @@ export class majsoul extends plugin {
     return await this.modules.review.loginCommand(e);
   }
 
-  // 插件加载时的初始化
+    // 插件加载时的初始化
   async init() {
     console.log('[Majsoul-Plugin] 雀魂插件初始化...');
+    // 启动时尝试更新 lqc.json（角色/皮肤映射）；失败不影响使用，内部已捕获
+    updateLqc().catch(() => {});
     for (const [key, mod] of Object.entries(this.modules)) {
       try {
         await mod.init?.();
