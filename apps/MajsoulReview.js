@@ -269,6 +269,7 @@ export class MajsoulReview extends plugin {
         // avatarId 优先用牌谱自身（parser 已按 seat 对齐）；桥仅兜底缺失座位
         if (!Array.isArray(mortalLog.avatarId)) mortalLog.avatarId = []
         if (!mortalLog.avatarId[i]) mortalLog.avatarId[i] = a.avatar_id
+        if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 座位${i} avatar_id=${a.avatar_id} nickname=${a.nickname || ''}`)
         // 昵称信任牌谱自身（parser/raw 或 review.json 的真实昵称），仅在缺失/占位（A/B/C/D 等）时桥兜底
         const cur = mortalLog.name[i]
         if (!cur || cur === '' || /^[A-D][さんn]?$/.test(cur)) {

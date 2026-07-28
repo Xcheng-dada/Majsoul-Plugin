@@ -744,13 +744,13 @@ export default class MajsoulApi {
         const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
+        const modeName = mode === 4 ? '四麻' : '三麻';
 
         for (let attempt = 0; ; attempt++) {
             try {
                 // 每次实际请求都先过共享限流器（含重试），避免绕开限流把请求量堆高
                 await rateLimiter.acquire();
                 const modeStr = mode.toString();
-                const modeName = modeStr === '4' ? '四麻' : '三麻';
 
                 this.logger.info(`[MajsoulApi] 获取${modeName}玩家记录，玩家ID: ${playerId}`);
 
@@ -1131,12 +1131,12 @@ export default class MajsoulApi {
         const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
         let totalWaitTime = 0;
+        const modeName = mode === 4 ? '四麻' : '三麻';
 
         for (let attempt = 0; ; attempt++) {
             try {
                 await rateLimiter.acquire();
                 const modeStr = mode.toString();
-                const modeName = modeStr === '4' ? '四麻' : '三麻';
 
                 this.logger.info(`[MajsoulApi] 获取${modeName}玩家最近对局，玩家ID: ${playerId}，数量: ${limit}`);
 

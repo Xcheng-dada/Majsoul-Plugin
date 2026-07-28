@@ -160,21 +160,34 @@ async function solveTurnstileAndSubmit(paipuUrl, engine) {
 
         const isBtnOk = () => page.evaluate(() => { const b = document.querySelector('button[type="submit"]'); return !!(b && !b.disabled) })
 
-          // 经实测，本站点 Turnstile 验证仅 frame.click 点击 checkbox 有效
+          // Turnstile 验证：依次尝试多种点击方式，任一种使验证通过即停止（避免重复点击）
           const before = await isBtnOk()
-          const turnstileFrames = page.frames()
-          for (const frame of turnstileFrames) {
-            if (frame.url().includes('challenges.cloudflare.com')) {
-              try {
-                await frame.click('input[type="checkbox"]', { timeout: 1000 }).catch(() => {})
-                logger.info('尝试frame.click点击checkbox')
-              } catch (e) {
-              }
-              break
+          let solved = false
+
+          const trySolve = async (label, fn) => {
+            if (solved) return
+            try {
+              await fn()
+              logger.info(`Turnstile 尝试 [${label}]`)
+            } catch (e) {
+              logger.warn(`Turnstile [${label}] 执行异常: ${e.message}`)
+            }
+            await new Promise(r => setTimeout(r, 1200))
+            if (await isBtnOk()) {
+              solved = true
+              logger.info(`Turnstile [${label}] 使验证通过`)
             }
           }
-          await new Promise(r => setTimeout(r, 1500))
-          if (!before && await isBtnOk()) logger.info('Turnstile checkbox 点击使验证通过')
+
+          // 方式3（原始）：点击 .cf-turnstile 容器区域（基于 div 包围盒）
+          await trySolve('点击cf-turnstile区域', async () => {
+            const turnstileDiv = await page.$('.cf-turnstile')
+            if (!turnstileDiv) return
+            const box = await turnstileDiv.boundingBox()
+            if (box) await page.mouse.click(box.x + 30, box.y + box.height / 2)
+          })
+
+          if (!solved && !before) logger.warn('仍未通过 Turnstile（可能为隐形验证或已升级，需在浏览器内手动完成一次）')
           await new Promise(r => setTimeout(r, 300))
       }
 

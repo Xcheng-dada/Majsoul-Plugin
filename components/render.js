@@ -38,12 +38,6 @@ function loadAvatarConfig() {
   return avatarConfigCache
 }
 
-function findExtendResEntry(extendRes, assetPath) {
-  if (extendRes[assetPath]) return assetPath
-  const normalized = assetPath.replace(/\\/g, '/')
-  return Object.keys(extendRes).find(key => key === normalized || key.endsWith(`/${normalized}`)) || ''
-}
-
 function isSupportedImageBuffer(buffer) {
   if (!buffer || buffer.length < 12) return false
   if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return true
@@ -74,6 +68,63 @@ async function fetchImageToFile(url, filePath) {
   fs.writeFileSync(filePath, buffer)
 }
 
+// 角色头像资源在 CDN 上的真实 key 带语言前缀（lang/base/、jp/、cn/ 等），且前缀随版本变化，
+// 不能写死。这里用后缀匹配自动带上 locale 前缀并返回真实前缀，避免 404 / 旧前缀。
+function findKeyBySuffix(source, suffix) {
+  if (!source) return null
+  if (source[suffix]) return suffix
+  const normalized = suffix.replace(/\\/g, '/')
+  return Object.keys(source).find(k => k === normalized || k.endsWith(`/${normalized}`)) || null
+}
+
+let resversionCache = null
+async function getResversionManifest() {
+  if (resversionCache) return resversionCache
+  try {
+    const fetchImpl = globalThis.fetch || (await import('node-fetch')).default
+    const vRes = await fetchImpl(`https://game.maj-soul.com/1/version.json?randv=${Math.random()}`)
+    if (!vRes.ok) throw new Error(`HTTP ${vRes.status}`)
+    const { version } = await vRes.json()
+    const rvRes = await fetchImpl(`https://game.maj-soul.com/1/resversion${version}.json`)
+    if (!rvRes.ok) throw new Error(`HTTP ${rvRes.status}`)
+    const rv = await rvRes.json()
+    resversionCache = rv.res || rv
+    return resversionCache
+  } catch (e) {
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] 获取 resversion 清单失败: ${e.message}`)
+    return null
+  }
+}
+
+const avatarAssetCache = new Map()
+async function resolveAvatarAsset(infoPath, extendRes) {
+  const suffix = `${infoPath}/bighead.png` // 形如 extendRes/charactor/jinwu/bighead.png
+  if (avatarAssetCache.has(suffix)) return avatarAssetCache.get(suffix)
+  let result
+  // 1) 本地 extendRes.json（可能带 lang/base/ 等前缀，值即前缀字符串）
+  const localKey = findKeyBySuffix(extendRes, suffix)
+  if (localKey) {
+    result = { assetPath: localKey, prefix: extendRes[localKey] }
+  } else {
+    // 2) 线上 resversion 清单（权威，按后缀匹配，含正确 locale 前缀与版本前缀）
+    let rvKey = null
+    let rvPrefix = null
+    try {
+      const rv = await getResversionManifest()
+      rvKey = findKeyBySuffix(rv, suffix)
+      if (rvKey && rv[rvKey] && rv[rvKey].prefix) rvPrefix = rv[rvKey].prefix
+    } catch (e) {}
+    if (rvKey && rvPrefix) {
+      result = { assetPath: rvKey, prefix: rvPrefix }
+    } else {
+      // 3) 兜底：假定 jp/ 前缀（多数情况），前缀回退 v0.11.14.w
+      result = { assetPath: `jp/${suffix}`, prefix: 'v0.11.14.w' }
+    }
+  }
+  avatarAssetCache.set(suffix, result)
+  return result
+}
+
 async function loadImageFromCache(filePath) {
   const original = fs.readFileSync(filePath)
   const normalized = normalizeMajsoulImageBuffer(original)
@@ -83,10 +134,14 @@ async function loadImageFromCache(filePath) {
 
 async function loadAvatarImage(avatarId) {
   const { lqc, extendRes } = loadAvatarConfig()
-  const avatarInfo = lqc[String(avatarId)] || lqc['400000']
-  if (!avatarInfo?.path) return null
+  const avatarInfo = lqc[String(avatarId)]
+  if (!avatarInfo) {
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] avatar_id=${avatarId} 不在 lqc.json 中，无法获取角色路径，回退默认头像`)
+  }
+  const info = avatarInfo || lqc['400000']
+  if (!info?.path) return null
 
-  const charDirName = path.basename(avatarInfo.path)
+  const charDirName = path.basename(info.path)
   const localPath = path.join(avatarCacheRoot, charDirName, 'bighead.png')
   if (fs.existsSync(localPath)) {
     try {
@@ -96,17 +151,15 @@ async function loadAvatarImage(avatarId) {
     }
   }
 
-  const defaultAssetPath = `${avatarInfo.path}/bighead.png`
-  const matchedPath = findExtendResEntry(extendRes, defaultAssetPath)
-  const assetPath = matchedPath || defaultAssetPath
-  const prefix = matchedPath ? extendRes[matchedPath] : 'v0.11.14.w'
+  // 解析真实资源路径（含 locale 前缀）与版本前缀，避免写死导致 404
+  const { assetPath, prefix } = await resolveAvatarAsset(info.path, extendRes)
   const url = `https://game.maj-soul.com/1/${prefix}/${assetPath}`
 
   try {
     await fetchImageToFile(url, localPath)
     return await loadImageFromCache(localPath)
   } catch (err) {
-    if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像加载失败 ${avatarId}: ${err.message}`)
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像加载失败 ${avatarId}: ${url} -> ${err.message}`)
     return null
   }
 }
@@ -399,7 +452,26 @@ function getActionText(action) {
     xTile += 81
   }
 
-  xTile = 1170
+  // 副露起始位置：手牌按 81px/张直绘（未缩放），副露牌为 57px 宽，
+  // 固定 1170 向左排会侵入手牌区造成遮挡，故按手牌实际宽度动态右移。
+  const handRightEdge = 88 + tehai.length * 81
+  // 先统计副露总宽度（含组内牌宽与组间间隔），用于从右向左排布
+  let fuuroTotalWidth = 0
+  for (let fuuro of fuuros) {
+    let pais = []
+    if (fuuro.pai) pais.push(fuuro.pai)
+    if (fuuro.consumed) pais.push(...fuuro.consumed)
+    let rotate = fuuro.target !== undefined ? (fuuro.target + 4 - actorId) % 4 : 0
+    for (let pindex = 0; pindex < pais.length; pindex++) {
+      const isRot = (rotate === 3 && pindex === pais.length - 1) ||
+                    (rotate === 1 && pindex === 0) ||
+                    (rotate === 2 && pindex === 1)
+      fuuroTotalWidth += isRot ? 91 : 57
+    }
+    fuuroTotalWidth += 10
+  }
+  xTile = Math.max(1170, handRightEdge + 30 + fuuroTotalWidth)
+
   for (let fuuro of fuuros) {
     let pais = []
     if (fuuro.pai) pais.push(fuuro.pai)
@@ -417,21 +489,26 @@ function getActionText(action) {
       pctx.drawImage(pimg, 0, 0, 57, 91)
       pimg = pc
 
-      if ((rotate === 3 && pindex === pais.length - 1) || (rotate === 1 && pindex === 0) || (rotate === 2 && pindex === 1)) {
+      const isRotated = (rotate === 3 && pindex === pais.length - 1) ||
+                        (rotate === 1 && pindex === 0) ||
+                        (rotate === 2 && pindex === 1)
+
+      if (isRotated) {
         const rc = createCanvas(91, 57)
         const rctx = rc.getContext('2d')
         rctx.translate(45.5, 28.5)
         rctx.rotate(90 * Math.PI / 180)
         rctx.drawImage(pimg, -28.5, -45.5)
         pimg = rc
-        let fuuroY = 155
-        xTile -= 34
+        // 普通副露的横置牌与竖牌底部平齐（竖牌底=121+91=212，横置牌高57 → y=155），
+        // 不向上突出；仅加杠(kakan)的横置牌需叠在横置牌上方（再上移 34px）。
+        const fuuroY = fuuro.type === 'kakan' ? 155 - 34 : 155
+        xTile -= 91
         ctx.drawImage(pimg, xTile, fuuroY)
-        xTile -= 46
       } else {
-        let fuuroY = 121
-        ctx.drawImage(pimg, xTile, fuuroY)
+        const fuuroY = 121
         xTile -= 57
+        ctx.drawImage(pimg, xTile, fuuroY)
       }
     }
     xTile -= 10
