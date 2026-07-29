@@ -801,6 +801,11 @@ export default class MajsoulApi {
 
                 clearTimeout(recordsTimeoutId);
 
+                if (recordsResponse.status === 404) {
+                    this.logger.debug(`[MajsoulApi] 玩家 ${playerId} 在${modeName}下无对局记录，返回404`);
+                    throw new Error(handleApiError('-404'));
+                }
+
                 if (!recordsResponse.ok) {
                     throw new Error(`获取对局记录失败: HTTP ${recordsResponse.status}`);
                 }
@@ -826,6 +831,10 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.message === '资源未找到') {
+                    throw error;
+                }
+
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
@@ -932,7 +941,7 @@ export default class MajsoulApi {
      * @param {number} [mode=4] - 模式（3=三麻，4=四麻）
      * @returns {Promise<Object>} - 统计信息
      */
-    async getPlayerStats(playerId, mode = 4) {
+    async getPlayerStats(playerId, mode = 4, modeParamsOverride = null) {
         const rateLimiter = this.rateLimiter;
         const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
@@ -942,7 +951,7 @@ export default class MajsoulApi {
             try {
                 await rateLimiter.acquire();
                 const modeStr = mode.toString();
-                const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
+                const modeParams = modeParamsOverride || (modeStr === '4' ? this.mode4Params : this.mode3Params);
                 const currentTimestamp = Date.now();
 
                 const url = `${this.baseUrl}/pl${modeStr}/player_stats/${playerId}/${this.startDateTimestamp}/${currentTimestamp}?mode=${modeParams}`;
@@ -1033,7 +1042,7 @@ export default class MajsoulApi {
      * @param {number} [mode=4] - 模式（3=三麻，4=四麻）
      * @returns {Promise<Object>} - 扩展统计信息
      */
-    async getPlayerExtendedStats(playerId, mode = 4) {
+    async getPlayerExtendedStats(playerId, mode = 4, modeParamsOverride = null) {
         const rateLimiter = this.rateLimiter;
         const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
@@ -1043,7 +1052,7 @@ export default class MajsoulApi {
             try {
                 await rateLimiter.acquire();
                 const modeStr = mode.toString();
-                const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
+                const modeParams = modeParamsOverride || (modeStr === '4' ? this.mode4Params : this.mode3Params);
                 const currentTimestamp = Date.now();
 
                 const url = `${this.baseUrl}/pl${modeStr}/player_extended_stats/${playerId}/${this.startDateTimestamp}/${currentTimestamp}?mode=${modeParams}`;
@@ -1062,6 +1071,11 @@ export default class MajsoulApi {
                 });
 
                 clearTimeout(timeoutId);
+
+                if (response.status === 404) {
+                    this.logger.debug(`[MajsoulApi] 玩家 ${playerId} 在${modeStr === '4' ? '四麻' : '三麻'}模式下无扩展数据，返回404`);
+                    throw new Error(handleApiError('-404'));
+                }
 
                 if (response.status === 429) {
                     if (attempt >= MAX_429_RETRIES) {
@@ -1087,6 +1101,10 @@ export default class MajsoulApi {
                 return result;
 
             } catch (error) {
+                if (error.message === '资源未找到') {
+                    throw error;
+                }
+
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
@@ -1126,7 +1144,7 @@ export default class MajsoulApi {
      * @param {number} [limit=10] - 返回数量限制
      * @returns {Promise<Object[]>} - 对局记录数组
      */
-    async getRecentRecords(playerId, mode = 4, limit = 10) {
+    async getRecentRecords(playerId, mode = 4, limit = 10, modeParamsOverride = null) {
         const rateLimiter = this.rateLimiter;
         const MAX_429_RETRIES = 3;
         const maxRetries = this.apiHosts.length;
@@ -1140,7 +1158,7 @@ export default class MajsoulApi {
 
                 this.logger.info(`[MajsoulApi] 获取${modeName}玩家最近对局，玩家ID: ${playerId}，数量: ${limit}`);
 
-                const modeParams = modeStr === '4' ? this.mode4Params : this.mode3Params;
+                const modeParams = modeParamsOverride || (modeStr === '4' ? this.mode4Params : this.mode3Params);
                 const currentTimestamp = Date.now();
 
                 // 步骤1: 获取统计信息得到count
@@ -1187,6 +1205,11 @@ export default class MajsoulApi {
 
                 clearTimeout(recordsTimeoutId);
 
+                if (recordsResponse.status === 404) {
+                    this.logger.debug(`[MajsoulApi] 玩家 ${playerId} 在${modeName}下无对局记录，返回404`);
+                    throw new Error(handleApiError('-404'));
+                }
+
                 if (!recordsResponse.ok) {
                     throw new Error(`获取对局记录失败: HTTP ${recordsResponse.status}`);
                 }
@@ -1212,6 +1235,10 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
+                if (error.message === '资源未找到') {
+                    throw error;
+                }
+
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {

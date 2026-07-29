@@ -779,7 +779,7 @@ function parseRankFromText(rankText) {
   return { majorRank, minorRank };
 }
 
-export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
+export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roomFilter = null) {
   let data4, data3, extended4, extended3
   
   try {
@@ -793,22 +793,33 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
         console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
         return JSON.parse(JSON.stringify(playerStatsZero))
       })
-      extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
-        console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
-        return JSON.parse(JSON.stringify(playerExtendZero))
-      })
-      const result3 = await Promise.all([
-        api.getPlayerStats(uid, 3).catch(e => {
-          console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
-          return JSON.parse(JSON.stringify(playerStatsZero))
-        }),
-        api.getPlayerExtendedStats(uid, 3).catch(e => {
-          console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
+      if (data4 && !data4.retcode) {
+        extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
+          console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
           return JSON.parse(JSON.stringify(playerExtendZero))
         })
-      ])
-      data3 = result3[0]
-      extended3 = result3[1]
+      } else {
+        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+      }
+      if (mode === '3') {
+        // 明确查三麻：先查基础数据，有数据才继续查扩展统计，避免无三麻玩家白发 404 请求
+        data3 = await api.getPlayerStats(uid, 3).catch(e => {
+          console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
+          return JSON.parse(JSON.stringify(playerStatsZero))
+        })
+        if (data3 && !data3.retcode) {
+          extended3 = await api.getPlayerExtendedStats(uid, 3).catch(e => {
+            console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
+            return JSON.parse(JSON.stringify(playerExtendZero))
+          })
+        } else {
+          extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+        }
+      } else {
+        // 四麻/默认查询不需要三麻数据，置零即可，避免对无三麻玩家发起必 404 的请求
+        data3 = JSON.parse(JSON.stringify(playerStatsZero))
+        extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+      }
     }
   } catch (e) {
     console.error(`[render.js] 获取玩家数据失败: ${e.message}`)
@@ -830,21 +841,67 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
     _mode = "三麻战绩"
     data = data3
     extended = extended3
-    try {
-      record = await api.getRecentRecords(uid, 3, 16)
-    } catch (e) {
-      console.warn(`[render.js] 获取三麻最近对局失败: ${e.message}`)
+    if (data3 && !data3.retcode) {
+      try {
+        record = await api.getRecentRecords(uid, 3, 16)
+      } catch (e) {
+        console.warn(`[render.js] 获取三麻最近对局失败: ${e.message}`)
+        record = []
+      }
+    } else {
       record = []
     }
+      if (roomFilter && data3 && !data3.retcode) {
+        const mp = (roomFilter.ids[3] || []).join(',')
+        let rdOk = false
+        try {
+          const rd = await api.getPlayerStats(uid, 3, mp)
+          if (rd && !rd.retcode) { data = rd; rdOk = true }
+        } catch (e) {}
+        if (!rdOk) data = JSON.parse(JSON.stringify(playerStatsZero))
+        try {
+          const re = await api.getPlayerExtendedStats(uid, 3, mp)
+          if (re && !re.retcode) extended = re
+          else extended = JSON.parse(JSON.stringify(playerExtendZero))
+        } catch (e) { extended = JSON.parse(JSON.stringify(playerExtendZero)) }
+        try {
+          const rr = await api.getRecentRecords(uid, 3, 16, mp)
+          if (rr && !rr.retcode && Array.isArray(rr) && rr.length) record = rr
+          else record = []
+        } catch (e) { record = [] }
+      }
   } else {
     _mode = "四麻战绩"
     data = data4
     extended = extended4
-    try {
-      record = await api.getRecentRecords(uid, 4, 16)
-    } catch (e) {
-      console.warn(`[render.js] 获取四麻最近对局失败: ${e.message}`)
+    if (data4 && !data4.retcode) {
+      try {
+        record = await api.getRecentRecords(uid, 4, 16)
+      } catch (e) {
+        console.warn(`[render.js] 获取四麻最近对局失败: ${e.message}`)
+        record = []
+      }
+    } else {
       record = []
+    }
+    if (roomFilter && data4 && !data4.retcode) {
+      const mp = (roomFilter.ids[4] || []).join(',')
+      let rdOk = false
+      try {
+        const rd = await api.getPlayerStats(uid, 4, mp)
+        if (rd && !rd.retcode) { data = rd; rdOk = true }
+      } catch (e) {}
+      if (!rdOk) data = JSON.parse(JSON.stringify(playerStatsZero))
+      try {
+        const re = await api.getPlayerExtendedStats(uid, 4, mp)
+        if (re && !re.retcode) extended = re
+        else extended = JSON.parse(JSON.stringify(playerExtendZero))
+      } catch (e) { extended = JSON.parse(JSON.stringify(playerExtendZero)) }
+      try {
+        const rr = await api.getRecentRecords(uid, 4, 16, mp)
+        if (rr && !rr.retcode && Array.isArray(rr) && rr.length) record = rr
+        else record = []
+      } catch (e) { record = [] }
     }
   }
 
@@ -906,7 +963,8 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   ctx.drawImage(bg, 0, 0)
   ctx.drawImage(title, 0, 0)
 
-  drawText(ctx, `${data.nickname} · UID ${uid}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
+  const subTitle = roomFilter ? roomFilter.name : `UID ${uid}`
+  drawText(ctx, `${data.nickname} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
 
   const detailCanvas = createCanvas(detailBg.width, detailBg.height)
   const detailCtx = detailCanvas.getContext('2d')
@@ -938,16 +996,15 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   const flRRate = allRong > 0 ? extended["副露和了"] / allRong : 0
   const mtRRate = allRong > 0 ? extended["默听和了"] / allRong : 0
 
-  const lzFRate = extended["放铳时立直率"]
-  const flFRate = extended["放铳时副露率"]
-
   const allChong = extended["放铳至立直"] + extended["放铳至副露"] + extended["放铳至默听"]
+  const lzFRate = allChong > 0 ? (extended["放铳时立直率"] || 0) : 0
+  const flFRate = allChong > 0 ? (extended["放铳时副露率"] || 0) : 0
   const lzCRate = allChong > 0 ? extended["放铳至立直"] / allChong : 0
   const flCRate = allChong > 0 ? extended["放铳至副露"] / allChong : 0
   const mtCRate = allChong > 0 ? extended["放铳至默听"] / allChong : 0
 
   const lzRong = await getLzBar("rong", lzRRate, flRRate, mtRRate)
-  const lzChong = await getLzBar("chong", lzFRate, flFRate)
+  const lzChong = await getLzBar("chong", lzFRate, flFRate, allChong > 0 ? Math.max(0, 1 - lzFRate - flFRate) : 0)
   const lzChongz = await getLzBar("chong_to", lzCRate, flCRate, mtCRate)
 
   detailCtx.drawImage(lzRong, 0, 238)
@@ -1001,7 +1058,8 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null) {
   }
 
   detailCtx.drawImage(recordCanvas, 0, 558)
-  drawText(detailCtx, "最近对局记录走势", 500, 590, 34, '#FFFFFF', 'center', 'bold')
+  const recordTitle = roomFilter ? `${roomFilter.name}最近16场对局记录走势` : '最近16场对局记录走势'
+  drawText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', 'bold')
 
   // 拼接整体画面
   ctx.drawImage(detailCanvas, 0, 1188)

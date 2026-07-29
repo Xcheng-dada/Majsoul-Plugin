@@ -7,6 +7,30 @@ import { getRankImg } from '../components/render.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 
+// 段位房筛选：关键词 -> { name(显示名), ids: { 4:[四麻modeId], 3:[三麻modeId] }, aliases(模糊匹配词) }
+// modeId 取自 utils/PlayerLevel.js 的 ROOM_LEVEL_MAP
+export const ROOM_FILTERS = {
+  '铜之间': { name: '铜之间', ids: { 4: [2, 3], 3: [17, 18] }, aliases: ['铜之间', '铜间', '铜'] },
+  '银之间': { name: '银之间', ids: { 4: [5, 6], 3: [19, 20] }, aliases: ['银之间', '银间', '银'] },
+  '金之间': { name: '金之间', ids: { 4: [8, 9], 3: [21, 22] }, aliases: ['金之间', '金间', '金'] },
+  '玉之间': { name: '玉之间', ids: { 4: [11, 12], 3: [23, 24] }, aliases: ['玉之间', '玉间', '玉'] },
+  '王座间': { name: '王座间', ids: { 4: [15, 16], 3: [25, 26] }, aliases: ['王座之间', '王座间', '王座'] },
+};
+
+// 在文本中模糊匹配段位房（支持别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等）
+// 返回 { roomFilter, matched }；matched 为实际命中的别名，用于从昵称中剔除
+export function matchRoomFilter(text) {
+  for (const rf of Object.values(ROOM_FILTERS)) {
+    // 单房间内按别名长度降序匹配，优先命中更完整的词（如 “金之间” 优先于 “金”）
+    for (const alias of rf.aliases.slice().sort((a, b) => b.length - a.length)) {
+      if (text.includes(alias)) {
+        return { roomFilter: rf, matched: alias };
+      }
+    }
+  }
+  return { roomFilter: null, matched: null };
+}
+
 export class MajsoulRecords extends plugin {
     constructor() {
         super({
@@ -31,62 +55,25 @@ export class MajsoulRecords extends plugin {
             const msg = e.msg;
             let playerName, mode, fromBinding = false;
             
-            // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局（不带昵称）
-            let match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)$/);
-            if (match) {
-                playerName = '';
-                mode = 4;
+            // 识别指令前缀，确定模式（三麻/四麻），默认四麻
+            const prefixMatch = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局|四麻对局|三麻对局)/);
+            if (!prefixMatch) return false;
+            const cmd = prefixMatch[1];
+            mode = (cmd === '三麻对局') ? 3 : 4;
+
+            // 提取剩余参数（昵称 + 可选的段位房筛选词，如 “金之间”）
+            let argsStr = msg.slice(prefixMatch[0].length).trim();
+
+            // 段位房筛选（模糊别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等）
+            let roomFilter = null;
+            const rm = matchRoomFilter(argsStr);
+            if (rm.roomFilter) {
+                roomFilter = rm.roomFilter;
+                argsStr = argsStr.replace(rm.matched, '').trim();
             }
-            
-            // 四麻对局查询 - 雀魂对局/雀魂牌谱/雀魂最近对局（带昵称）
-            if (!playerName) {
-                match = msg.match(/^#?(雀魂对局|雀魂牌谱|雀魂最近对局)\s+(.+)$/);
-                if (match) {
-                    playerName = match[2].trim();
-                    mode = 4;
-                }
-            }
-            
-            // 四麻对局查询 - 四麻对局（不带昵称）
-            if (!playerName) {
-                match = msg.match(/^#?四麻对局$/);
-                if (match) {
-                    playerName = '';
-                    mode = 4;
-                }
-            }
-            
-            // 四麻对局查询 - 四麻对局（带昵称）
-            if (!playerName) {
-                match = msg.match(/^#?四麻对局\s+(.+)$/);
-                if (match) {
-                    playerName = match[1].trim();
-                    mode = 4;
-                }
-            }
-            
-            // 三麻对局查询（不带昵称）
-            if (!playerName) {
-                match = msg.match(/^#?三麻对局$/);
-                if (match) {
-                    playerName = '';
-                    mode = 3;
-                }
-            }
-            
-            // 三麻对局查询（带昵称）
-            if (!playerName) {
-                match = msg.match(/^#?三麻对局\s+(.+)$/);
-                if (match) {
-                    playerName = match[1].trim();
-                    mode = 3;
-                }
-            }
-            
-            if (playerName === undefined) {
-                return false;
-            }
-            
+
+            playerName = argsStr;
+
             // 如果没有输入昵称，尝试从绑定中获取
             if (!playerName || playerName.length === 0) {
                 const qid = String(e.user_id);
@@ -101,8 +88,8 @@ export class MajsoulRecords extends plugin {
                 fromBinding = true;
             }
             
-            // 查询对局记录
-            const result = await this._getRecords(playerName, mode, 5, fromBinding);
+            // 查询对局记录（可附带段位房筛选）
+            const result = await this._getRecords(playerName, mode, 5, fromBinding, roomFilter);
             
             if (!result.success) {
                 await e.reply(result.message);
@@ -197,7 +184,7 @@ export class MajsoulRecords extends plugin {
      * @param {number} limit - 返回数量限制
      * @returns {Promise<{success: boolean, message: string, records?: Array, playerName?: string, modeName?: string}>}
      */
-    async _getRecords(playerName, mode = 4, limit = 5, isUid = false) {
+    async _getRecords(playerName, mode = 4, limit = 5, isUid = false, roomFilter = null) {
         try {
             if (!this.api.token) {
                 return { success: false, message: MajsoulApi.TOKEN_HINT };
@@ -230,16 +217,38 @@ export class MajsoulRecords extends plugin {
             const player = players[0];
             const playerId = player.id;
             
-            // 步骤2: 获取对局记录
-            const records = await this.api.getRecentRecords(playerId, mode, limit);
-            
+            // 步骤2: 获取最近对局记录（带段位房筛选时多抓一批以保证数量）
+            const fetchLimit = roomFilter ? Math.min(Math.max(limit * 4, 20), 20) : limit;
+            let records = await this.api.getRecentRecords(playerId, mode, fetchLimit);
+
+            const roomLabel = roomFilter ? roomFilter.name : '';
+
+            // 按段位房筛选（金之间/玉之间/王座间等）
+            if (roomFilter) {
+                const ids = roomFilter.ids[mode] || [];
+                let filtered = (records || []).filter(r => ids.includes(r.modeId));
+                // 若一次抓取不足 limit 场，再补抓到最多 20 场凑足
+                if (filtered.length < limit) {
+                    const more = await this.api.getRecentRecords(playerId, mode, 20);
+                    const seen = new Set(filtered.map(r => r.uuid || r.startTime));
+                    for (const r of (more || [])) {
+                        if (ids.includes(r.modeId) && !seen.has(r.uuid || r.startTime)) {
+                            filtered.push(r);
+                            seen.add(r.uuid || r.startTime);
+                        }
+                    }
+                }
+                records = filtered.slice(0, limit);
+            }
+
             if (!records || records.length === 0) {
-                return { 
-                    success: true, 
-                    message: `${player.nickname} 在${modeName}暂无对局记录`,
-                    playerName: player.nickname,
+                return {
+                    success: true,
+                    message: `${player.nickname} 在${modeName}${roomLabel}暂无对局记录`,
+                    records: [],
                     modeName: modeName,
-                    records: []
+                    roomName: roomLabel,
+                    playerName: player.nickname
                 };
             }
             
@@ -247,7 +256,7 @@ export class MajsoulRecords extends plugin {
             const imageData = this._buildImageData(player.nickname, modeName, records, playerId);
             
             // 构建文字消息（备用）
-            let message = `📊 ${player.nickname} 的${modeName}最近${records.length}场对局\n\n`;
+            let message = `📊 ${player.nickname} 的${modeName}${roomLabel ? roomLabel + ' ' : ''}最近${records.length}场对局\n\n`;
             
             for (let i = 0; i < records.length; i++) {
                 const record = records[i];
@@ -281,7 +290,8 @@ export class MajsoulRecords extends plugin {
                 message: message.trim(),
                 records: imageData,
                 playerName: player.nickname,
-                modeName: modeName
+                modeName: modeName,
+                roomName: roomLabel
             };
             
         } catch (error) {
@@ -334,7 +344,7 @@ export class MajsoulRecords extends plugin {
     }
 
     async _generateImage(result) {
-        const { playerName, modeName, records } = result;
+        const { playerName, modeName, records, roomName = '' } = result;
         const mode = modeName === '四麻' ? '4' : '3';
         
         const CARD_WIDTH = 720;
@@ -392,9 +402,9 @@ export class MajsoulRecords extends plugin {
             const titleScale = titleWidth / titleImage.width;
             const titleHeight = titleImage.height * titleScale;
             ctx.drawImage(titleImage, 0, 0, titleWidth, titleHeight);
-            drawText(ctx, `${playerName}的最近${records.length}场${modeName}对局`, CARD_WIDTH / 2, HEADER_HEIGHT - 70, 20, '#ffffff', 'center', 'bold');
+            drawText(ctx, `${playerName}的最近${records.length}场${modeName}${roomName}对局`, CARD_WIDTH / 2, HEADER_HEIGHT - 70, 20, '#ffffff', 'center', 'bold');
         } else {
-            drawText(ctx, `${playerName} 的${modeName}对局记录`, CARD_WIDTH / 2, HEADER_HEIGHT / 2 - 10, 28, '#ffd700', 'center', 'bold');
+            drawText(ctx, `${playerName} 的${modeName}${roomName}对局记录`, CARD_WIDTH / 2, HEADER_HEIGHT / 2 - 10, 28, '#ffd700', 'center', 'bold');
             drawText(ctx, `最近 ${records.length} 场对局`, CARD_WIDTH / 2, HEADER_HEIGHT / 2 + 15, 14, '#6e7681', 'center');
         }
         

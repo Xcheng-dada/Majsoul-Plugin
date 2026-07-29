@@ -1,6 +1,7 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { drawMajsInfoImg } from '../components/render.js';
+import { ROOM_FILTERS, matchRoomFilter } from './MajsoulRecords.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import BotLink from '../utils/BotLink.js';
 
@@ -25,6 +26,14 @@ export class MajsoulInfo extends plugin {
             if (msg.includes('三麻')) {
                 mode = '3';
             }
+
+            // 段位房筛选（模糊别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等），同时把房间词从昵称中剔除
+            let roomFilter = null, roomKey = null;
+            const rm = matchRoomFilter(msg);
+            if (rm.roomFilter) {
+                roomFilter = rm.roomFilter;
+                roomKey = rm.matched;
+            }
             
             let uid = null;
             let playerName = null;
@@ -37,6 +46,13 @@ export class MajsoulInfo extends plugin {
                 if (nameMatch) {
                     playerName = nameMatch[1].trim();
                 }
+            }
+
+            if (playerName) {
+                let p = playerName;
+                if (roomKey) p = p.replace(roomKey, '');
+                p = p.replace(/三麻|四麻/g, '').trim();
+                playerName = p;
             }
             
             if (!api.token) {
@@ -84,7 +100,7 @@ export class MajsoulInfo extends plugin {
                 }
             }
             
-            const imgBuffer = await drawMajsInfoImg(uid, mode, realtimePT);
+            const imgBuffer = await drawMajsInfoImg(uid, mode, realtimePT, roomFilter);
             
             if (typeof imgBuffer === 'string') {
                 // 如果返回了字符串，说明是错误提示
