@@ -220,33 +220,12 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         }
         
         const footerY = totalHeight - bottomPadding;
-        const footerCanvas = createCanvas(CARD_WIDTH, FOOTER_HEIGHT);
-        const footerCtx = footerCanvas.getContext('2d');
-        
-        const footerGradient = footerCtx.createLinearGradient(0, 0, 0, FOOTER_HEIGHT);
-        footerGradient.addColorStop(0, '#1c2128');
-        footerGradient.addColorStop(1, '#0d1117');
-        footerCtx.fillStyle = footerGradient;
-        footerCtx.fillRect(0, 0, CARD_WIDTH, FOOTER_HEIGHT);
-        
-        footerCtx.strokeStyle = '#30363d';
-        footerCtx.lineWidth = 1;
-        footerCtx.beginPath();
-        footerCtx.moveTo(PADDING, 0);
-        footerCtx.lineTo(CARD_WIDTH - PADDING, 0);
-        footerCtx.stroke();
-        
-        footerCtx.font = 'bold 11px "Microsoft YaHei", sans-serif';
-        footerCtx.fillStyle = '#8b949e';
-        footerCtx.textAlign = 'center';
-        footerCtx.textBaseline = 'middle';
-        footerCtx.fillText('Majsoul-Plugin by 小橙c', CARD_WIDTH / 2, FOOTER_HEIGHT / 2 - 4);
-        
-        footerCtx.font = '10px "Microsoft YaHei", sans-serif';
-        footerCtx.fillStyle = '#6e7681';
-        footerCtx.fillText('Data: amae-koromo | Version D.1.6', CARD_WIDTH / 2, FOOTER_HEIGHT / 2 + 8);
-        
-        ctx.drawImage(footerCanvas, 0, footerY);
+        // 页脚：无背景、无分隔线、单行纯文字（仅署名与数据来源）
+        ctx.font = 'bold 11px "Microsoft YaHei", sans-serif';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, footerY + FOOTER_HEIGHT / 2);
         
         return canvas.toBuffer('image/png');
     } catch (error) {
@@ -630,6 +609,7 @@ export default class MajsoulSubscribeCore {
             
             const imageBuffer = await generateSubscribeImage(record, sub.id);
             
+            // 有图片时，图片下方只附一行牌谱链接（避免与图片内容重复、且不要多余空行）
             return {
                 text: imageBuffer ? `牌谱链接：${paipuUrl}` : fullMsg,
                 image: imageBuffer

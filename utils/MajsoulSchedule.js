@@ -161,22 +161,26 @@ export default class MajsoulSchedule {
     // 选取当前在线的 bot 实例用于发送（避免用离线 bot 触发"等待上线超时"卡死）
     _pickOnlineBot() {
         const candidates = [];
-        if (this.bot) candidates.push(this.bot);
-        if (typeof global.Bot !== 'undefined' && global.Bot) candidates.push(global.Bot);
+        // 兼容 global.Bot / global.Bots 可能是数组或单实例，递归展开
+        const pushBot = (b) => {
+            if (!b) return;
+            if (Array.isArray(b)) { b.forEach(pushBot); return; }
+            if (typeof b === 'object') candidates.push(b);
+        };
+        pushBot(this.bot);
+        if (typeof global.Bot !== 'undefined') pushBot(global.Bot);
         if (typeof global.Bots === 'object' && global.Bots) {
-            for (const botId in global.Bots) {
-                if (global.Bots[botId]) candidates.push(global.Bots[botId]);
-            }
+            for (const botId in global.Bots) pushBot(global.Bots[botId]);
         }
         const hasSender = (b) => b && (typeof b.sendGroupMsg === 'function' || typeof b.pickGroup === 'function');
-        const isOnline = (b) => hasSender(b) && (
-            b.stat?.online === true ||
-            b.isOnline === true ||
-            b.status === 'online' ||
-            b.connected === true
-        );
+        // 只要有发送能力即视为可用；仅当被明确标记为离线时才排除（兼容部分封装不暴露在线字段的情况）
+        const explicitlyOffline = (b) =>
+            b.stat?.online === false ||
+            b.isOnline === false ||
+            b.status === 'offline' ||
+            b.connected === false;
         for (const b of candidates) {
-            if (isOnline(b)) return b;
+            if (hasSender(b) && !explicitlyOffline(b)) return b;
         }
         return null;
     }
@@ -189,8 +193,20 @@ export default class MajsoulSchedule {
             return false;
         }
         
+        // 发送超时保护：OneBot 通道未就绪时 sendGroupMsg 可能永久 pending，
+        // 导致 performCheck 的循环卡死、checking 锁无法释放，后续所有检查被跳过。
+        // 这里用 Promise.race 包裹，超时即视为失败，返回 false 让调用方补发。
+        const SEND_TIMEOUT = 8000;
+        const withTimeout = (p) => new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('发送超时（OneBot通道可能未就绪）')), SEND_TIMEOUT);
+            p.then(
+                (v) => { clearTimeout(timer); resolve(v); },
+                (e) => { clearTimeout(timer); reject(e); }
+            );
+        });
+
         try {
-            // 如果有图片，合并成一条消息发送：标题 + 图片 + 牌谱链接
+            // 如果有图片，合并成一条消息发送：标题 + 图片 + 牌谱链接（无多余空行）
             if (imageBuffer) {
                 const imageBase64 = `base64://${imageBuffer.toString('base64')}`;
                 
@@ -198,18 +214,18 @@ export default class MajsoulSchedule {
                 if (typeof global.segment === 'object') {
                     const imageSegment = global.segment.image(imageBase64);
                     const msgChain = [
-                        '本群侦测到新的对局\n',
+                        '本群侦测到新的对局',
                         imageSegment,
-                        `\n${message}`
+                        message
                     ];
                     
                     if (typeof bot.sendGroupMsg === 'function') {
-                        await bot.sendGroupMsg(parseInt(groupId), msgChain);
+                        await withTimeout(bot.sendGroupMsg(parseInt(groupId), msgChain));
                         this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
                         return true;
                     }
                     else if (typeof bot.pickGroup === 'function') {
-                        await bot.pickGroup(parseInt(groupId)).sendMsg(msgChain);
+                        await withTimeout(bot.pickGroup(parseInt(groupId)).sendMsg(msgChain));
                         this.logger.debug(`[MajsoulSchedule] 合并消息已发送到群 ${groupId}`);
                         return true;
                     }
@@ -218,12 +234,12 @@ export default class MajsoulSchedule {
             
             // 没有图片或图片发送失败，只发送文字（文字消息已包含完整内容）
             if (typeof bot.sendGroupMsg === 'function') {
-                await bot.sendGroupMsg(parseInt(groupId), message);
+                await withTimeout(bot.sendGroupMsg(parseInt(groupId), message));
                 this.logger.debug(`[MajsoulSchedule] 消息已发送到群 ${groupId}`);
                 return true;
             }
             else if (typeof bot.pickGroup === 'function') {
-                await bot.pickGroup(parseInt(groupId)).sendMsg(message);
+                await withTimeout(bot.pickGroup(parseInt(groupId)).sendMsg(message));
                 this.logger.debug(`[MajsoulSchedule] 消息已发送到群 ${groupId}`);
                 return true;
             }
