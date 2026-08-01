@@ -19,8 +19,13 @@ export const ROOM_FILTERS = {
 
 // 在文本中模糊匹配段位房（支持别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等）
 // 返回 { roomFilter, matched }；matched 为实际命中的别名，用于从昵称中剔除
+// 注意：铜之间/银之间定义保留以备后续牌谱屋支持，但当前受 API 限制不允许作为查询筛选条件
+// 仅禁用段位筛选匹配，玩家昵称中若本身含有“铜”/“银”字样不受影响，不会被过滤或剔除
+const DISABLED_ROOM_FILTERS = new Set(['铜之间', '银之间']);
 export function matchRoomFilter(text) {
   for (const rf of Object.values(ROOM_FILTERS)) {
+    // 跳过当前禁用的段位（铜/银之间）
+    if (DISABLED_ROOM_FILTERS.has(rf.name)) continue;
     // 单房间内按别名长度降序匹配，优先命中更完整的词（如 “金之间” 优先于 “金”）
     for (const alias of rf.aliases.slice().sort((a, b) => b.length - a.length)) {
       if (text.includes(alias)) {

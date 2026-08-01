@@ -27,7 +27,8 @@ export class MajsoulInfo extends plugin {
                 mode = '3';
             }
 
-            // 段位房筛选（模糊别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等），同时把房间词从昵称中剔除
+            // 段位房筛选（模糊别名：金/金间/金之间、玉/玉间/玉之间、王座/王座间/王座之间 等）
+            // 注意：铜之间/银之间定义保留但当前禁用，不会作为筛选条件（受牌谱屋 API 限制），同时把房间词从昵称中剔除
             let roomFilter = null, roomKey = null;
             const rm = matchRoomFilter(msg);
             if (rm.roomFilter) {
