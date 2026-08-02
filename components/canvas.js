@@ -1,10 +1,21 @@
 import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas'
 import path from 'path'
+import fs from 'fs'
+import { fileURLToPath } from 'url'
 
-// 封装简单的图像加载工具
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// 封装简单的图像加载工具（兼容 Windows 绝对路径）
 export async function loadResImage(subPath) {
-  const fullPath = path.resolve('./plugins/Majsoul-Plugin/resources', subPath)
-  return await loadImage(fullPath)
+  // __dirname 是 components/ 目录，插件根目录是上一级
+  const fullPath = path.join(__dirname, '..', 'resources', subPath)
+  // @napi-rs/canvas v1.x 的 loadImage 在 Windows 上不支持本地文件路径
+  // 改用 fs 读取 Buffer 后通过 data URI 加载
+  const buf = fs.readFileSync(fullPath)
+  const ext = path.extname(fullPath).toLowerCase()
+  const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png'
+  return await loadImage(`data:${mime};base64,${buf.toString('base64')}`)
 }
 
 // 图片圆角/特定绘制工具

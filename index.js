@@ -8,6 +8,7 @@ import { MajsoulSubscribe } from './apps/MajsoulSubscribe.js';
 import { MajsoulRecords } from './apps/MajsoulRecords.js';
 import { MajsoulInfo } from './apps/MajsoulInfo.js';
 import { MajsoulReview } from './apps/MajsoulReview.js';
+import { MajsoulHelp } from './apps/MajsoulHelp.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 import { cleanupPaipu, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
 import { updateLqc } from './utils/lqcUpdater.js';
@@ -230,6 +231,12 @@ export class majsoul extends plugin {
           reg: '^#?雀魂登录\\s+(\\S+)\\s+(.+)$',
           fnc: 'majsoulLogin',
           permission: 'group'
+        },
+        // 帮助界面
+        {
+          reg: '^#?(雀魂帮助|雀魂菜单|帮助|menu)$',
+          fnc: 'majsoulHelp',
+          permission: 'all'
         }
       ]
     });
@@ -242,6 +249,7 @@ export class majsoul extends plugin {
       records: new MajsoulRecords(),
       info: new MajsoulInfo(),
       review: new MajsoulReview(),
+      help: new MajsoulHelp(),
     };
   }
   
@@ -282,6 +290,11 @@ export class majsoul extends plugin {
   // 指令路由 - 雀魂登录
   async majsoulLogin(e) {
     return await this.modules.review.loginCommand(e);
+  }
+
+  // 指令路由 - 帮助界面
+  async majsoulHelp(e) {
+    return await this.modules.help.handle(e);
   }
 
     // 插件加载时的初始化

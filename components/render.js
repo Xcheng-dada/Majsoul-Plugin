@@ -1497,3 +1497,236 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   
   return finalCanvas.toBuffer('image/jpeg', 85)
 }
+
+// ==================== 帮助界面（移植自 MajsoulUID majs_help，适配 JS 版指令）====================
+
+const HELP_DATA = {
+  "用户管理": {
+    desc: "搜索玩家与绑定UID，便于后续查询",
+    items: [
+      { name: "雀魂绑定", desc: "绑定雀魂玩家UID", eg: "#雀魂绑定 12345678", icon: "绑定" },
+      { name: "雀魂切换", desc: "切换已绑定的主账号", eg: "#雀魂切换 12345678", icon: "切换" },
+      { name: "雀魂解绑", desc: "解绑指定或全部UID", eg: "#雀魂解绑", icon: "解绑" },
+      { name: "雀魂我的绑定", desc: "查看已绑定的所有UID", eg: "#雀魂我的绑定", icon: "我的绑定" },
+      { name: "雀魂搜索", desc: "搜索雀魂玩家信息", eg: "#雀魂搜索 宫永咲", icon: "搜索" }
+    ]
+  },
+  "玩家数据查询": {
+    desc: "查询玩家详细战绩与段位数据",
+    items: [
+      { name: "雀魂查询", desc: "查询四麻详细数据（默认）", eg: "#雀魂查询 宫永咲", icon: "查询" },
+      { name: "查询四麻", desc: "查询四麻段位/统计/走势", eg: "#查询四麻 玩家名 金", icon: "查询四麻" },
+      { name: "查询三麻", desc: "查询三麻段位/统计/走势", eg: "#查询三麻 玩家名 玉间", icon: "查询三麻" }
+    ]
+  },
+  "对局查询": {
+    desc: "查询最近对局记录与走势图",
+    items: [
+      { name: "雀魂对局", desc: "查询最近5场四麻对局", eg: "#雀魂对局 宫永咲 金", icon: "雀魂对局" },
+      { name: "三麻对局", desc: "查询最近5场三麻对局", eg: "#三麻对局 宫永咲 玉", icon: "三麻对局" }
+    ]
+  },
+  "AI牌谱分析": {
+    desc: "基于 Mortal AI 的牌谱复盘与场况分析",
+    items: [
+      { name: "牌谱Review", desc: "AI 分析牌谱每手最优选择", eg: "#牌谱Review <URL>", icon: "牌谱" },
+      { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "#雀魂场况 <URL> 1 1", icon: "场况" },
+      { name: "雀魂登录", desc: "登录账号以使用牌谱分析", eg: "#雀魂登录 账号 密码", icon: "登录" }
+    ]
+  },
+  "对局订阅": {
+    desc: "群内谁又偷偷上大分了？？",
+    items: [
+      { name: "雀魂订阅", desc: "订阅玩家四麻对局播报", eg: "#雀魂订阅 玩家名", icon: "订阅" },
+      { name: "三麻订阅", desc: "订阅玩家三麻对局播报", eg: "#三麻订阅 玩家名", icon: "三麻订阅" },
+      { name: "雀魂订阅状态", desc: "查看本群的订阅列表", eg: "#雀魂订阅状态", icon: "订阅状态" }
+    ]
+  },
+  "抽卡娱乐": {
+    desc: "十连抽卡与卡池切换，每日限5次",
+    items: [
+      { name: "雀魂十连", desc: "模拟雀魂十连抽卡", eg: "#雀魂十连", icon: "抽卡" },
+      { name: "查看雀魂卡池", desc: "查看本群当前卡池", eg: "#查看雀魂卡池", icon: "抽卡" },
+      { name: "查询抽卡次数", desc: "查询今日剩余抽卡次数", eg: "#查询抽卡次数", icon: "抽卡" }
+    ]
+  }
+}
+
+export async function drawHelp() {
+  const bannerBg = await loadResImage('help/texture2d/banner_bg.jpg')
+  const helpBg = await loadResImage('help/texture2d/bg.jpg')
+  const cagBg = await loadResImage('help/texture2d/cag_bg.png')
+  const itemBg = await loadResImage('help/texture2d/item.png')
+
+  // 布局常量 —— 严格参照 gsuid_core draw_new_plugin_help 原版参数
+  const COLS = 3
+  const W = 120 + 475 * COLS          // 1545
+  const CARD_STEP = 490               // 每列水平步长
+  const CARD_W = 475
+  const ROW_H = 175                   // 每行卡片垂直高度
+  const SOFT = 10                     // 分类间额外间距
+  const ICON_SIZE = 150              // item 内图标尺寸
+  const PAD_X = 45                    // 卡片起始 x
+
+  let y = 0
+
+  // ---- 顶部 Banner ----
+  const bscale = W / bannerBg.width
+  const bannerH = Math.round(bannerBg.height * bscale)
+
+  // 预计算总高度（使用真实尺寸）
+  const cagW = W - 90
+  const cagScale = cagW / cagBg.width
+  const realCagH = Math.round(cagBg.height * cagScale)
+  let totalH = bannerH + Math.round(70 * bscale) + SOFT
+  for (const cat of Object.values(HELP_DATA)) {
+    const rows = Math.ceil(cat.items.length / COLS)
+    totalH += realCagH + SOFT + rows * ROW_H + SOFT
+  }
+  totalH += 80 // 底部 footer 留白
+
+  const canvas = createCanvas(W, totalH)
+  const ctx = canvas.getContext('2d')
+
+  // 平铺背景
+  for (let bx = 0; bx < W; bx += helpBg.width) {
+    for (let by = 0; by < totalH; by += helpBg.height) {
+      ctx.drawImage(helpBg, bx, by)
+    }
+  }
+
+  // 绘制 Banner —— 完全复刻原版 gsuid_core 布局
+  ctx.drawImage(bannerBg, 0, 0, W, bannerH)
+
+  // 插件图标（128x128，左上角偏下位置，参照原版坐标缩放，拉近主副标题）
+  try {
+    const pluginIcon = await loadResImage('help/texture2d/ICON.png')
+    const iconSize = Math.round(128 * bscale)
+    const iconX = Math.round(110 * bscale)
+    const iconY = Math.round((bannerH / bscale) - 195) * bscale
+    // 圆形裁切
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(iconX + iconSize / 2, iconY + iconSize / 2, iconSize / 2, 0, Math.PI * 2)
+    ctx.closePath()
+    ctx.clip()
+    ctx.drawImage(pluginIcon, iconX, iconY, iconSize, iconSize)
+    ctx.restore()
+  } catch (_) {}
+
+  // 标题文字（50px 白色，参照原版）
+  const titleText = 'Majsoul-Plugin帮助'
+  const titleX = Math.round(262 * bscale)
+  const titleY = Math.round(((bannerH / bscale) - 172) * bscale)
+  const titleDrawY = titleY + 20
+  drawText(ctx, titleText, titleX, titleDrawY, Math.round(50 * bscale), '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+
+  // 副标题（30px 灰色，加粗，参照原版）
+  const subTitle = '该本大爷出场了汪。'
+  const subTitleX = Math.round(262 * bscale)
+  const subTitleY = Math.round(((bannerH / bscale) - 117) * bscale)
+  drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
+
+  // 版本徽章（红色圆角标签，与标题文字同高）
+  const versionText = 'v5.2.2'
+  const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
+  const badgeY = titleDrawY
+  const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)
+  const badgeH = Math.round(34 * bscale)
+  const badgeR = Math.round(8 * bscale)
+  ctx.fillStyle = '#FC4545'
+  roundRect(ctx, badgeX, badgeY - badgeH / 2, badgeW, badgeH, badgeR)
+  drawText(ctx, versionText, badgeX + badgeW / 2, badgeY + 2, Math.round(28 * bscale), '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+
+  y = bannerH + Math.round(40 * bscale)
+
+  // ---- 各分类 ----
+  for (const [catName, cat] of Object.entries(HELP_DATA)) {
+    // 分类标题：cag_bg 背景条（自带红色方块）+ 分类名（白字 45px）+ 描述（灰字 30px）
+    const cagW = W - 90
+    const cagScale = cagW / cagBg.width
+    const cagDrawH = Math.round(cagBg.height * cagScale)
+    ctx.drawImage(cagBg, 45, y, cagW, cagDrawH)
+
+    // 文字从 cag_bg 内置红方块右侧开始（整体右移避免拥挤，描述保持 30px）
+    drawText(ctx, catName, 175, y + cagDrawH / 2 + 2, 36, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+    drawText(ctx, cat.desc, 175 + measureTextWidth(ctx, catName, 36, 'bold', 'Microsoft YaHei') + 20, y + cagDrawH / 2 + 2, 30, '#999999', 'left', 'bold', 'Microsoft YaHei')
+
+    y += cagDrawH + SOFT
+
+    // 指令卡片网格
+    const rows = Math.ceil(cat.items.length / COLS)
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const idx = r * COLS + c
+        if (idx >= cat.items.length) break
+        const item = cat.items[idx]
+        const x = PAD_X + c * CARD_STEP
+        const cardY = y + r * ROW_H
+
+        // item 背景（原比例缩放）
+        const itemScale = CARD_W / itemBg.width
+        const itemDrawH = Math.round(itemBg.height * itemScale)
+        ctx.drawImage(itemBg, x, cardY, CARD_W, itemDrawH)
+
+        // 图标（150x150，左上角，每条指令独立图标）
+        try {
+          const icon = await loadResImage(`help/icon_path/${item.icon}.png`)
+          const iconX = x + 6
+          const iconY = cardY + 12
+          ctx.save()
+          ctx.beginPath()
+          ctx.arc(iconX + ICON_SIZE / 2, iconY + ICON_SIZE / 2, ICON_SIZE / 2, 0, Math.PI * 2)
+          ctx.closePath()
+          ctx.clip()
+          ctx.drawImage(icon, iconX, iconY, ICON_SIZE, ICON_SIZE)
+          ctx.restore()
+        } catch (_) {}
+
+        // 指令名称（图标右侧，38px 加粗白字）
+        drawText(ctx, item.name, x + 168, cardY + 67, 38, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+
+        // 示例（名称下方，26px 灰色）
+        const egText = item.eg.split('\n')[0]
+        const maxEgW = CARD_W - 168 - 20
+        let displayEg = egText
+        ctx.font = `normal 26px Microsoft YaHei`
+        while (ctx.measureText(displayEg).width > maxEgW && displayEg.length > 4) {
+          displayEg = displayEg.slice(0, -1)
+        }
+        if (displayEg !== egText) displayEg += '…'
+        drawText(ctx, displayEg, x + 168, cardY + 116, 26, '#AAAAAA', 'left', 'normal', 'Microsoft YaHei')
+      }
+    }
+
+    y += rows * ROW_H + SOFT
+  }
+
+  // ---- 底部 Footer（白字加粗） ----
+  drawText(ctx, 'Majsoul-Plugin by 小橙c',
+    W / 2, totalH - 30, 28, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+
+  return canvas.toBuffer('image/jpeg', 85)
+}
+
+// 辅助：测量文字宽度（用于紧凑排版时计算间距）
+function measureTextWidth(ctx, text, fontSize, fontWeight, fontFamily) {
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`
+  return ctx.measureText(text).width
+}
+
+// 辅助：绘制圆角矩形
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
+  ctx.fill()
+}
