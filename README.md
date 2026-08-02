@@ -13,7 +13,7 @@
   <a href="https://nodejs.org/">
     <img src="https://img.shields.io/badge/node.js-18%2B-green?logo=node.js&logoColor=white" alt="Node.js">
   </a>
-  <a href="https://github.com/TimeRainStarSky/TRSS_Yunzai">
+  <a href="https://github.com/TimeRainStarSky/Yunzai">
     <img src="https://img.shields.io/badge/TRSS--Yunzai-Plugin-success" alt="TRSS-Yunzai">
   </a>
   <a href="./LICENSE">

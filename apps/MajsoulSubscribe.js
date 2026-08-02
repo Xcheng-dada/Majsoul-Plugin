@@ -20,22 +20,22 @@ export class MajsoulSubscribe extends plugin {
                 {
                     reg: '^#?(关闭|取消)(雀魂|四麻)订阅\\s+(.+)$',
                     fnc: 'deactivateSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?开启(雀魂|四麻)订阅\\s+(.+)$',
                     fnc: 'activateSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?删除(雀魂|四麻)订阅\\s+(.+)$',
                     fnc: 'deleteSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?(雀魂|四麻)订阅状态$',
                     fnc: 'checkSubscribeStatus',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 // 三麻指令
                 {
@@ -46,22 +46,22 @@ export class MajsoulSubscribe extends plugin {
                 {
                     reg: '^#?(关闭|取消)三麻订阅\\s+(.+)$',
                     fnc: 'deactivateTriSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?开启三麻订阅\\s+(.+)$',
                     fnc: 'activateTriSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?删除三麻订阅\\s+(.+)$',
                     fnc: 'deleteTriSubscribe',
-                    permission: 'group'
+                    permission: 'admin'
                 },
                 {
                     reg: '^#?三麻订阅状态$',
                     fnc: 'checkTriSubscribeStatus',
-                    permission: 'group'
+                    permission: 'admin'
                 },
             ]
         });
