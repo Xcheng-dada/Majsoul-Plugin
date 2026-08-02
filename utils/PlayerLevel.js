@@ -9,10 +9,19 @@ export class PlayerLevel {
     const realId = levelId % 10000
     this.score = score
     this.realId = realId
-    
+
+    // 模式标识：floor(levelId/10000)，2 表示三麻，1（及其他）表示四麻
+    const playerMode = Math.floor(levelId / 10000)
+
     let majorRank = Math.floor(realId / 100)
     let minorRank = realId % 100
-    
+
+    // 牌谱屋 id 编码中，魂天段位的 major 部分整体 +1（即魂天记为 7 而非 6），
+    // 与模式无关（四麻、三麻均如此）。此处统一修正回 1~6，避免魂天被误判为「初心」。
+    if (majorRank === 7) {
+      majorRank = 6
+    }
+
     if (majorRank < 1 || majorRank > PLAYER_RANKS_DETAIL.length) {
       majorRank = 1
     }

@@ -710,8 +710,16 @@ export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, s
     else if (score >= 15) flowerCount = 3
     for (let i = 0; i < 3; i++) {
       const flower = flowerCount > i ? flowerFull : flowerEmpty
-      ctx.drawImage(flower, 26 + i * 38, 118, 32, 32)
+      ctx.drawImage(flower, 38 + i * 30, 118, 28, 28)
     }
+    // 魂天等级：使用等级图片素材（info_texture/Lv{minorRank}.png），画在图标内部左下角，避免遮挡花朵
+    // 素材尚未齐全（Lv1~19 缺失），暂时统一不显示 Lv，等素材补齐后取消下方注释即可恢复
+    // try {
+    //   const lvImg = await loadResImage(`info_texture/Lv${minorRank}.png`)
+    //   ctx.drawImage(lvImg, 16, 92, 56, 24)
+    // } catch (_) {
+    //   // 等级图片素材不存在时静默跳过（仅显示段位图标+花朵）
+    // }
   }
   
   if (size !== 156) {
@@ -917,7 +925,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
   if (realtimePT) {
     if (realtimePT.fourPlayer) {
       const rank4 = parseRankFromText(realtimePT.fourPlayer.rank);
-      const level4Id = rank4.majorRank * 10000 + rank4.majorRank * 100 + rank4.minorRank;
+      const level4Id = 1 * 10000 + rank4.majorRank * 100 + rank4.minorRank;
       data4.level = { ...data4.level, id: level4Id };
       if (realtimePT.fourPlayer.useApiScore && data4.level) {
         const apiScore = data4.level.score + (data4.level.delta || 0);
@@ -933,7 +941,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
     }
     if (realtimePT.threePlayer) {
       const rank3 = parseRankFromText(realtimePT.threePlayer.rank);
-      const level3Id = rank3.majorRank * 10000 + rank3.majorRank * 100 + rank3.minorRank;
+      const level3Id = 2 * 10000 + rank3.majorRank * 100 + rank3.minorRank;
       data3.level = { ...data3.level, id: level3Id };
       if (realtimePT.threePlayer.useApiScore && data3.level) {
         const apiScore = data3.level.score + (data3.level.delta || 0);
@@ -948,6 +956,15 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
       }
     }
   }
+
+  // 牌谱屋（非实时）返回的魂天段位 score 为 pt 值，需除 100；实时路径已在上方处理
+  const fixTenhouScore = (score, levelId, realtimePlayer) => {
+    if (score == null || realtimePlayer) return score
+    const tmp = new PlayerLevel(levelId || 10101, 0)
+    return tmp.isTenhou() ? score / 100 : score
+  }
+  level4Score = fixTenhouScore(level4Score, data4.level?.id, realtimePT?.fourPlayer)
+  level3Score = fixTenhouScore(level3Score, data3.level?.id, realtimePT?.threePlayer)
 
   let level4 = new PlayerLevel(data4.level?.id || 10101, level4Score)
   let level3 = new PlayerLevel(data3.level?.id || 10101, level3Score)
