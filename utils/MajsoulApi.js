@@ -619,6 +619,11 @@ export default class MajsoulApi {
      * @param {number} [retryCount=0] - 当前重试次数
      */
     async _switchEndpoint(lastError = null, retryCount = 0) {
+        // 404（无数据）不应切换节点重试，直接返回（上游已 throw，这里双保险）
+        if (lastError && (lastError.message === '资源未找到' || lastError.message.includes('HTTP 404'))) {
+            return;
+        }
+
         // 如果遇到DNS解析失败，立即重新探测所有节点
         if (lastError && (lastError.message.includes('ENOTFOUND') || lastError.message.includes('EAI_AGAIN'))) {
             this.logger.info('[MajsoulApi] 检测到DNS解析失败，重新探测所有节点...');
@@ -831,7 +836,10 @@ export default class MajsoulApi {
                 return records;
 
             } catch (error) {
-                if (error.message === '资源未找到') {
+                // 404 / 资源未找到：该玩家确实没有对应对局数据，换节点也是同样的 404，
+                // 不应重试，否则会白耗限流额度并加剧后续请求的 429。
+                if (error.message === '资源未找到' || error.message.includes('HTTP 404') || error.message.includes('资源未找到')) {
+                    this.logger.warn(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 资源未找到(404)，不再重试`);
                     throw error;
                 }
 
@@ -847,9 +855,10 @@ export default class MajsoulApi {
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
-                
+
                 this.logger.warn(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                // 四麻：指数退避后重试
                 if (mode === 4) {
                     const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
                     totalWaitTime += waitTime;
@@ -858,9 +867,12 @@ export default class MajsoulApi {
                     continue;
                 }
 
-                if (attempt < maxRetries - 1) {
-                    await this._switchEndpoint(error, attempt);
-                } else {
+                // 三麻：失败也加退避等待，避免无脑切节点狂发请求撞 429
+                const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                totalWaitTime += waitTime;
+                this.logger.info(`[MajsoulApi] [三麻] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                if (attempt >= maxRetries - 1) {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
@@ -1000,7 +1012,9 @@ export default class MajsoulApi {
                 return result;
 
             } catch (error) {
-                if (error.message === '资源未找到') {
+                // 404（无该模式数据）：不可重试、不可切换节点，立即抛出，避免频繁重试触发 429
+                if (error.message === '资源未找到' || error.message.includes('HTTP 404')) {
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 无数据(404)，不重试直接返回`);
                     throw error;
                 }
                 
@@ -1026,6 +1040,7 @@ export default class MajsoulApi {
                     continue;
                 }
 
+                // 三麻：非 404/429 的可重试错误才切换节点；404 已在上面抛出，不会到这
                 if (attempt < maxRetries - 1) {
                     await this._switchEndpoint(error, attempt);
                 } else {
@@ -1101,7 +1116,9 @@ export default class MajsoulApi {
                 return result;
 
             } catch (error) {
-                if (error.message === '资源未找到') {
+                // 404（无该模式数据）：不可重试、不可切换节点，立即抛出，避免频繁重试触发 429
+                if (error.message === '资源未找到' || error.message.includes('HTTP 404')) {
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计无数据(404)，不重试直接返回`);
                     throw error;
                 }
 

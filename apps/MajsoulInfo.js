@@ -84,6 +84,11 @@ export class MajsoulInfo extends plugin {
                 logger.debug(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
             } else if (uid) {
                 searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 3 : 4);
+                // 明确模式查询时，若主模式无数据（刚上段 0 场金之间等）接口会 404 拿不到昵称，
+                // 用另一模式接口兜底拿真实昵称，避免渲染成 "Player"
+                if (!searchPlayerName) {
+                    searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 4 : 3);
+                }
                 if (searchPlayerName) {
                     logger.debug(`[MajsoulInfo] 通过UID获取昵称: ${searchPlayerName}`);
                 }
@@ -101,7 +106,7 @@ export class MajsoulInfo extends plugin {
                 }
             }
             
-            const imgBuffer = await drawMajsInfoImg(uid, mode, realtimePT, roomFilter);
+            const imgBuffer = await drawMajsInfoImg(uid, mode, realtimePT, roomFilter, searchPlayerName);
             
             if (typeof imgBuffer === 'string') {
                 // 如果返回了字符串，说明是错误提示

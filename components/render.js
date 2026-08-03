@@ -787,45 +787,48 @@ function parseRankFromText(rankText) {
   return { majorRank, minorRank };
 }
 
-export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roomFilter = null) {
+export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null) {
   let data4, data3, extended4, extended3
   
+  const fetchStats = async (m) => api.getPlayerStats(uid, m).catch(e => {
+    console.warn(`[render.js] 获取${m === 3 ? '三麻' : '四麻'}基础数据失败: ${e.message}`)
+    // 404 等资源未找到：标记 retcode，避免后续继续发起必 404 的扩展/对局请求
+    if (e.message.includes('404') || e.message.includes('资源未找到')) return { ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }
+    return JSON.parse(JSON.stringify(playerStatsZero))
+  })
+  const fetchExt = async (m) => api.getPlayerExtendedStats(uid, m).catch(e => {
+    console.warn(`[render.js] 获取${m === 3 ? '三麻' : '四麻'}扩展数据失败: ${e.message}`)
+    return JSON.parse(JSON.stringify(playerExtendZero))
+  })
+
+  // 指令只查主模式（三麻或四麻），不存在 auto
+  const mainMode = mode === '3' ? 3 : 4
+
   try {
     if (!api.token) {
-      data4 = JSON.parse(JSON.stringify(playerStatsZero))
-      extended4 = JSON.parse(JSON.stringify(playerExtendZero))
-      data3 = JSON.parse(JSON.stringify(playerStatsZero))
-      extended3 = JSON.parse(JSON.stringify(playerExtendZero))
-    } else {
-      data4 = await api.getPlayerStats(uid, 4).catch(e => {
-        console.warn(`[render.js] 获取四麻基础数据失败: ${e.message}`)
-        return JSON.parse(JSON.stringify(playerStatsZero))
-      })
-      if (data4 && !data4.retcode) {
-        extended4 = await api.getPlayerExtendedStats(uid, 4).catch(e => {
-          console.warn(`[render.js] 获取四麻扩展数据失败: ${e.message}`)
-          return JSON.parse(JSON.stringify(playerExtendZero))
-        })
-      } else {
-        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
-      }
-      if (mode === '3') {
-        // 明确查三麻：先查基础数据，有数据才继续查扩展统计，避免无三麻玩家白发 404 请求
-        data3 = await api.getPlayerStats(uid, 3).catch(e => {
-          console.warn(`[render.js] 获取三麻基础数据失败: ${e.message}`)
-          return JSON.parse(JSON.stringify(playerStatsZero))
-        })
-        if (data3 && !data3.retcode) {
-          extended3 = await api.getPlayerExtendedStats(uid, 3).catch(e => {
-            console.warn(`[render.js] 获取三麻扩展数据失败: ${e.message}`)
-            return JSON.parse(JSON.stringify(playerExtendZero))
-          })
-        } else {
-          extended3 = JSON.parse(JSON.stringify(playerExtendZero))
-        }
-      } else {
-        // 四麻/默认查询不需要三麻数据，置零即可，避免对无三麻玩家发起必 404 的请求
+      if (mainMode === 3) {
         data3 = JSON.parse(JSON.stringify(playerStatsZero))
+        extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+        data4 = JSON.parse(JSON.stringify(playerStatsZero))
+        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+      } else {
+        data4 = JSON.parse(JSON.stringify(playerStatsZero))
+        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+        data3 = JSON.parse(JSON.stringify(playerStatsZero))
+        extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+      }
+    } else {
+      if (mainMode === 3) {
+        data3 = await fetchStats(3)
+        extended3 = data3.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(3)
+        // 四麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
+        data4 = await fetchStats(4).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
+        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+      } else {
+        data4 = await fetchStats(4)
+        extended4 = data4.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(4)
+        // 三麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
+        data3 = await fetchStats(3).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
         extended3 = JSON.parse(JSON.stringify(playerExtendZero))
       }
     }
@@ -834,22 +837,48 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
     return `获取玩家数据失败: ${e.message}\n可能原因：\n1. 网络连接问题\n2. UID不正确\n3. 玩家数据尚未同步到服务器`
   }
 
-  if (!data4 || !data3 || !extended4 || !extended3) {
-    return "不存在该ID的玩家数据...\n提示: 需要在金之间有一定数量的对局才能被正确记录！"
+  // 主模式 404（该模式金之间无对局）：补查另一模式，判断是否「两个模式都没数据」
+  let otherData = null
+  if ((mainMode === 3 && data3.retcode) || (mainMode === 4 && data4.retcode)) {
+    const otherMode = mainMode === 3 ? 4 : 3
+    try {
+      otherData = await fetchStats(otherMode)
+    } catch {
+      otherData = null
+    }
+    // 另一模式也 404 → 两个模式都没打过金之间，返回文字
+    if (!otherData || otherData.retcode) {
+      return "未查找到该玩家...\n提示：该玩家可能尚未在金之间进行对局"
+    }
   }
 
-  if (data4.retcode) data4 = JSON.parse(JSON.stringify(playerStatsZero))
-  if (data3.retcode) data3 = JSON.parse(JSON.stringify(playerStatsZero))
+  // 先记录主模式是否有有效数据（retcode 会被下方抹掉，后续判断需依赖此标记）
+  const data4Valid = data4 && !data4.retcode
+  const data3Valid = data3 && !data3.retcode
+
+  // 主模式 404 时，把数据替换为零对象（统计为 0）；替换后再用真实昵称兜底，避免被 "Player" 覆盖
+  // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行
+  if (data4.retcode) {
+    const realName = playerName || data3.nickname || otherData?.nickname || String(uid)
+    data4 = JSON.parse(JSON.stringify(playerStatsZero))
+    data4.nickname = realName
+  }
+  if (data3.retcode) {
+    const realName = playerName || data4.nickname || otherData?.nickname || String(uid)
+    data3 = JSON.parse(JSON.stringify(playerStatsZero))
+    data3.nickname = realName
+  }
   
+
   if (extended4.retcode) extended4 = JSON.parse(JSON.stringify(playerExtendZero))
   if (extended3.retcode) extended3 = JSON.parse(JSON.stringify(playerExtendZero))
 
   let _mode, data, extended, record
-  if (mode === "3" || (mode === "auto" && data4.level?.score < data3.level?.score)) {
+  if (mode === "3") {
     _mode = "三麻战绩"
     data = data3
     extended = extended3
-    if (data3 && !data3.retcode) {
+    if (data3Valid) {
       try {
         record = await api.getRecentRecords(uid, 3, 16)
       } catch (e) {
@@ -859,7 +888,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
     } else {
       record = []
     }
-      if (roomFilter && data3 && !data3.retcode) {
+      if (roomFilter && data3Valid) {
         const mp = (roomFilter.ids[3] || []).join(',')
         let rdOk = false
         try {
@@ -882,7 +911,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
     _mode = "四麻战绩"
     data = data4
     extended = extended4
-    if (data4 && !data4.retcode) {
+    if (data4Valid) {
       try {
         record = await api.getRecentRecords(uid, 4, 16)
       } catch (e) {
@@ -892,7 +921,7 @@ export async function drawMajsInfoImg(uid, mode = 'auto', realtimePT = null, roo
     } else {
       record = []
     }
-    if (roomFilter && data4 && !data4.retcode) {
+    if (roomFilter && data4Valid) {
       const mp = (roomFilter.ids[4] || []).join(',')
       let rdOk = false
       try {
