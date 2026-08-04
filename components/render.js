@@ -1533,49 +1533,50 @@ const HELP_DATA = {
   "用户管理": {
     desc: "搜索玩家与绑定UID，便于后续查询",
     items: [
-      { name: "雀魂绑定", desc: "绑定雀魂玩家UID", eg: "#雀魂绑定 12345678", icon: "绑定" },
-      { name: "雀魂切换", desc: "切换已绑定的主账号", eg: "#雀魂切换 12345678", icon: "切换" },
-      { name: "雀魂解绑", desc: "解绑指定或全部UID", eg: "#雀魂解绑", icon: "解绑" },
-      { name: "雀魂我的绑定", desc: "查看已绑定的所有UID", eg: "#雀魂我的绑定", icon: "我的绑定" },
-      { name: "雀魂搜索", desc: "搜索雀魂玩家信息", eg: "#雀魂搜索 宫永咲", icon: "搜索" }
+      { name: "雀魂绑定", desc: "绑定雀魂玩家UID", eg: "雀魂绑定 <UID>", icon: "绑定" },
+      { name: "雀魂切换", desc: "切换已绑定的主账号", eg: "雀魂切换 <UID>", icon: "切换" },
+      { name: "雀魂解绑", desc: "解绑指定或全部UID", eg: "雀魂解绑 [UID]", icon: "解绑" },
+      { name: "雀魂我的绑定", desc: "查看已绑定的所有UID", eg: "雀魂我的绑定", icon: "我的绑定" },
+      { name: "雀魂搜索", desc: "搜索雀魂玩家信息", eg: "雀魂搜索 <玩家名>", icon: "搜索" }
     ]
   },
   "玩家数据查询": {
     desc: "查询玩家详细战绩与段位数据",
     items: [
-      { name: "雀魂查询", desc: "查询四麻详细数据（默认）", eg: "#雀魂查询 宫永咲", icon: "查询" },
-      { name: "查询四麻", desc: "查询四麻段位/统计/走势", eg: "#查询四麻 玩家名 金", icon: "查询四麻" },
-      { name: "查询三麻", desc: "查询三麻段位/统计/走势", eg: "#查询三麻 玩家名 玉间", icon: "查询三麻" }
+      { name: "雀魂查询", desc: "查询四麻详细数据（默认）", eg: "雀魂查询 [玩家名] [房间]", icon: "查询" },
+      { name: "查询四麻", desc: "查询四麻段位/统计/走势", eg: "查询四麻 [玩家名] [房间]", icon: "查询四麻" },
+      { name: "查询三麻", desc: "查询三麻段位/统计/走势", eg: "查询三麻 [玩家名] [房间]", icon: "查询三麻" }
     ]
   },
   "对局查询": {
-    desc: "查询最近对局记录与走势图",
+    desc: "查询最近对局记录",
+
     items: [
-      { name: "雀魂对局", desc: "查询最近5场四麻对局", eg: "#雀魂对局 宫永咲 金", icon: "雀魂对局" },
-      { name: "三麻对局", desc: "查询最近5场三麻对局", eg: "#三麻对局 宫永咲 玉", icon: "三麻对局" }
+      { name: "雀魂对局", desc: "查询最近5场四麻对局", eg: "雀魂对局 [玩家名] [房间]", icon: "雀魂对局" },
+      { name: "三麻对局", desc: "查询最近5场三麻对局", eg: "三麻对局 [玩家名] [房间]", icon: "三麻对局" }
     ]
   },
   "AI牌谱分析": {
     desc: "基于 Mortal AI 的牌谱复盘与场况分析",
     items: [
-      { name: "牌谱Review", desc: "AI 分析牌谱每手最优选择", eg: "#牌谱Review <URL>", icon: "牌谱" },
-      { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "#雀魂场况 <URL> 1 1", icon: "场况" },
-      { name: "雀魂登录", desc: "登录账号以使用牌谱分析", eg: "#雀魂登录 账号 密码", icon: "登录" }
+      { name: "牌谱Review", desc: "AI 分析牌谱每手最优选择", eg: "牌谱Review <URL>", icon: "牌谱" },
+      { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "场况 <URL> <局> [巡]", icon: "场况" },
+      { name: "雀魂登录", desc: "登录账号以使用牌谱分析", eg: "雀魂登录 <账号> <密码>", icon: "登录" }
     ]
   },
   "对局订阅": {
     desc: "群内谁又偷偷上大分了？？",
     items: [
-      { name: "雀魂订阅", desc: "订阅玩家四麻对局播报", eg: "#雀魂订阅 玩家名", icon: "订阅" },
-      { name: "三麻订阅", desc: "订阅玩家三麻对局播报", eg: "#三麻订阅 玩家名", icon: "三麻订阅" }
+      { name: "雀魂订阅", desc: "订阅玩家四麻对局播报", eg: "雀魂订阅 <玩家名>", icon: "订阅" },
+      { name: "三麻订阅", desc: "订阅玩家三麻对局播报", eg: "三麻订阅 <玩家名>", icon: "三麻订阅" }
     ]
   },
   "抽卡娱乐": {
     desc: "十连抽卡与卡池切换，每日限5次",
     items: [
-      { name: "雀魂十连", desc: "模拟雀魂十连抽卡", eg: "#雀魂十连", icon: "抽卡" },
-      { name: "查看雀魂卡池", desc: "查看本群当前卡池", eg: "#查看雀魂卡池", icon: "抽卡" },
-      { name: "查询抽卡次数", desc: "查询今日剩余抽卡次数", eg: "#查询抽卡次数", icon: "抽卡" }
+      { name: "雀魂十连", desc: "模拟雀魂十连抽卡", eg: "雀魂十连", icon: "抽卡" },
+      { name: "查看雀魂卡池", desc: "查看本群当前卡池", eg: "查看雀魂卡池", icon: "抽卡" },
+      { name: "查询抽卡次数", desc: "查询今日剩余抽卡次数", eg: "查询抽卡次数 [QQ号]", icon: "抽卡" }
     ]
   }
 }
@@ -1611,7 +1612,7 @@ export async function drawHelp() {
     const rows = Math.ceil(cat.items.length / COLS)
     totalH += realCagH + SOFT + rows * ROW_H + SOFT
   }
-  totalH += 80 // 底部 footer 留白
+  totalH += 0 // 底部 footer 留白（设0，最小间距）
 
   const canvas = createCanvas(W, totalH)
   const ctx = canvas.getContext('2d')
@@ -1714,16 +1715,16 @@ export async function drawHelp() {
         // 指令名称（图标右侧，38px 加粗白字）
         drawText(ctx, item.name, x + 168, cardY + 67, 38, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
 
-        // 示例（名称下方，26px 灰色）
+        // 示例（名称下方，24px 灰色，参数用 [] 标注可省略、<> 标注必填）
         const egText = item.eg.split('\n')[0]
-        const maxEgW = CARD_W - 168 - 20
+        const maxEgW = CARD_W - 168 - 8
         let displayEg = egText
-        ctx.font = `normal 26px Microsoft YaHei`
+        ctx.font = `normal 24px Microsoft YaHei`
         while (ctx.measureText(displayEg).width > maxEgW && displayEg.length > 4) {
           displayEg = displayEg.slice(0, -1)
         }
         if (displayEg !== egText) displayEg += '…'
-        drawText(ctx, displayEg, x + 168, cardY + 116, 26, '#AAAAAA', 'left', 'normal', 'Microsoft YaHei')
+        drawText(ctx, displayEg, x + 168, cardY + 116, 24, '#AAAAAA', 'left', 'normal', 'Microsoft YaHei')
       }
     }
 
@@ -1732,7 +1733,7 @@ export async function drawHelp() {
 
   // ---- 底部 Footer（白字加粗） ----
   drawText(ctx, 'Majsoul-Plugin by 小橙c',
-    W / 2, totalH - 30, 28, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+    W / 2, totalH - 22, 28, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
 
   return canvas.toBuffer('image/jpeg', 85)
 }

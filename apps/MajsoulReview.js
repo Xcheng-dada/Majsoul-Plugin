@@ -347,13 +347,17 @@ export class MajsoulReview extends plugin {
     let et = e.msg.replace(/^#?(雀魂场况|场况|牌谱详情) /, '').trim().replace(/，/g, ',').replace(/,/g, ' ')
     let args = et.split(' ').filter(Boolean)
     if (args.length < 2 || args.length > 3) {
-      return e.reply('❌ 请输入有效的格式!\n例如：雀魂场况 <牌谱链接或ID> <局数> [巡数]\n提示：局数、巡数均从 1 开始，巡数可省略（展示整局）')
+      return e.reply('❌ 请输入有效的格式!\n例如：雀魂场况 <牌谱链接> <局数> [巡数]\n提示：局数、巡数均从 1 开始，巡数可省略（展示整局）')
     }
 
     let [paipuArg, kyokuArg, meguruArg] = args
-    // 支持直接粘贴牌谱链接（自动提取 paipu 参数），无需记忆长串牌谱ID
+    // 仅支持牌谱链接，自动提取 paipu 参数；不接受裸牌谱ID
     const m = paipuArg.match(/[?&]paipu=([^&\s]+)/)
-    if (m) paipuArg = m[1]
+    if (m) {
+      paipuArg = m[1]
+    } else {
+      return e.reply('❌ 请输入完整的牌谱链接!\n例如：#雀魂场况 https://game.maj-soul.net/1/?paipu=xxx <局数> [巡数]')
+    }
     let kyokuId = parseInt(kyokuArg) - 1  // 用户输入为 1-based，内部转 0-based 索引
     let meguruId = meguruArg ? parseInt(meguruArg) : 0  // 0 表示整局
 

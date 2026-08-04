@@ -71,7 +71,7 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         const CARD_HEADER_HEIGHT = 60;
         const TABLE_HEADER_HEIGHT = 36;
         const PLAYER_ROW_HEIGHT = 56;
-        const FOOTER_HEIGHT = 40;
+        const FOOTER_HEIGHT = 16;
         
         const LEVEL_COL_CENTER = PADDING + 475;
         const LEVEL_ICON_SIZE = 40;
@@ -87,9 +87,10 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         
         const baseHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + 
             sortedPlayers.length * PLAYER_ROW_HEIGHT + FOOTER_HEIGHT;
-        const TOP_PADDING_PERCENT = 0.1;
+        const TOP_PADDING_PERCENT = 0.04;
         const topPadding = Math.floor(baseHeight * TOP_PADDING_PERCENT);
-        const bottomPadding = topPadding;
+        // 底部留白需至少容纳页脚文字（FOOTER_HEIGHT/2 + 文字半高），避免截断
+        const bottomPadding = Math.max(Math.floor(baseHeight * TOP_PADDING_PERCENT), 6);
         const totalHeight = baseHeight + topPadding + bottomPadding;
         
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
@@ -224,8 +225,8 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         ctx.font = 'bold 11px "Microsoft YaHei", sans-serif';
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, footerY + FOOTER_HEIGHT / 2);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('Majsoul-Plugin by 小橙c | Data: amae-koromo', CARD_WIDTH / 2, totalHeight - 3);
         
         return canvas.toBuffer('image/png');
     } catch (error) {
