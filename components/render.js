@@ -823,13 +823,13 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         extended3 = data3.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(3)
         // 四麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
         data4 = await fetchStats(4).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
-        extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+        extended4 = data4.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(4)
       } else {
         data4 = await fetchStats(4)
         extended4 = data4.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(4)
         // 三麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
         data3 = await fetchStats(3).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
-        extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+        extended3 = data3.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(3)
       }
     }
   } catch (e) {
