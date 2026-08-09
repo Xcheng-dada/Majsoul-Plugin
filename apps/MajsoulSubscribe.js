@@ -1,6 +1,6 @@
 // plugins/Majsoul-Plugin/apps/MajsoulSubscribe.js
 import plugin from "../../../lib/plugins/plugin.js";
-import MajsoulSubscribeCore from '../utils/MajsoulSubscribeCore.js';
+import MajsoulSubscribeCore, { getSubscribeCoreInstance } from '../utils/MajsoulSubscribeCore.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 
 export class MajsoulSubscribe extends plugin {
@@ -66,8 +66,8 @@ export class MajsoulSubscribe extends plugin {
             ]
         });
         
-        // 现在可以安全地初始化 this.core
-        this.core = new MajsoulSubscribeCore();
+        // 现在可以安全地初始化 this.core（使用单例，避免插件启动/热重载时重复初始化）
+        this.core = getSubscribeCoreInstance();
     }
     
     // 四麻订阅

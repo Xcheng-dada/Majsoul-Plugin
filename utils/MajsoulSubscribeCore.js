@@ -262,14 +262,27 @@ function drawRoundRect(ctx, x, y, width, height, radius, fillStyle) {
     }
 }
 
+// 模块级单例：无论被 new 多少次（插件启动、热重载、订阅/定时两个入口），
+// 核心只真正初始化一次，避免重复打"初始化完成"日志、重复建目录。
+let _instance = null;
+
+export function getSubscribeCoreInstance() {
+    if (!_instance) _instance = new MajsoulSubscribeCore();
+    return _instance;
+}
+
 export default class MajsoulSubscribeCore {
     constructor() {
+        // 防御：若已有单例，直接复用其已初始化的状态，避免二次初始化
+        if (_instance && _instance !== this) return _instance;
         this.api = new MajsoulApi();
         // 使用全局 logger 或 console
         this._logger = global.logger || console;
         
         // 初始化数据目录
         this._initialize();
+        // 标记单例（构造函数内赋值，确保后续 new 复用）
+        _instance = this;
     }
     
     // 初始化方法

@@ -97,6 +97,34 @@ async function getResversionManifest() {
 }
 
 const avatarAssetCache = new Map()
+
+// 占位头像：从 resources/person 随机抽取（按座位固定，保证同一座位始终同一张）
+const personDir = path.join(pluginRoot, 'resources', 'person')
+let personFilesCache = null
+function getPersonFiles() {
+  if (!personFilesCache) {
+    try {
+      personFilesCache = fs.readdirSync(personDir).filter(f => /\.(png|jpe?g)$/i.test(f))
+    } catch {
+      personFilesCache = []
+    }
+  }
+  return personFilesCache
+}
+
+async function getPlaceholderAvatar(seat) {
+  const files = getPersonFiles()
+  if (!files.length) return null
+  // 用座位号做稳定索引（取模），同座位恒为同一张，避免每次出图头像乱跳
+  const idx = ((Number(seat) || 0) % files.length + files.length) % files.length
+  try {
+    return await loadResImage(`person/${files[idx]}`)
+  } catch (err) {
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] 占位头像加载失败 ${files[idx]}: ${err.message}`)
+    return null
+  }
+}
+
 async function resolveAvatarAsset(infoPath, extendRes) {
   const suffix = `${infoPath}/bighead.png` // 形如 extendRes/charactor/jinwu/bighead.png
   if (avatarAssetCache.has(suffix)) return avatarAssetCache.get(suffix)
@@ -1366,8 +1394,12 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
 
   // 名字优先用 raw 注入的真实昵称（mortalLog.name，由 review 命令从雀魂公开 API 获取），
   // 其次 review.json 的占位名（A/B/C/D），最后兜底
-  const name = (mortalLog && mortalLog.name && mortalLog.name[seat]) ||
-               (reviewData.name && reviewData.name[seat]) || '未知玩家'
+  // 雀魂对未授权玩家返回 Aさん/Bさん/Cさん/Dさん 这类占位名，统一替换为主视角标识。
+  const rawName = (mortalLog && mortalLog.name && mortalLog.name[seat]) ||
+                  (reviewData.name && reviewData.name[seat]) || ''
+  // 命中占位名模式（A桑/B桑/C桑/D桑 或其简写 A/B/C/D）时显示「主视角」，否则用真实昵称/兜底
+  const isPlaceholder = /^[A-D](?:さん|n)?$/i.test(rawName.trim())
+  const name = (rawName && !isPlaceholder) ? rawName : '主视角'
   // 段位名 / 段位分直接用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 split_logs[0]）
   const rawDan = ((mortalLog && mortalLog.dan && mortalLog.dan[seat]) ||
                   (reviewData.dan && reviewData.dan[seat]) || '')
@@ -1416,20 +1448,28 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   barCtx.drawImage(barImg, 0, 0)
 
   // 头像：bar 内 (69,15) 128x128，扣 mask；avatar_id → lqc.json 路径 → CDN 下载 bighead.png
-  // 加载失败时不做任何占位（保持透明，不画灰色圆），由底层 bar 背景呈现。
+  // 无 avatar_id（占位场景）或真实头像加载失败时，回退从 resources/person 随机抽取占位头像（按座位固定）。
+  let avatarImg = null
   if (avatarId) {
     try {
-      const avatarCanvas = await getAvatarCanvas(avatarId)
-      if (avatarCanvas) {
-        const out = createCanvas(128, 128)
-        const octx = out.getContext('2d')
-        const av = maskImg ? applyMask(avatarCanvas, maskImg) : avatarCanvas
-        octx.drawImage(av, 0, 0, 128, 128)
-        barCtx.drawImage(out, 69, 15)
-      }
+      avatarImg = await getAvatarCanvas(avatarId)
     } catch (e) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像绘制失败 ${avatarId}: ${e.message}`)
     }
+  }
+  if (!avatarImg) {
+    try {
+      avatarImg = await getPlaceholderAvatar(seat)
+    } catch (e) {
+      if (typeof logger !== 'undefined') logger.warn(`[render.js] 占位头像绘制失败: ${e.message}`)
+    }
+  }
+  if (avatarImg) {
+    const out = createCanvas(128, 128)
+    const octx = out.getContext('2d')
+    const av = maskImg ? applyMask(avatarImg, maskImg) : avatarImg
+    octx.drawImage(av, 0, 0, 128, 128)
+    barCtx.drawImage(out, 69, 15)
   }
 
           // 段位图：bar 内 (234,32) 94x94，使用 getRankImg 绘制徽章 + 星星/花朵（与记录图一致）

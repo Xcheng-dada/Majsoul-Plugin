@@ -1,9 +1,9 @@
 // plugins/Majsoul-Plugin/utils/MajsoulSchedule.js
-import MajsoulSubscribeCore from './MajsoulSubscribeCore.js';
+import MajsoulSubscribeCore, { getSubscribeCoreInstance } from './MajsoulSubscribeCore.js';
 
 export default class MajsoulSchedule {
     constructor() {
-        this.core = new MajsoulSubscribeCore();
+        this.core = getSubscribeCoreInstance();
         this.isRunning = false;
         this.checkInterval4p = null; // 四麻检查定时器
         this.checkInterval3p = null; // 三麻检查定时器
