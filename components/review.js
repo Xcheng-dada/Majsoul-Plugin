@@ -239,6 +239,12 @@ async function solveTurnstileAndSubmit(paipuUrl, engine) {
       logger.info(`最终URL: ${currentUrl}（非?data=且非分析中，判定为提交失败）`)
       const htmlContent = await page.content()
       logger.info('已取回页面内容(提交失败, 用于上层失败判定)')
+      // 三麻牌谱：Mortal 仅支持四麻，提交会被拒并回退到提交页。页面上含 not a four-player
+      // / 四人打ち / 三麻 等错误文字，需识别并返回准确提示，避免上层把整页 HTML 误判为"下载失败"。
+      if (/not a four-player|四人打ち|四人打ちではない|game is not four|三麻|three-player/i.test(htmlContent)) {
+        logger.info('检测到三麻牌谱，提交被拒')
+        return '❌ 该牌谱是三麻（三人麻将），当前 AI 分析引擎（Mortal）仅支持四麻，无法分析。请提供四麻牌谱。'
+      }
       return htmlContent
     }
 
@@ -274,7 +280,12 @@ export async function reviewMortal(mortalLog, engine) {
         }
       }
     }
-    return reportData
+    // 缓存是三麻错误响应（not a four-player 等）时不复用，避免永远卡在错误提示
+    if (/not a four-player|四人打ち|四人打ちではない|game is not four|三麻|three-player/i.test(JSON.stringify(reportData))) {
+      fs.rmSync(reviewPath, { force: true })
+    } else {
+      return reportData
+    }
   }
 
   const paipuUrl = mortalLog._originalUrl || ''
@@ -297,6 +308,10 @@ export async function reviewMortal(mortalLog, engine) {
     return '❌ 提交牌谱失败，请稍后重试!'
   }
 
+  // solveTurnstileAndSubmit 可能返回带前缀的错误提示字符串（如三麻不支持），这类已含 ❌ 的提示应原样返回。
+  if (typeof reportUrl === 'string' && reportUrl.startsWith('❌')) {
+    return reportUrl
+  }
   // reportUrl 应是 "/..." 形式的路径（如 /?data=xxx）。若因游戏日志下载失败/牌谱失效，
   // solveTurnstileAndSubmit 返回了整页 HTML，直接报错，避免后续长时间空轮询。
   if (!reportUrl.startsWith('/') || reportUrl.includes('<')) {
@@ -319,6 +334,9 @@ export async function reviewMortal(mortalLog, engine) {
           continue
         }
         const errText = await reportRes.text()
+        if (/not a four-player|四人打ち|四人打ちではない|game is not four|三麻|three-player/i.test(errText)) {
+          return '❌ 该牌谱是三麻（三人麻将），当前 AI 分析引擎（Mortal）仅支持四麻，无法分析。请提供四麻牌谱。'
+        }
         if (/failed to download game log/i.test(errText)) {
           return '❌ 下载游戏日志失败，可能是网络波动或牌谱已失效，请稍后重试！'
         }
@@ -327,6 +345,11 @@ export async function reviewMortal(mortalLog, engine) {
       
       logger.info('开始解析响应...')
       const text = await reportRes.text()
+      // 三麻牌谱：Mortal 引擎仅支持四麻，返回的错误（可能含 not a four-player / 四人打ち / 三麻）需优先识别并给出准确提示
+      if (/not a four-player|四人打ち|四人打ちではない|game is not four|三麻|three-player/i.test(text)) {
+        logger.info('检测到三麻牌谱，引擎不支持')
+        return '❌ 该牌谱是三麻（三人麻将），当前 AI 分析引擎（Mortal）仅支持四麻，无法分析。请提供四麻牌谱。'
+      }
       // mjai 下载游戏日志失败（网络波动/牌谱失效）时可能返回 HTML 错误页（含 "failed to download game log"）而非 JSON，需立即报错避免空轮询
       if (/failed to download game log|<html|<!doctype html/i.test(text)) {
         logger.info('检测到牌谱失效/错误页面，立即返回错误')
@@ -353,7 +376,15 @@ export async function reviewMortal(mortalLog, engine) {
       if (!fs.existsSync(path.dirname(reviewPath))) {
         fs.mkdirSync(path.dirname(reviewPath), { recursive: true })
       }
-      fs.writeFileSync(reviewPath, JSON.stringify(reportData, null, 2), 'utf8')
+      // 三麻牌谱：Mortal 可能返回含错误信息的 JSON（如 not a four-player game），
+      // 此时不应写入缓存（否则下次直接读缓存永远出错），直接返回准确提示。
+      const jsonStr = JSON.stringify(reportData)
+      if (/not a four-player|四人打ち|四人打ちではない|game is not four|三麻|three-player/i.test(jsonStr)) {
+        logger.info('检测到三麻牌谱（JSON 错误响应），不写入缓存，返回准确提示')
+        return '❌ 该牌谱是三麻（三人麻将），当前 AI 分析引擎（Mortal）仅支持四麻，无法分析。请提供四麻牌谱。'
+      }
+
+      fs.writeFileSync(reviewPath, jsonStr, 'utf8')
       logger.info('已保存报告到本地')
       
       if (reportData.review && reportData.review.kyokus) {
