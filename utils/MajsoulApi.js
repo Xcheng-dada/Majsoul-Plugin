@@ -935,6 +935,13 @@ export default class MajsoulApi {
                 
                 this.logger.warn(`[MajsoulApi] 获取玩家昵称失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
+                // 404 / 资源未找到：表示该玩家在该模式确实无数据（如三麻玩家查四麻、刚上段0场），
+                // 属于正常情况而非致命错误，返回 null 交由上层用另一模式兜底，避免整个查询崩溃。
+                if (error.message === '资源未找到' || error.message.includes('HTTP 404')) {
+                    this.logger.warn('[MajsoulApi] 获取玩家昵称 404（无该模式数据），返回 null 交由上层兜底');
+                    return null;
+                }
+
                 if (attempt < maxRetries - 1) {
                     await this._switchEndpoint(error, attempt);
                 } else {

@@ -39,28 +39,23 @@ export class MajsoulInfo extends plugin {
             let uid = null;
             let playerName = null;
             
-            const uidMatch = msg.match(/\d+/);
-            if (uidMatch) {
-                uid = uidMatch[0];
-            } else {
-                const nameMatch = msg.match(/^#?\S+\s+(.+)$/);
-                if (nameMatch) {
-                    playerName = nameMatch[1].trim();
-                }
-            }
-
-            if (playerName) {
-                let p = playerName;
-                if (roomKey) p = p.replace(roomKey, '');
-                p = p.replace(/三麻|四麻/g, '').trim();
-                playerName = p;
+            // 提取剩余参数：去掉指令前缀（#查询三麻 / #查询四麻 / #雀魂查询，含无空格写法）
+            // 与段位房筛选词后的部分即查询目标（昵称或UID）
+            let argsStr = msg.replace(/^#?(查询三麻|查询四麻|雀魂查询)\s*/i, '').trim();
+            if (roomKey) argsStr = argsStr.replace(roomKey, '').trim();
+            argsStr = argsStr.replace(/三麻|四麻/g, '').trim();
+            
+            // 与 MajsoulRecords 对齐：先按昵称搜索（雀魂昵称本身可为纯数字，如 "55555235"），
+            // 搜不到再回退当作 UID 查询，避免把数字昵称误判成 UID 导致 player_stats 404。
+            if (argsStr && argsStr.length > 0) {
+                playerName = argsStr;
             }
             
             if (!api.token) {
                 await e.reply(MajsoulApi.TOKEN_HINT);
                 return true;
             }
-            if (!uid && !playerName) {
+            if (!playerName) {
                 const qid = String(e.user_id);
                 uid = await this.getMainUid(qid);
             }
@@ -70,18 +65,29 @@ export class MajsoulInfo extends plugin {
                 return true;
             }
             
-            let searchPlayerName = playerName;
+            let searchPlayerName = null;
             if (playerName) {
                 logger.debug(`[MajsoulInfo] 搜索玩家昵称: ${playerName}`);
                 const players = await api.searchPlayer(playerName, mode === '3' ? 3 : 4);
                 logger.debug(`[MajsoulInfo] 搜索结果: ${JSON.stringify(players)}`);
-                if (!players || players.length === 0) {
-                    await e.reply(`未找到名为"${playerName}"的玩家`);
-                    return true;
+                if (players && players.length > 0) {
+                    uid = String(players[0].id);
+                    searchPlayerName = players[0].nickname;
+                    logger.debug(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
+                } else {
+                    // 搜不到昵称：可能是用户直接输入了 UID，回退用 UID 查 player_stats 拿昵称
+                    logger.debug(`[MajsoulInfo] 昵称搜索无结果，回退当作UID: ${playerName}`);
+                    uid = playerName;
+                    searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 3 : 4);
+                    if (!searchPlayerName) {
+                        searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 4 : 3);
+                    }
+                    if (!searchPlayerName) {
+                        // 两模式都无统计：用 UID 兜底显示，不崩溃
+                        searchPlayerName = null;
+                        logger.warn(`[MajsoulInfo] UID ${uid} 在牌谱屋无统计记录，昵称回退为UID显示`);
+                    }
                 }
-                uid = String(players[0].id);
-                searchPlayerName = players[0].nickname;
-                logger.debug(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
             } else if (uid) {
                 searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 3 : 4);
                 // 明确模式查询时，若主模式无数据（刚上段 0 场金之间等）接口会 404 拿不到昵称，
