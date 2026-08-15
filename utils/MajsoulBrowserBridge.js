@@ -107,11 +107,34 @@ function decodeBrowserResponse(frame, requestInfo) {
   const reqIndex = buf[1] | (buf[2] << 8)
   if (reqIndex !== requestInfo.reqIndex) return null
 
-  codec.inflightRequests.set(reqIndex, {
-    methodName: requestInfo.methodName,
-    responseType: requestInfo.responseType
-  })
-  return codec.decodeMessage(buf).payload
+  // 注意：官方页面自己发的请求不经过 codec.encodeRequest，inflightRequests 里
+  // 不会有对应 reqIndex，不能用 codec.decodeMessage（它会抛 Unknown request index）。
+  // 这里直接从响应帧的 lq.Res.name 推断 responseType 自行解码。
+  try {
+    const msg = codec.unwrap(buf.slice(3))
+    const methodName = msg.name
+    const parts = methodName.split('.')
+    const service = parts[2]
+    const rpc = parts[3]
+    const protoService = codec.root.lookupService(`lq.${service}`)
+    const protoMethod = protoService.methods[rpc]
+    const ResponseType = codec.lookupMethod(protoMethod.responseType)
+    const payload = msg.data && msg.data.length > 0
+      ? ResponseType.decode(msg.data)
+      : {}
+    const methodShort = parts[parts.length - 1] // 如 fetchGameRecord
+    return {
+      methodName,
+      methodShort,
+      error: msg.error || null,
+      payload: ResponseType.toObject(payload, { enums: String, defaults: true })
+    }
+  } catch (err) {
+    if (typeof logger !== 'undefined') {
+      logger.warn(`[Majsoul-Plugin] decodeBrowserResponse 解码失败: ${err.message}`)
+    }
+    return null
+  }
 }
 
 function cdpRequest(port, requestPath, method = 'GET') {
@@ -713,14 +736,21 @@ export class MajsoulBrowserBridge {
               for (const requestInfo of requests.values()) {
                 const response = decodeBrowserResponse(frame, requestInfo)
                 if (!response) continue
+                // response 结构: { methodShort, error, payload }
                 if (response.error && response.error.code) {
-                  lastError = `官方页面 fetchGameRecord 返回 code ${response.error.code}`
+                  lastError = `官方页面 fetchGameRecord 返回 code ${response.error.code}: ${response.error.message || ''}`
                   continue
                 }
-                if (requestInfo.payload?.game_uuid && requestInfo.payload.game_uuid !== logId) {
+                // 校验返回的牌谱 id 是否匹配（若有 game_uuid 字段）
+                const respUuid = response.payload?.game_uuid || response.payload?.uuid
+                if (requestInfo.payload?.game_uuid && respUuid && respUuid !== requestInfo.payload.game_uuid) {
                   continue
                 }
-                return response
+                if (typeof logger !== 'undefined') {
+                  logger.info(`[Majsoul-Plugin] 官方 fetchGameRecord 响应解码成功 (req=${requestInfo.reqIndex}, uuid=${respUuid || 'n/a'})`)
+                }
+                // 返回 lq.Res 的 toObject 结果（含 .head / .data.game_record），与上层消费结构一致
+                return response.payload
               }
             }
           } catch (err) {
