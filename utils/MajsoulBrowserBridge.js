@@ -5,6 +5,7 @@ import http from 'http'
 import { spawn } from 'child_process'
 import WebSocket from 'ws'
 import codec from './Codec.js'
+import { getMajsoulAccount, getMajsoulPassword, saveLoginResult } from './MajsoulLogin.js'
 
 function decodeAccountId2(id) {
   return Math.trunc((((id - 1358437) ^ 86216345) - 1117113) / 7)
@@ -503,6 +504,71 @@ export class MajsoulBrowserBridge {
     throw new Error(`浏览器尚未登录或未写入登录态。当前页面: ${lastState?.href || 'unknown'}`)
   }
 
+  // 轮询等待客户端自动登录完成（token 在 profile 中且有效时，雀魂客户端加载即自动登录）
+  async waitForLoggedIn(timeoutMs = 30000) {
+    const start = Date.now()
+    let last = null
+    while (Date.now() - start < timeoutMs) {
+      last = await this.getLoginState().catch(() => null)
+      if (last && last.logined) return last
+      await sleep(1000)
+    }
+    return last || null
+  }
+
+  // 在当前已连接的页面里用保存的账号密码重新触发登录（token 失效时兜底）。
+  // 返回登录态；失败返回 null。
+  async loginInPage(account, password) {
+    if (!this.page) return null
+    try {
+      const filled = await this.page.evaluate(`(() => {
+        function setNativeValue(el, value) {
+          const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
+          setter.call(el, value)
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          el.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        try {
+          const tabs = [...document.querySelectorAll('button,div[role=tab],.tab-item')]
+          const accTab = tabs.find(b => /账号|account/i.test(b.textContent || ''))
+          if (accTab) accTab.click()
+        } catch (e) {}
+        try {
+          const acc = document.querySelector('input[type=text],input[name=phone],input[placeholder*=账号],input[placeholder*=手机]')
+          const pwd = document.querySelector('input[type=password]')
+          if (acc && pwd) {
+            setNativeValue(acc, ${JSON.stringify(account)})
+            setNativeValue(pwd, ${JSON.stringify(password)})
+            const btn = [...document.querySelectorAll('button')].find(b => /登录|login|sign/i.test(b.textContent || ''))
+            if (btn) btn.click()
+            return true
+          }
+          return false
+        } catch (e) { return false }
+      })()`).catch(() => false)
+      if (typeof logger !== 'undefined') {
+        logger.info(`[Majsoul-Plugin] 登录态失效，尝试用保存凭据重新登录（表单填充=${filled}）`)
+      }
+      const state = await this.waitForLoggedIn(60000)
+      if (state && state.logined) {
+        // 重新登录成功，持久化新 token/deviceId，避免下次再失效
+        try {
+          saveLoginResult({
+            token: state.accessToken,
+            deviceId: state.deviceId,
+            account: state.account || account,
+            username: state.nickname
+          })
+        } catch {}
+      }
+      return state
+    } catch (e) {
+      if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin] loginInPage 失败: ${e.message}`)
+      return null
+    }
+  }
+
   async installWebSocketBridge() {
     if (!this.page) throw new Error('浏览器桥未连接')
 
@@ -750,8 +816,30 @@ export class MajsoulBrowserBridge {
       } catch (e) {
         if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin][诊断] getLoginState 失败: ${e.message}`)
       }
-      // 等待客户端完成登录/进入大厅流程（fetchGameRecord 依赖前置授权）
-      await sleep(8000)
+
+      // 等待客户端自动登录完成（token 有效时加载即登录）。超时说明登录态失效，
+      // 此时主动用保存的账号密码重新登录，再重新导航一次，避免永久卡在心跳。
+      let loginState = await this.waitForLoggedIn(30000)
+      if (!loginState || !loginState.logined) {
+        const account = getMajsoulAccount()
+        const password = getMajsoulPassword()
+        if (account && password) {
+          loginState = await this.loginInPage(account, password)
+        }
+        if (!loginState || !loginState.logined) {
+          // 重新导航一次给客户端最后一次自动登录机会（有时首次初始化卡住，reload 后能好）
+          await this.page.send('Page.navigate', { url: paipuUrl })
+          loginState = await this.waitForLoggedIn(20000)
+        }
+        if (!loginState || !loginState.logined) {
+          lastError = '浏览器登录态已失效（自动登录未成功），请重新使用 #雀魂登录 完成登录后再试'
+          if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin] ${lastError}`)
+          // 登录态失效，不再无意义重试 fetch，直接进入下一轮 attempt（最多 retries 次）
+          continue
+        }
+      }
+      // 登录成功后稍等客户端进入大厅/资源就绪，再开始捕获 fetchGameRecord
+      await sleep(2000)
 
       const requests = new Map()
       const start = Date.now()
