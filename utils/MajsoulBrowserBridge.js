@@ -481,7 +481,14 @@ export class MajsoulBrowserBridge {
 
       function findGateway() {
         const open = sockets.filter(item => item.ws && item.ws.readyState === NativeWebSocket.OPEN)
-        return open.find(item => String(item.url).includes('/gateway')) || open[open.length - 1] || null
+        // 注意：雀魂打开牌谱页会建立多个 /gateway WS（先建的可只是资源/预连接，
+        // 真正承载 fetchGameRecord 解包数据的在后面的连接上）。这里优先返回
+        // url 含 /gateway 且创建时间最新的连接，避免只拿到第一个而无数据。
+        const gateways = open.filter(item => String(item.url).includes('/gateway'))
+        if (gateways.length > 0) {
+          return gateways.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
+        }
+        return open[open.length - 1] || null
       }
 
       function WrappedWebSocket(...args) {
@@ -530,16 +537,28 @@ export class MajsoulBrowserBridge {
           }))
         },
         clearGatewayFrames() {
-          const gw = findGateway()
-          if (!gw) return false
-          gw.frames.splice(0, gw.frames.length)
+          const open = sockets.filter(
+            item => item.ws && item.ws.readyState === NativeWebSocket.OPEN && String(item.url).includes('/gateway')
+          )
+          if (open.length === 0) return false
+          // 清空所有 gateway 连接上的帧，避免残留帧干扰后续匹配
+          for (const gw of open) gw.frames.splice(0, gw.frames.length)
           return true
         },
         drainGatewayFrames() {
-          const gw = findGateway()
-          if (!gw) return []
-          const frames = gw.frames.splice(0, gw.frames.length)
-          return frames
+          // 聚合所有处于 OPEN 且 url 含 /gateway 的连接帧。雀魂牌谱页会建多个 gateway WS，
+          // fetchGameRecord 的解包数据可能在第二个连接上，因此必须合并全部而非只取第一个。
+          const open = sockets.filter(
+            item => item.ws && item.ws.readyState === NativeWebSocket.OPEN && String(item.url).includes('/gateway')
+          )
+          const out = []
+          for (const gw of open) {
+            if (gw.frames && gw.frames.length) {
+              out.push(...gw.frames)
+              gw.frames = []
+            }
+          }
+          return out
         },
         sendGateway(bytes) {
           const gw = findGateway()
