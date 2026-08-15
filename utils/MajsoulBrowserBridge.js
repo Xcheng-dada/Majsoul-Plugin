@@ -537,20 +537,20 @@ export class MajsoulBrowserBridge {
           }))
         },
         clearGatewayFrames() {
-          const open = sockets.filter(
-            item => item.ws && item.ws.readyState === NativeWebSocket.OPEN && String(item.url).includes('/gateway')
-          )
+          const open = sockets.filter(item => item.ws && item.ws.readyState === NativeWebSocket.OPEN)
           if (open.length === 0) return false
-          // 清空所有 gateway 连接上的帧，避免残留帧干扰后续匹配
+          // 清空所有 OPEN 连接的帧（不止 /gateway 连接），避免残留帧干扰后续匹配
+          console.log('[WSBridge][clear] 清空所有 OPEN 连接帧，共', open.length, '个：',
+            open.map(g => `${g.url}#${g.frameCount}`).join(' | '))
           for (const gw of open) gw.frames.splice(0, gw.frames.length)
           return true
         },
         drainGatewayFrames() {
-          // 聚合所有处于 OPEN 且 url 含 /gateway 的连接帧。雀魂牌谱页会建多个 gateway WS，
-          // fetchGameRecord 的解包数据可能在第二个连接上，因此必须合并全部而非只取第一个。
-          const open = sockets.filter(
-            item => item.ws && item.ws.readyState === NativeWebSocket.OPEN && String(item.url).includes('/gateway')
-          )
+          // 聚合所有 OPEN 连接的帧（不止 /gateway 连接）。雀魂牌谱页会建多个 WS，
+          // fetchGameRecord 的解包数据可能在非 /gateway 命名的第二个连接上，必须合并全部。
+          const open = sockets.filter(item => item.ws && item.ws.readyState === NativeWebSocket.OPEN)
+          console.log('[WSBridge][drain] OPEN 连接数', open.length, '：',
+            open.map(g => `${g.url}#${g.frameCount}`).join(' | '))
           const out = []
           for (const gw of open) {
             if (gw.frames && gw.frames.length) {
@@ -603,7 +603,9 @@ export class MajsoulBrowserBridge {
 
     const hasGateway = async () => {
       const sockets = await this.listWebSockets().catch(() => [])
-      return sockets.find(item => item.readyState === 1 && String(item.url).includes('/gateway'))
+      // 放宽判定：只要存在任一 OPEN 的 WS 即认为页面已加载（雀魂牌谱页会建多个 WS，
+      // 承载 fetchGameRecord 数据的连接 url 不一定含 /gateway 子串）。
+      return sockets.find(item => item.readyState === 1) || null
     }
 
     let gateway = await hasGateway()
