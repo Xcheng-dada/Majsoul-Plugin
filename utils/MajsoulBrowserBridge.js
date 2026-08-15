@@ -721,11 +721,25 @@ export class MajsoulBrowserBridge {
 
       while (Date.now() - start < timeoutMs) {
         const frames = await this.drainGatewayFramesSafe()
+        if (frames && frames.length && typeof logger !== 'undefined') {
+          const summary = frames.map(f => {
+            if (f.direction === 'out') {
+              try { const ri = decodeBrowserRequest(f); return `OUT:${ri?.methodName || '?'}` } catch { return 'OUT:?' }
+            }
+            return 'IN'
+          })
+          logger.info(`[Majsoul-Plugin][诊断] 本轮收到 ${frames.length} 帧: ${summary.join(' | ')}`)
+        }
 
         for (const frame of frames || []) {
           try {
             if (frame.direction === 'out') {
-              const requestInfo = decodeBrowserRequest(frame)
+              let requestInfo = null
+              try {
+                requestInfo = decodeBrowserRequest(frame)
+              } catch (e) {
+                if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin][诊断] out 帧解码失败: ${e.message}`)
+              }
               if (requestInfo?.methodName === '.lq.Lobby.fetchGameRecord') {
                 requests.set(requestInfo.reqIndex, requestInfo)
                 if (typeof logger !== 'undefined') {
