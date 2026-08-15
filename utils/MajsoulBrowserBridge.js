@@ -740,6 +740,19 @@ export class MajsoulBrowserBridge {
       await this.page.evaluate(`globalThis.__MajsoulRawWsBridge && globalThis.__MajsoulRawWsBridge.clearGatewayFrames()`)
       await this.page.send('Page.navigate', { url: paipuUrl })
 
+      // 诊断：导航后检查登录态，确认客户端是否具备加载牌谱的授权
+      try {
+        const state = await this.getLoginState()
+        if (typeof logger !== 'undefined') {
+          const tokenPreview = state?.accessToken ? (state.accessToken.slice(0, 6) + '...') : '空'
+          logger.info(`[Majsoul-Plugin][诊断] 导航后登录态: logined=${state?.logined}, accountId=${state?.accountId}, accessToken=${tokenPreview}`)
+        }
+      } catch (e) {
+        if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin][诊断] getLoginState 失败: ${e.message}`)
+      }
+      // 等待客户端完成登录/进入大厅流程（fetchGameRecord 依赖前置授权）
+      await sleep(8000)
+
       const requests = new Map()
       const start = Date.now()
 
