@@ -540,8 +540,8 @@ export class MajsoulBrowserBridge {
           const open = sockets.filter(item => item.ws && item.ws.readyState === NativeWebSocket.OPEN)
           if (open.length === 0) return false
           // 清空所有 OPEN 连接的帧（不止 /gateway 连接），避免残留帧干扰后续匹配
-          console.log('[WSBridge][clear] 清空所有 OPEN 连接帧，共', open.length, '个：',
-            open.map(g => `${g.url}#${g.frameCount}`).join(' | '))
+          console.log('[WSBridge][clear] 清空所有 OPEN 连接帧，共 ' + open.length + ' 个：' +
+            open.map(g => g.url + '#' + g.frameCount).join(' | '))
           for (const gw of open) gw.frames.splice(0, gw.frames.length)
           return true
         },
@@ -549,8 +549,8 @@ export class MajsoulBrowserBridge {
           // 聚合所有 OPEN 连接的帧（不止 /gateway 连接）。雀魂牌谱页会建多个 WS，
           // fetchGameRecord 的解包数据可能在非 /gateway 命名的第二个连接上，必须合并全部。
           const open = sockets.filter(item => item.ws && item.ws.readyState === NativeWebSocket.OPEN)
-          console.log('[WSBridge][drain] OPEN 连接数', open.length, '：',
-            open.map(g => `${g.url}#${g.frameCount}`).join(' | '))
+          console.log('[WSBridge][drain] OPEN 连接数 ' + open.length + '：' +
+            open.map(g => g.url + '#' + g.frameCount).join(' | '))
           const out = []
           for (const gw of open) {
             if (gw.frames && gw.frames.length) {
