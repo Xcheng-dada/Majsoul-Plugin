@@ -86,16 +86,27 @@ function decodeBrowserRequest(frame) {
   const parts = methodName.split('.')
   const service = parts[2]
   const rpc = parts[3]
-  const protoService = codec.root.lookupService(`lq.${service}`)
-  const protoMethod = protoService.methods[rpc]
-  const RequestType = codec.lookupMethod(protoMethod.requestType)
-  const ResponseType = codec.lookupMethod(protoMethod.responseType)
-  const payload = RequestType.toObject(RequestType.decode(msg.data), { enums: String, defaults: true })
+
+  let payload = null
+  let responseType = null
+  try {
+    const protoService = codec.root.lookupService(`lq.${service}`)
+    const protoMethod = protoService.methods[rpc]
+    if (protoMethod) {
+      const RequestType = codec.lookupMethod(protoMethod.requestType)
+      responseType = codec.lookupMethod(protoMethod.responseType)
+      payload = RequestType.toObject(RequestType.decode(msg.data), { enums: String, defaults: true })
+    } else if (typeof logger !== 'undefined') {
+      logger.warn(`[Majsoul-Plugin][诊断] out 帧 method 不在本地 proto: ${methodName}`)
+    }
+  } catch (e) {
+    if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin][诊断] decodeBrowserRequest 解码失败 ${methodName}: ${e.message}`)
+  }
 
   return {
     reqIndex,
     methodName,
-    responseType: ResponseType,
+    responseType,
     payload
   }
 }
@@ -116,18 +127,31 @@ function decodeBrowserResponse(frame, requestInfo) {
     const parts = methodName.split('.')
     const service = parts[2]
     const rpc = parts[3]
-    const protoService = codec.root.lookupService(`lq.${service}`)
-    const protoMethod = protoService.methods[rpc]
-    const ResponseType = codec.lookupMethod(protoMethod.responseType)
-    const payload = msg.data && msg.data.length > 0
-      ? ResponseType.decode(msg.data)
-      : {}
     const methodShort = parts[parts.length - 1] // 如 fetchGameRecord
+
+    let payload = {}
+    try {
+      const protoService = codec.root.lookupService(`lq.${service}`)
+      const protoMethod = protoService.methods[rpc]
+      if (protoMethod) {
+        const ResponseType = codec.lookupMethod(protoMethod.responseType)
+        const decoded = msg.data && msg.data.length > 0
+          ? ResponseType.decode(msg.data)
+          : {}
+        payload = ResponseType.toObject(decoded, { enums: String, defaults: true })
+      } else if (typeof logger !== 'undefined') {
+        logger.warn(`[Majsoul-Plugin][诊断] in 帧 method 不在本地 proto: ${methodName}, 返回原始 data`)
+        payload = { rawData: Array.from(msg.data || []) }
+      }
+    } catch (e) {
+      if (typeof logger !== 'undefined') logger.warn(`[Majsoul-Plugin][诊断] decodeBrowserResponse proto 解码失败 ${methodName}: ${e.message}`)
+      payload = { rawData: Array.from(msg.data || []) }
+    }
+
     return {
-      methodName,
       methodShort,
       error: msg.error || null,
-      payload: ResponseType.toObject(payload, { enums: String, defaults: true })
+      payload
     }
   } catch (err) {
     if (typeof logger !== 'undefined') {
