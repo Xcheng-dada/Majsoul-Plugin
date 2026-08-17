@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "baseUrl": "http://127.0.0.1:5088",
+  "apiKey": "",
+  "timeoutMs": 20000,
+  "autoLaunch": true,
+  "exeDir": "exe"
+}

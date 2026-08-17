@@ -25,3 +25,9 @@ logs/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 本地 exe（第三方协议登录二进制，体积大且不可版本化，不入库；仅保留 exe/.gitkeep 占位）
+exe/*.exe
+exe/*.dll
+exe/*.zip
+!exe/.gitkeep

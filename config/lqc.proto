@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 // 仅声明解析 lqc.lqbin 所需的最小字段集。
-// 来源：MajsoulUID/utils/proto/{config,sheet}.py（betterproto 生成）
+// 由 betterproto 生成的 proto 定义
 
 message ItemDefinitionSkin {
   uint32 id = 1;

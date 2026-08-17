@@ -6,7 +6,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-// ---- 头像渲染（移植自 MajsoulUID-plugin）：avatar_id → lqc.json 路径 → CDN 下载 bighead.png ----
+// ---- 头像渲染：avatar_id → lqc.json 路径 → CDN 下载 bighead.png ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const pluginRoot = path.resolve(__dirname, '..')
 const avatarCacheRoot = path.join(pluginRoot, 'data', 'charactor')
@@ -97,33 +97,6 @@ async function getResversionManifest() {
 }
 
 const avatarAssetCache = new Map()
-
-// 占位头像：从 resources/person 随机抽取（按座位固定，保证同一座位始终同一张）
-const personDir = path.join(pluginRoot, 'resources', 'person')
-let personFilesCache = null
-function getPersonFiles() {
-  if (!personFilesCache) {
-    try {
-      personFilesCache = fs.readdirSync(personDir).filter(f => /\.(png|jpe?g)$/i.test(f))
-    } catch {
-      personFilesCache = []
-    }
-  }
-  return personFilesCache
-}
-
-async function getPlaceholderAvatar(seat) {
-  const files = getPersonFiles()
-  if (!files.length) return null
-  // 用座位号做稳定索引（取模），同座位恒为同一张，避免每次出图头像乱跳
-  const idx = ((Number(seat) || 0) % files.length + files.length) % files.length
-  try {
-    return await loadResImage(`person/${files[idx]}`)
-  } catch (err) {
-    if (typeof logger !== 'undefined') logger.warn(`[render.js] 占位头像加载失败 ${files[idx]}: ${err.message}`)
-    return null
-  }
-}
 
 async function resolveAvatarAsset(infoPath, extendRes) {
   const suffix = `${infoPath}/bighead.png` // 形如 extendRes/charactor/jinwu/bighead.png
@@ -1387,19 +1360,15 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   
   finalCtx.drawImage(title, 0, 0)
   
-  // ---- 玩家信息条（依据 MajsoulUID draw_bar 的坐标实现）----
+  // ---- 玩家信息条 ----
   // reviewData.player_id 即被分析玩家的座号（0~3）
   const seat = (data && data.data && data.data.player_id) ||
                (data && data.player_id) || 0
 
-  // 名字优先用 raw 注入的真实昵称（mortalLog.name，由 review 命令从雀魂公开 API 获取），
-  // 其次 review.json 的占位名（A/B/C/D），最后兜底
-  // 雀魂对未授权玩家返回 Aさん/Bさん/Cさん/Dさん 这类占位名，统一替换为主视角标识。
-  const rawName = (mortalLog && mortalLog.name && mortalLog.name[seat]) ||
-                  (reviewData.name && reviewData.name[seat]) || ''
-  // 命中占位名模式（A桑/B桑/C桑/D桑 或其简写 A/B/C/D）时显示「主视角」，否则用真实昵称/兜底
-  const isPlaceholder = /^[A-D](?:さん|n)?$/i.test(rawName.trim())
-  const name = (rawName && !isPlaceholder) ? rawName : '主视角'
+  // 名字用真实昵称（mortalLog.name，由 review 命令从本地 API 获取），
+  // 其次 review.json 缓存的真实昵称，最后兜底为空。未登录不进行牌谱分析，故不再使用占位名。
+  const name = (mortalLog && mortalLog.name && mortalLog.name[seat]) ||
+               (reviewData.name && reviewData.name[seat]) || ''
   // 段位名 / 段位分直接用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 split_logs[0]）
   const rawDan = ((mortalLog && mortalLog.dan && mortalLog.dan[seat]) ||
                   (reviewData.dan && reviewData.dan[seat]) || '')
@@ -1448,20 +1417,13 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   barCtx.drawImage(barImg, 0, 0)
 
   // 头像：bar 内 (69,15) 128x128，扣 mask；avatar_id → lqc.json 路径 → CDN 下载 bighead.png
-  // 无 avatar_id（占位场景）或真实头像加载失败时，回退从 resources/person 随机抽取占位头像（按座位固定）。
+  // 未登录不进行牌谱分析，头像一律使用真实 avatar_id；无 avatar_id 或加载失败时留空（不再用随机占位头像）。
   let avatarImg = null
   if (avatarId) {
     try {
       avatarImg = await getAvatarCanvas(avatarId)
     } catch (e) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像绘制失败 ${avatarId}: ${e.message}`)
-    }
-  }
-  if (!avatarImg) {
-    try {
-      avatarImg = await getPlaceholderAvatar(seat)
-    } catch (e) {
-      if (typeof logger !== 'undefined') logger.warn(`[render.js] 占位头像绘制失败: ${e.message}`)
     }
   }
   if (avatarImg) {
@@ -1562,12 +1524,12 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   drawText(sCtx, `【${kh}】`, 1400, 35, 50, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   finalCtx.drawImage(sCanvas, 0, spliterY)
   
-  drawText(finalCtx, `${meguruId > 0 ? `（展示前 ${limit} 手） ` : ''}Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng`, w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  drawText(finalCtx, `${meguruId > 0 ? `（展示前 ${limit} 手） ` : ''}Majsoul-Plugin by 小橙c`, w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   
   return finalCanvas.toBuffer('image/jpeg', 85)
 }
 
-// ==================== 帮助界面（移植自 MajsoulUID majs_help，适配 JS 版指令）====================
+// ==================== 帮助界面（适配 JS 版指令）====================
 
 const HELP_DATA = {
   "用户管理": {
@@ -1697,7 +1659,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v5.2.2'
+  const versionText = 'v5.2.3'
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)
@@ -1772,7 +1734,7 @@ export async function drawHelp() {
   }
 
   // ---- 底部 Footer（白字加粗） ----
-  drawText(ctx, 'Majsoul-Plugin by 小橙c',
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng | 本地API by Ayu',
     W / 2, totalH - 22, 28, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
 
   return canvas.toBuffer('image/jpeg', 85)

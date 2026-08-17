@@ -10,8 +10,9 @@ import { MajsoulInfo } from './apps/MajsoulInfo.js';
 import { MajsoulReview } from './apps/MajsoulReview.js';
 import { MajsoulHelp } from './apps/MajsoulHelp.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
-import { cleanupPaipu, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
+import { cleanupPaipu, cleanupAvatar, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
 import { updateLqc } from './utils/lqcUpdater.js';
+import { ensureExeRunning } from './utils/MajsoulProtocolClient.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -300,6 +301,8 @@ export class majsoul extends plugin {
     // 插件加载时的初始化
   async init() {
     console.log('[Majsoul-Plugin] 雀魂插件初始化...');
+    // Windows 下若启用 autoLaunch 且 exe 未运行，则自动 spawn 拉起（非 Windows/未开启则跳过）
+    ensureExeRunning().catch(e => console.error('[Majsoul-Plugin] 拉起 exe 失败:', e));
     // 启动时尝试更新 lqc.json（角色/皮肤映射）；失败不影响使用，内部已捕获
     updateLqc().catch(() => {});
     for (const [key, mod] of Object.entries(this.modules)) {
@@ -340,10 +343,11 @@ export class majsoul extends plugin {
     scheduleManager.isRunning = true;
     console.log('[Majsoul-Plugin] 定时任务启动成功（四麻3分钟/三麻5分钟）');
 
-    // 牌谱文件定时清理：每 24 小时执行一次，删除超过 ${PAIPU_CLEANUP_DAYS} 天的旧牌谱
+    // 牌谱文件 + 头像缓存定时清理：每 24 小时执行一次，删除超过 ${PAIPU_CLEANUP_DAYS} 天的旧文件
     const paipuCleanupTimer = setInterval(() => {
       try {
         cleanupPaipu(PAIPU_CLEANUP_DAYS);
+        cleanupAvatar(PAIPU_CLEANUP_DAYS);
       } catch (error) {
         logger?.error?.(`[Majsoul-Plugin] 牌谱清理失败: ${error.message}`);
       }
@@ -355,10 +359,11 @@ export class majsoul extends plugin {
       for (const { type } of SCHEDULES) await scheduleManager.performCheck(type);
     }, 5000);
 
-    // 启动后稍作延迟执行一次牌谱清理（避免刚启动就清理，给予缓冲）
+    // 启动后稍作延迟执行一次牌谱/头像清理（避免刚启动就清理，给予缓冲）
     setTimeout(() => {
       try {
         cleanupPaipu(PAIPU_CLEANUP_DAYS);
+        cleanupAvatar(PAIPU_CLEANUP_DAYS);
       } catch (error) {
         logger?.error?.(`[Majsoul-Plugin] 牌谱初始清理失败: ${error.message}`);
       }

@@ -1,21 +1,13 @@
 import fs from 'fs'
 import path from 'path'
 import net from 'net'
-import { reviewMortal } from '../components/review.js'
 import { drawReviewInfoImg } from '../components/render.js'
 import common from '../../../lib/common/common.js'
-import { MajsoulBrowserBridge } from '../utils/MajsoulBrowserBridge.js'
-import { getMajsoulAccount, getMajsoulPassword, saveLoginResult } from '../utils/MajsoulLogin.js'
+import { getProtocolClient } from '../utils/MajsoulProtocolClient.js'
+import { reviewTenhouProtocol } from '../utils/MajsoulAiReview.js'
+import { MajsoulPaipuParser } from '../utils/MajsoulPaipuParser.js'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-const CHROME_PROFILE = path.resolve('./plugins/Majsoul-Plugin/data/chrome-profile')
-
-// 是否已具备登录条件：已存在浏览器登录态（chrome-profile），或已配置账号密码可自动登录。
-// 不满足则无法获取主视角真实昵称/头像，牌谱分析应被禁止。
-function isLoginAvailable() {
-  if (fs.existsSync(CHROME_PROFILE)) return true
-  return !!(getMajsoulAccount() && getMajsoulPassword())
-}
 
 // 找一个当前空闲的端口，避免 connect() 复用已残留的 Chrome（否则 chromeProcess 为 null，close 无法杀掉）
 function findFreePort(start = 9230) {
@@ -29,102 +21,30 @@ function findFreePort(start = 9230) {
   })
 }
 
-// 浏览器桥登录核心：用真实 Chrome 登录并持久化登录态到 data/chrome-profile。
-// 会自动尝试填充账号密码表单并轮询等待（兼容手动登录/二次验证）。
-// 返回登录态对象（含 accessToken/nickname/deviceId），失败返回 null。
-async function runBrowserLogin(account, password) {
-  const loginPort = await findFreePort()
-  const bridge = new MajsoulBrowserBridge({ headless: false, userDataDir: CHROME_PROFILE, port: loginPort })
-  try {
-    await bridge.connect()
-    let state = await bridge.getLoginState().catch(() => null)
-    if (!state || !state.accessToken) {
-      try {
-        const fillScript = `(() => {
-          function setNativeValue(el, value) {
-            const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
-            setter.call(el, value)
-            el.dispatchEvent(new Event('input', { bubbles: true }))
-            el.dispatchEvent(new Event('change', { bubbles: true }))
-          }
-          try {
-            const tabs = [...document.querySelectorAll('button,div[role=tab],.tab-item')]
-            const accTab = tabs.find(b => /账号|account/i.test(b.textContent || ''))
-            if (accTab) accTab.click()
-          } catch (e) {}
-          try {
-            const acc = document.querySelector('input[type=text],input[name=phone],input[placeholder*=账号],input[placeholder*=手机]')
-            const pwd = document.querySelector('input[type=password]')
-            if (acc && pwd) {
-              setNativeValue(acc, ${JSON.stringify(account)})
-              setNativeValue(pwd, ${JSON.stringify(password)})
-              const btn = [...document.querySelectorAll('button')].find(b => /登录|login|sign/i.test(b.textContent || ''))
-              if (btn) btn.click()
-              return true
-            }
-            return false
-          } catch (e) { return false }
-        })()`
-        const filled = await bridge.page.evaluate(fillScript).catch(() => false)
-        if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 浏览器自动填充登录表单: ${filled}`)
-      } catch (err) {
-        if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 自动填充失败，等待手动登录: ${err.message}`)
-      }
-      const deadline = Date.now() + 150000
-      while (Date.now() < deadline) {
-        state = await bridge.getLoginState().catch(() => null)
-        if (state && state.accessToken) break
-        await sleep(1500)
-      }
-    }
-    if (!state || !state.accessToken) {
-      await bridge.close().catch(() => {})
-      return null
-    }
-    saveLoginResult({
-      token: state.accessToken,
-      deviceId: state.deviceId,
-      account: state.account || account,
-      username: state.nickname,
-      password,
-      authMethod: 'browser'
-    })
-    await bridge.close().catch(() => {})
-    return state
-  } catch (err) {
-    await bridge.close().catch(() => {})
-    return null
-  }
-}
+// 纯 exe（协议）模式：所有取谱均走本地 Majsoul.ProtocolLogin.exe。
+// 浏览器桥（真实 Chrome）已彻底弃用，相关代码不再保留。
+// 登录态由 exe 自身持有，Yunzai 侧不保存 token/密码（#雀魂登录 直接把账号密码交给 exe）。
 
-// 通过浏览器桥（真实 Chrome）获取真实玩家信息
-async function fetchRealHeadViaBridge(gameId) {
-  // 从未登录过（无浏览器配置目录）则直接跳过，避免每次 review 都启动 Chrome
-  if (!fs.existsSync(CHROME_PROFILE)) return null
-  const headPort = await findFreePort()
-  const bridge = new MajsoulBrowserBridge({ headless: true, userDataDir: CHROME_PROFILE, port: headPort })
-  try {
-    await bridge.connect()
-    let state = await bridge.getLoginState().catch(() => null)
-    if (!state || !state.accessToken) {
-      // 未登录：若已配置账号密码则自动弹出浏览器登录，否则静默跳过（段位/分数不依赖登录）
-      const account = getMajsoulAccount()
-      const password = getMajsoulPassword()
-      if (account && password) {
-        if (typeof logger !== 'undefined') logger.info('[MajsoulReview] 浏览器桥未登录，自动触发登录以填充真实昵称/头像')
-        const loginState = await runBrowserLogin(account, password)
-        if (!loginState) return null
-        state = loginState
-      } else {
-        if (typeof logger !== 'undefined') logger.warn('[MajsoulReview] 浏览器桥未登录且无配置账号，使用占位昵称/头像（段位/分数来自牌谱JSON）')
-        return null
-      }
-    }
-    return await bridge.fetchFullRecord(gameId)
-  } finally {
-    await bridge.close().catch(() => {})
+// 通过协议客户端（exe）获取牌谱真实 head（含玩家昵称/头像/段位）。
+// 返回：
+//   { head }                —— 成功
+//   { __fetchFailed:true }  —— exe 未运行/未登录/取谱失败，调用方据此提示
+async function fetchRealHead(gameId) {
+  const client = getProtocolClient()
+  if (!client.isEnabled()) {
+    return { __fetchFailed: true, error: 'majsoul-protocol 未启用（请配置 config/majsoul-protocol.json 的 enabled=true）' }
   }
+  try {
+    const head = await client.fetchRecordHead(gameId)
+    if (head && head.head && Array.isArray(head.head.accounts) && head.head.accounts.length) {
+      if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 协议取牌谱成功 paipu=${gameId}`)
+      return head
+    }
+    if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 协议取牌谱为空 paipu=${gameId}`)
+  } catch (err) {
+    if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 协议取牌谱异常: ${err.message}`)
+  }
+  return { __fetchFailed: true, error: '本地 API 取谱失败（请确认本地 API 已启动并完成雀魂登录）' }
 }
 
 // 从 mjai.ekyu.moe 的报告 JSON 中定位段位/段位分/昵称。
@@ -148,19 +68,10 @@ function pickDanRateFromReport(report) {
   return found
 }
 
-// 拉取真实玩家信息（含 head + data）：仅走浏览器桥
+// 拉取真实玩家信息（含 head）：纯走 exe（协议）通道
 // 返回值约定：
-//   null                          —— 未登录/无浏览器配置，属正常情况，调用方用占位名输出牌谱图
-//   { __fetchFailed: true, ... }  —— 已登录但拉取超时/失败，调用方不应输出牌谱图（头像/昵称出不来）
-//   { head, data }                —— 拉取成功
-async function fetchRealHead(gameId) {
-  try {
-    return await fetchRealHeadViaBridge(gameId)
-  } catch (err) {
-    if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 浏览器桥获取牌谱失败: ${err.message}`)
-    return { __fetchFailed: true, error: err.message }
-  }
-}
+//   { head }                      —— 拉取成功
+//   { __fetchFailed: true, ... }  —— exe 未运行/未登录/拉取失败，调用方提示用户先启动并登录 exe
 
 export class MajsoulReview extends plugin {
   constructor() {
@@ -177,57 +88,27 @@ export class MajsoulReview extends plugin {
         {
           reg: '^#?(雀魂场况|场况|牌谱详情) (.*)$',
           fnc: 'renderLog'
+        },
+        {
+          reg: '^#?(雀魂登录|雀魂login|majsoulLogin) (.+)$',
+          fnc: 'loginCommand'
         }
       ]
     })
   }
 
-  async fetchPaipuFromUrl(url) {
-    let gameId = ''
-    try {
-      const parsedUrl = new URL(url)
-      gameId = parsedUrl.searchParams.get('paipu') || ''
-    } catch (err) {
-      gameId = url
-    }
-
-    if (!gameId) return null
-
-    const mortalLog = {
-      ref: gameId,
-      _originalUrl: url,
-      head: { uuid: gameId },
-      rule: {},
-      name: ['', '', '', ''],
-      dan: ['', '', '', ''],
-      rate: [0, 0, 0, 0],
-      sc: [0, 0, 0, 0, 0, 0, 0, 0],
-      title: ['', ''],
-      log: []
-    }
-    return mortalLog
-  }
-
   async reviewCommand(e) {
-    const paipuUrl = e.msg.replace(/^#?(牌谱Review|牌谱review|Review|review) /, '').trim()
-    
-    if (!paipuUrl) return e.reply('❌ 请输入有效的牌谱URL!')
+    const raw = e.msg.replace(/^#?(牌谱Review|牌谱review|Review|review) /, '').trim()
+    if (!raw) return e.reply('❌ 请输入有效的牌谱URL!')
+
+    // 纯协议取谱（对接本地 exe，不再走网页/浏览器桥）
+    const paipuUrl = raw
 
     if (!paipuUrl.startsWith('http')) {
       return e.reply('❌ 请输入完整的牌谱URL!\n例如：https://game.maj-soul.com/1/?paipu=xxx')
     }
 
-    // 未登录（无浏览器登录态且未配置账号密码）时无法获取主视角真实昵称/头像，禁止牌谱分析
-    if (!isLoginAvailable()) {
-      return e.reply('❌ 未登录雀魂，无法获取主视角昵称/头像，已禁止使用牌谱分析。\n请先登录：#雀魂登录 账号 密码')
-    }
-
-    e.reply('⏳ 正在提交牌谱至 Mortal 进行AI分析，请稍候...')
-
-    const mortalLog = await this.fetchPaipuFromUrl(paipuUrl)
-    if (!mortalLog) return e.reply('❌ 无法解析牌谱!')
-
-    // 提取牌谱 UUID，用于登录态下按 UUID 拉取真实玩家信息（昵称/头像）
+    // 提取牌谱 UUID，用于协议取谱
     let gameId = ''
     try {
       const parsedUrl = new URL(paipuUrl)
@@ -236,21 +117,59 @@ export class MajsoulReview extends plugin {
       gameId = paipuUrl
     }
 
-    const engine = 'Mortal'
-
-    // 与 AI 分析并行：拉取雀魂真实玩家信息（昵称/头像），失败不影响主流程
-    const headPromise = gameId ? fetchRealHead(gameId) : Promise.resolve(null)
-    const res = await reviewMortal(mortalLog, engine)
-    const logs = await headPromise
-    if (typeof res === 'string') return e.reply(res)
-
-    // 已登录但拉取真实玩家信息（昵称/头像）超时/失败：头像与昵称出不来，
-    // 输出残缺牌谱图无意义，直接提示稍后重试，不输出牌谱图。
-    if (logs && logs.__fetchFailed) {
-      return e.reply('❌ 获取玩家昵称/头像超时（官方页面无响应），牌谱图暂不输出。\n请稍后重试：#牌谱Review <牌谱URL>')
+    const client = getProtocolClient()
+    if (!client.isEnabled()) {
+      return e.reply('❌ 未启用本地取谱（config/majsoul-protocol.json 的 enabled 不为 true）。\n请先本地运行 Majsoul.ProtocolLogin.Api.exe 并在配置中开启 enabled。')
     }
 
-    const realHead = logs && logs.head
+    e.reply('⏳ 正在提交牌谱至 Mortal 进行 AI 分析，请稍候...')
+
+    const full = await client.fetchFullRecord(gameId)
+    if (!full || !full.record) {
+      // 区分「未登录」与「其他取谱失败」：未登录时本地 API 无 profile，
+      // 牌谱分析依赖登录态取真实昵称/头像，必须先登录。
+      let notLoggedIn = false
+      try {
+        const { ok, profiles } = await client.getExeProfiles()
+        notLoggedIn = ok && (!profiles || profiles.length === 0)
+      } catch { /* 忽略探测错误 */ }
+
+      if (notLoggedIn) {
+        return e.reply('⚠️ 当前未登录，无法进行牌谱分析。请先发送「#雀魂登录 <账号> <密码>」完成登录后再试。')
+      }
+      return e.reply('❌ 取谱失败（本地 API 未启动 / 取不到牌谱 / 解码失败）。\n请确认本地 API（Majsoul.ProtocolLogin.Api.exe）已在 127.0.0.1:5088 运行。')
+    }
+
+    // 真实昵称/头像由协议直接返回，无需再走网页或桥
+    const realHead = (full.head && Array.isArray(full.head.accounts) && full.head.accounts.length)
+      ? full.head
+      : null
+
+    // 渲染输出容器（name/avatarId/dan/rate），统一从此汇聚协议与本地缓存数据
+    const mortalLog = { name: [], avatarId: [], dan: [], rate: [] }
+
+    // 先用牌谱自身解析出权威的 昵称 / 头像 / 段位 / 段位分（按 seat 对齐），
+    // 不依赖 homura 返回或登录态；后续 realHead、review.json 仅做兜底。
+    try {
+      const parsed = new MajsoulPaipuParser().handleGameRecord(full.record)
+      if (parsed && Array.isArray(parsed.name)) {
+        for (let i = 0; i < 4; i++) {
+          const s = parsed.name[i]
+          if (typeof s === 'string' && s) mortalLog.name[i] = s
+          const av = parsed.avatarId?.[i]
+          if (av) mortalLog.avatarId[i] = av
+          if (typeof parsed.dan?.[i] === 'string' && parsed.dan[i]) mortalLog.dan[i] = parsed.dan[i]
+          if (typeof parsed.rate?.[i] === 'number') mortalLog.rate[i] = parsed.rate[i]
+        }
+      }
+    } catch (err) {
+      if (typeof logger !== 'undefined') logger.warn('[MajsoulReview] 牌谱自身解析段位失败，将依赖兜底源：' + (err?.message || err))
+    }
+    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位主源(牌谱自身解析): dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
+
+    const res = await reviewTenhouProtocol(full.record, gameId, paipuUrl)
+    if (typeof res === 'string') return e.reply(res)
+
     if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {
       // 桥返回的 head.accounts 数组顺序可能与牌谱座位不对齐（实测上家被安到主视角），
       // 必须按 seat 字段对齐后再用，否则昵称/头像会串位。
@@ -278,8 +197,7 @@ export class MajsoulReview extends plugin {
       }
     }
 
-    // 段位 / 段位分 / 昵称来自网页端解析并保存的牌谱 JSON（review.json）+ raw 牌谱（parser 解析的真实昵称）。
-    // 这是牌谱自身的真实数据，不依赖登录态；昵称优先级最高（桥仅在上一步兜底了缺失/占位名）。
+    // 段位 / 段位分 / 昵称兜底：牌谱自身（parser）已作为主源填入；这里仅当主源缺失时才用 review.json 补。
     const paipuDir = path.resolve('./plugins/Majsoul-Plugin/data/paipu')
     const reviewPath = path.resolve(`${paipuDir}/${gameId} - review.json`)
     if (fs.existsSync(reviewPath)) {
@@ -287,8 +205,16 @@ export class MajsoulReview extends plugin {
         const reviewJson = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
         const src = pickDanRateFromReport(reviewJson)
         if (src) {
-          if (Array.isArray(src.dan) && src.dan.length === 4) mortalLog.dan = src.dan
-          if (Array.isArray(src.rate) && src.rate.length === 4) mortalLog.rate = src.rate
+          if (Array.isArray(src.dan)) {
+            for (let i = 0; i < 4; i++) {
+              if (!mortalLog.dan[i] && typeof src.dan[i] === 'string' && src.dan[i]) mortalLog.dan[i] = src.dan[i]
+            }
+          }
+          if (Array.isArray(src.rate)) {
+            for (let i = 0; i < 4; i++) {
+              if (typeof mortalLog.rate[i] !== 'number' && typeof src.rate[i] === 'number') mortalLog.rate[i] = src.rate[i]
+            }
+          }
           if (Array.isArray(src.name) && src.name.length === 4) {
             for (let i = 0; i < 4; i++) {
               if (!mortalLog.name[i]) mortalLog.name[i] = src.name[i]
@@ -296,7 +222,8 @@ export class MajsoulReview extends plugin {
           }
           if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位命中: dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
         } else if (typeof logger !== 'undefined') {
-          logger.warn(`[MajsoulReview] review.json 中未找到 dan/rate 数据`)
+          // homura 返回的报告不含 dan/rate 属预期内（段位走牌谱自身解析主源），仅作 debug 提示
+          logger.debug(`[MajsoulReview] review.json 中未找到 dan/rate 数据（已走牌谱自身解析主源，忽略）`)
         }
       } catch (e) {}
     }
@@ -365,13 +292,11 @@ export class MajsoulReview extends plugin {
       return e.reply('❌ 局数无效，请输入大于等于 1 的整数!')
     }
 
-    // 牌谱分析（含场况查看）需先登录雀魂，以获取真实昵称/头像，与 #牌谱Review 保持一致
-    if (!isLoginAvailable()) {
-      return e.reply('❌ 未登录雀魂，无法获取真实昵称/头像，已禁止使用牌谱场况。\n请先登录：#雀魂登录 账号 密码')
-    }
+    // 场况查看依赖已落盘的 review.json（必须先 #牌谱Review 分析过该牌谱），
+    // 昵称/头像优先用 review.json 缓存，已登录本地 API 则尝试拉取真实数据覆盖缓存（失败仅用缓存）。
 
     const paipuDir = path.resolve('./plugins/Majsoul-Plugin/data/paipu')
-    if (!fs.existsSync(paipuDir)) return e.reply('❌ 未找到有效牌谱!\n请先使用[牌谱Review <URL>]')
+    if (!fs.existsSync(paipuDir)) return e.reply('❌ 未找到已分析的牌谱!\n请先使用 [#牌谱Review <URL>] 分析该牌谱后再查看场况')
 
     let matchedId = null
     const files = fs.readdirSync(paipuDir)
@@ -383,9 +308,9 @@ export class MajsoulReview extends plugin {
       }
     }
 
-    if (!matchedId) return e.reply('❌ 未找到有效牌谱!\n请先使用[牌谱Review <URL>]')
+    if (!matchedId) return e.reply('❌ 未找到已分析的牌谱!\n请先使用 [#牌谱Review <URL>] 分析该牌谱后再查看场况')
 
-    // 从 review.json 的 split_logs 重建绘图所需的昵称/段位/头像（下方登录态下再用浏览器桥拉真实数据覆盖占位名）
+    // 从 review.json 的 split_logs 重建绘图所需的昵称/段位/头像（下方按牌谱 UUID 拉取真实昵称/头像，覆盖占位名）
     const rj = JSON.parse(fs.readFileSync(path.resolve(`${paipuDir}/${matchedId} - review.json`), 'utf8'))
     const split0 = (rj.split_logs && rj.split_logs[0]) || {}
     const mortalLog = {
@@ -395,12 +320,12 @@ export class MajsoulReview extends plugin {
       avatarId: split0.avatarId || (rj.review && rj.review.avatarId) || []
     }
 
-    // 与 #牌谱Review 一致：登录态下按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
+    // 与 #牌谱Review 一致：尝试通过 exe（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
     try {
-      const logs = isLoginAvailable() ? await fetchRealHead(matchedId) : null
-      // 已登录但拉取超时/失败：昵称/头像出不来，不输出残缺场况图，提示稍后重试
+      const logs = await fetchRealHead(matchedId)
+      // 拉取失败（exe 未运行/未登录）：不报错，降级使用 review.json 缓存中的昵称/头像继续出图
       if (logs && logs.__fetchFailed) {
-        return e.reply('❌ 获取玩家昵称/头像超时（官方页面无响应），场况图暂不输出。\n请稍后重试：#雀魂场况 <牌谱ID> <局数> <巡数>')
+        if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 场况拉取真实昵称失败，降级用缓存: ${logs.error}`)
       }
       const realHead = logs && logs.head
       if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {
@@ -447,26 +372,39 @@ export class MajsoulReview extends plugin {
   }
 
   // 雀魂登录：#雀魂登录 账号 密码
-  // 用浏览器桥（真实 Chrome）登录；
-  // 登录态持久化在浏览器配置 data/chrome-profile 中，token 也会存入 data/login.json（供浏览器桥复用）。
-  // 注意：出于自动续期需要，密码会以明文存入 data/login.json，请妥善保管该文件权限。
+  // 纯 exe（协议）模式：账号密码直接交给本地 Majsoul.ProtocolLogin.exe 完成登录，
+  // 登录态由 exe 自身持有，Yunzai 侧不保存 token/密码。
+  // 需先启用 majsoul-protocol（enabled=true）且 exe 已在运行（或已开启 autoLaunch）。
   async loginCommand(e) {
     const m = e.msg.match(/^#?雀魂登录\s+(\S+)\s+(.+)$/)
     if (!m) return e.reply('❌ 格式：雀魂登录 账号 密码')
     const account = m[1]
     const password = m[2].trim()
 
-    await e.reply('⏳ 正在启动浏览器桥并登录雀魂（若自动登录失败，请在弹出的浏览器窗口中手动登录）...')
-
-    const state = await runBrowserLogin(account, password)
-    if (!state) {
-      return e.reply('❌ 登录失败或超时：请确认账号密码，或手动在弹出的浏览器窗口中完成雀魂登录。登录态会保存在浏览器配置中，下次无需重复。')
+    const client = getProtocolClient()
+    if (!client || !client.isEnabled || !client.isEnabled()) {
+      return e.reply('❌ majsoul-protocol 未启用：请先在 config/majsoul-protocol.json 中将 enabled 设为 true，并确保本地 API 已运行（或开启 autoLaunch）。')
     }
-    await e.reply(
-      `✅ 雀魂登录成功（浏览器桥）！\n` +
-      `昵称：${state.nickname || '(见牌谱)'}\n` +
-      `登录态已保存在浏览器配置（data/chrome-profile）中，token 失效时会自动通过浏览器桥获取真实昵称/头像。\n` +
-      `⚠️ data/login.json 含明文密码，请注意文件权限安全。`
-    )
+
+    await e.reply('⏳ 正在通过本地 API 发起雀魂登录（账号密码将发送给本地 API，由它完成登录并持有登录态）...')
+
+    const res = await client.loginToExe(account, password, true)
+    if (!res.ok) {
+      return e.reply(`❌ 登录失败：${res.error || '未知错误'}\n请确认本地 API 已运行、账号密码正确。`)
+    }
+
+    let nick = ''
+    try {
+      const { ok, profiles } = await client.getExeProfiles()
+      if (ok && Array.isArray(profiles) && profiles.length) {
+        const loginId = res.data && (res.data.accountId || (res.data.account && res.data.account.accountId))
+        const hit = loginId ? profiles.find(p => String(p.accountId) === String(loginId)) : null
+        nick = (hit || profiles[0]).nickname || ''
+      }
+    } catch { /* 昵称获取失败不影响登录结果 */ }
+
+    await e.reply(nick
+      ? `✅ 雀魂登录成功（${nick}，登录态由本地 API 持有）！`
+      : '✅ 雀魂登录成功（登录态由本地 API 持有）！')
   }
 }
