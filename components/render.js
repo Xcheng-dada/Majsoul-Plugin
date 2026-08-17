@@ -1524,7 +1524,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   drawText(sCtx, `【${kh}】`, 1400, 35, 50, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   finalCtx.drawImage(sCanvas, 0, spliterY)
   
-  drawText(finalCtx, `${meguruId > 0 ? `（展示前 ${limit} 手） ` : ''}Majsoul-Plugin by 小橙c`, w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  drawText(finalCtx, `${meguruId > 0 ? `（展示前 ${limit} 手） ` : ''}Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng | 本地API by Ayu`, w / 2, h - footerHeight / 2, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   
   return finalCanvas.toBuffer('image/jpeg', 85)
 }
@@ -1734,7 +1734,7 @@ export async function drawHelp() {
   }
 
   // ---- 底部 Footer（白字加粗） ----
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data：Mortal 4.1b | Python-to-JS移植：QingFeng | 本地API by Ayu',
+  drawText(ctx, 'Majsoul-Plugin by 小橙c',
     W / 2, totalH - 22, 28, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
 
   return canvas.toBuffer('image/jpeg', 85)
