@@ -119,7 +119,7 @@ export class MajsoulReview extends plugin {
 
     const client = getProtocolClient()
     if (!client.isEnabled()) {
-      return e.reply('❌ 未启用本地取谱（config/majsoul-protocol.json 的 enabled 不为 true）。\n请先本地运行 Majsoul.ProtocolLogin.Api.exe 并在配置中开启 enabled。')
+      return e.reply('❌ 未启用本地取谱（config/majsoul-protocol.json 的 enabled 不为 true）。\n请先本地运行 Majsoul.ProtocolLogin.Api-windows-amd64.exe 并在配置中开启 enabled。')
     }
 
     e.reply('⏳ 正在提交牌谱至 Mortal 进行 AI 分析，请稍候...')
@@ -137,7 +137,7 @@ export class MajsoulReview extends plugin {
       if (notLoggedIn) {
         return e.reply('⚠️ 当前未登录，无法进行牌谱分析。请先发送「#雀魂登录 <账号> <密码>」完成登录后再试。')
       }
-      return e.reply('❌ 取谱失败（本地 API 未启动 / 取不到牌谱 / 解码失败）。\n请确认本地 API（Majsoul.ProtocolLogin.Api.exe）已在 127.0.0.1:5088 运行。')
+      return e.reply('❌ 取谱失败（本地 API 未启动 / 取不到牌谱 / 解码失败）。\n请确认本地 API（Majsoul.ProtocolLogin.Api-windows-amd64.exe）已在 127.0.0.1:5088 运行。')
     }
 
     // 真实昵称/头像由协议直接返回，无需再走网页或桥
@@ -372,7 +372,7 @@ export class MajsoulReview extends plugin {
   }
 
   // 雀魂登录：#雀魂登录 账号 密码
-  // 纯 exe（协议）模式：账号密码直接交给本地 Majsoul.ProtocolLogin.exe 完成登录，
+  // 纯 exe（协议）模式：账号密码直接交给本地 Majsoul.ProtocolLogin.Api-windows-amd64.exe 完成登录，
   // 登录态由 exe 自身持有，Yunzai 侧不保存 token/密码。
   // 需先启用 majsoul-protocol（enabled=true）且 exe 已在运行（或已开启 autoLaunch）。
   async loginCommand(e) {

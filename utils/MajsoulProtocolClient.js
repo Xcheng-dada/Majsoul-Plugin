@@ -231,7 +231,7 @@ export async function ensureExeRunning () {
   }
   const exePath = findExeBinary()
   if (!exePath) {
-    logger.warn('[MajsoulProtocol] 未找到 exe 文件，请在 exeDir 配置目录放置 Majsoul.ProtocolLogin.exe，或手动启动')
+    logger.warn('[MajsoulProtocol] 未找到 exe 文件，请在 exeDir 配置目录放置 Majsoul.ProtocolLogin.Api-windows-amd64.exe，或手动启动')
     return false
   }
   if (exeSpawned) return false

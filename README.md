@@ -211,13 +211,13 @@
 ### 丨使用牌谱分析功能时提示"当前未登录"？
 - 牌谱分析功能（`牌谱Review` / `雀魂场况`）**必须登录本地 API 后才能使用**，未登录时无法取谱，会提示请先登录。
 - 如需使用，请先登录雀魂账号：`#雀魂登录 <账号> <密码>`，登录态由本地 API 持久保存。
-- ⚠️ **账号安全提示**：登录由本地 API（Majsoul.ProtocolLogin.Api.exe）保存账号密码并持有登录态，操作真实账号，**建议使用小号登录，切勿使用重要主账号**，本插件不保证账号的绝对安全。
+- ⚠️ **账号安全提示**：登录由本地 API（Majsoul.ProtocolLogin.Api-windows-amd64.exe）保存账号密码并持有登录态，操作真实账号，**建议使用小号登录，切勿使用重要主账号**，本插件不保证账号的绝对安全。
 
 ### 丨本地 API 的 exe 从哪里获取？
-- 本地 API 程序（`Majsoul.ProtocolLogin.Api.exe`）随本仓库的 **Release** 一同发布，**不在插件源码目录内**。
+- 本地 API 程序（`Majsoul.ProtocolLogin.Api-windows-amd64.exe`）随本仓库的 **Release** 一同发布，**不在插件源码目录内**。
 - 若要使用牌谱分析功能，请前往本仓库的 Release 页面，下载并解压其中的 exe 压缩包，将解压得到的 exe 文件放置到插件目录下的 `exe/` 文件夹：
   ```
-  Majsoul-Plugin/exe/Majsoul.ProtocolLogin.Api.exe
+  Majsoul-Plugin/exe/Majsoul.ProtocolLogin.Api-windows-amd64.exe
   ```
 - 放置完成后启动 Yunzai，插件会自动拉起该 exe（监听 `127.0.0.1:5088`），拉起后直接用 `#雀魂登录 <账号> <密码>` 完成登录即可。
 - 该 exe 自带以下本地页面，可供查看与调试：
