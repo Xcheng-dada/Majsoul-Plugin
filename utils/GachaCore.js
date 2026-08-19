@@ -249,11 +249,13 @@ export default class GachaCore {
         if (typeRoll < 5) {
             // 5% 角色
             objInt = ITEM_TYPE.CHARACTER;
-            // 角色选择逻辑：如果up池存在且非空，59%概率从UP池，41%概率从标配池
+            // 角色选择逻辑：如果up池存在且非空，按UP概率从UP池，否则从标配池
+            // 限定池 UP 概率为 20%，其余特殊池维持 59%
             let rolePool;
             if (upPool.length > 0) {
+                const upRate = actualPoolName === 'xianding' ? 20 : 59;
                 const objIntPerson = Math.floor(Math.random() * 100) + 1;
-                if (objIntPerson <= 59) {
+                if (objIntPerson <= upRate) {
                     rolePool = upPool;
                 } else {
                     rolePool = normalPool;
