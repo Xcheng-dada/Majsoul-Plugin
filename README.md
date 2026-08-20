@@ -27,12 +27,12 @@
 <a id="前言插件简介"></a>
 
 ## **丨前言&插件简介**
-一个雀魂麻将多功能插件，插件不包括TRSS-Yunzai，应该配合[**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai)使用：
+一个雀魂麻将多功能插件，本插件需配合 [**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai) 使用：
 
 项目地址：https://github.com/Xcheng-dada/Majsoul-Plugin
 
 > [!TIP]
-> 本插件部分功能基于 [Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) 和 [MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) 移植至TRSS-Yunzai。
+> 本插件在功能方向上受 [Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) 和 [MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) 启发，核心逻辑由本团队使用 JavaScript 独立实现，并针对 TRSS-Yunzai 框架进行了适配。
 
 <a id="安装方法"></a>
 
@@ -245,12 +245,10 @@
 <a id="感谢"></a>
 
 ## | 感谢
--   [DaiShengSheng / Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) ：原Python版本雀魂插件，功能移植自该项目。
+-   [DaiShengSheng / Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) ：本项目抽卡、对局记录、对局订阅等功能的设计思路参考来源。核心逻辑由本团队使用 JavaScript 独立实现，非原项目移植。
 -   [SAPikachu / amae-koromo](https://github.com/SAPikachu/amae-koromo) ：雀魂牌谱屋项目，提供玩家数据查询API。
--   [KimigaiiWuyi / MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) ：原早柚核心雀魂插件（Python），玩家信息查询、AI牌谱分析功能移植自该项目。
--   [QingFeng](https://github.com/rock8526652) ：玩家数据查询、AI牌谱分析功能协作者，对玩家数据查询、AI牌谱分析功能移植有重要贡献。
--   [homura / majsoul.wget.es](https://majsoul.wget.es) ：远程 AI 评审接口（本插件牌谱分析的数据来源），其 Review 服务支持以下三个引擎：
+-   [KimigaiiWuyi / MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) ：本项目玩家数据查询、AI牌谱分析功能的设计思路参考来源。基础逻辑由协作者 QingFeng 完成 Python → JavaScript 初始实现，后续由本项目作者进行了深度 Bug 修复、视觉重构与功能增强。
+-   [QingFeng](https://github.com/rock8526652) ：玩家数据查询、AI牌谱分析功能的基础逻辑初始实现者（Python → JavaScript），对本项目的早期版本有重要贡献。
+-   [homura / majsoul.wget.es](https://majsoul.wget.es) ：远程 AI 评审接口（本插件牌谱分析的数据来源），其 Review 服务支持以下引擎：
     -   [Equim-chan / Mortal](https://github.com/Equim-chan/Mortal) ：本插件实际使用的 AI 引擎。
-    -   [critter-mj / Akochan](https://github.com/critter-mj/akochan) ：开源麻将 AI，mjai 协议与评审思路参考。
-    -   [MJAI Server](https://mjai-blog.7xcnnw11phu.eu.org/) ：AI 评审引擎之一。
 -   [Ayu](https://github.com/why0209) ：本地 API（协议登录雀魂）作者。
