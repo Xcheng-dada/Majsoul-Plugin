@@ -246,7 +246,7 @@
 
 <a id="感谢"></a>
 
-## | 感谢
+## 丨感谢
 -   [DaiShengSheng / Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) ：本项目抽卡、对局记录、对局订阅等功能的设计思路参考来源。核心逻辑由本团队使用 JavaScript 独立实现，非原项目移植。
 -   [SAPikachu / amae-koromo](https://github.com/SAPikachu/amae-koromo) ：雀魂牌谱屋项目，提供玩家数据查询API。
 -   [KimigaiiWuyi / MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) ：本项目玩家数据查询、AI牌谱分析功能的设计思路参考来源。基础逻辑由协作者 QingFeng 完成 Python → JavaScript 初始实现，后续由本项目作者进行了深度 Bug 修复、视觉重构与功能增强。
