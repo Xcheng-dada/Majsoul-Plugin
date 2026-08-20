@@ -1659,7 +1659,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v5.2.3'
+  const versionText = 'v5.2.4'
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)

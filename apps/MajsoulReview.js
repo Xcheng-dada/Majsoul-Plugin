@@ -229,6 +229,15 @@ export class MajsoulReview extends plugin {
     }
 
     let msg = []
+    // 东场检测提示：四人东（mode===1）使用 Mortal 模型时，质量可能不佳
+    // （Mortal 本身适用四麻半庄，东场表现未经充分验证）
+    try {
+      const mode = full?.record?.head?.config?.mode?.mode
+      const players = full?.record?.head?.result?.players || full?.record?.head?.players || []
+      if (players.length === 4 && mode === 1) {
+        msg.push('⚠️ 检测到本牌谱为四人东（东风战）。当前 AI 分析引擎固定为 Mortal，其训练数据以四麻半庄为主，东场表现未经充分验证，分析结果可能存在质量偏差，仅供参考。')
+      }
+    } catch (e) {}
     if (res.data && res.data.review && res.data.review.kyokus) {
       for (let i = 0; i < res.data.review.kyokus.length; i++) {
         const imgBuffer = await drawReviewInfoImg(mortalLog, res, i)
