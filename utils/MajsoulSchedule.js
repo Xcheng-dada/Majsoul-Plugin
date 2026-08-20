@@ -5,8 +5,6 @@ export default class MajsoulSchedule {
     constructor() {
         this.core = getSubscribeCoreInstance();
         this.isRunning = false;
-        this.checkInterval4p = null; // 四麻检查定时器
-        this.checkInterval3p = null; // 三麻检查定时器
         this.bot = null;
         this._onlineListenerAttached = false; // 防止重复注册上线监听
         // 使用全局 logger 或 console（确保使用 console.log 级别确保控制台可见）
@@ -58,35 +56,15 @@ export default class MajsoulSchedule {
         this.logger.info('[MajsoulSchedule] 启动定时任务');
         this.isRunning = true;
         
-        // 四麻：每5分钟检查一次
-        this.checkInterval4p = setInterval(() => {
-            this.performCheck(4);
-        }, 5 * 60 * 1000);
-        
-        // 三麻：延迟60秒启动，每5分钟检查一次（错开四麻检查时间）
-        setTimeout(() => {
-            this.checkInterval3p = setInterval(() => {
-                this.performCheck(3);
-            }, 5 * 60 * 1000);
-        }, 60000);
-        
         // 立即执行一次检查（四麻先执行，三麻延迟5秒）
         setTimeout(() => this.performCheck(4), 3000);
         setTimeout(() => this.performCheck(3), 5000);
         
-        console.log('[雀魂对局订阅] INFO: 定时任务启动成功（四麻3分钟/三麻5分钟）');
+        console.log('[雀魂对局订阅] INFO: 定时任务启动成功');
     }
     
     // 停止定时检查
     stop() {
-        if (this.checkInterval4p) {
-            clearInterval(this.checkInterval4p);
-            this.checkInterval4p = null;
-        }
-        if (this.checkInterval3p) {
-            clearInterval(this.checkInterval3p);
-            this.checkInterval3p = null;
-        }
         this.isRunning = false;
         console.log('[雀魂对局订阅] INFO: 定时任务已停止');
         this.logger.info('[MajsoulSchedule] 定时任务已停止');
