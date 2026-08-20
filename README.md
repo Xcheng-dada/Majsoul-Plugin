@@ -27,7 +27,7 @@
 <a id="前言插件简介"></a>
 
 ## **丨前言&插件简介**
-本插件是针对 [**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai) 框架开发的雀魂麻将多功能插件，需配合其使用（本插件不包含框架本体）。
+一个雀魂麻将多功能插件，插件不包括TRSS-Yunzai，应该配合[**TRSS-Yunzai**](https://github.com/TimeRainStarSky/Yunzai)使用：
 
 项目地址：https://github.com/Xcheng-dada/Majsoul-Plugin
 
