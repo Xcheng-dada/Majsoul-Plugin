@@ -34,6 +34,17 @@
 > [!TIP]
 > 本插件在功能方向上受 [Majsoul_bot](https://github.com/DaiShengSheng/Majsoul_bot/) 和 [MajsoulUID](https://github.com/KimigaiiWuyi/MajsoulUID) 启发，核心逻辑由本团队使用 JavaScript 独立实现，并针对 TRSS-Yunzai 框架进行了适配。
 
+> [!IMPORTANT]
+> **与上游项目差异**
+> - 修复段位分显示负数、三麻走势图（修正为 3 条线）
+> - 雀士图鉴扩充至 121 位，移除无效抽卡礼物
+> 
+> **体验优化亮点**
+> - 查询图表支持房间筛选，柱状图百分比显示
+> - 对局记录与订阅推送纯文字 → Canvas 重绘图片
+> - 搜索配图、帮助图重做，立绘随机展示
+> - 图表圆点与线条精确对齐，视觉效果更整洁
+
 <a id="安装方法"></a>
 
 ## 丨安装方法
@@ -45,7 +56,8 @@
     ```
     pnpm install
     ```
-3.  重启 TRSS-Yunzai，进入机器人在的群聊，即可正常使用本插件。
+3.  获取本地 API 的 exe 程序（牌谱分析功能必需，否则无法使用 `#牌谱Review` / `#雀魂场况`）。该 exe 随本仓库 **Release** 一同发布，**不在插件源码目录内**。请前往本仓库的 Release 页面下载并解压，将 exe 文件放置到插件目录下的 `exe/` 文件夹（详细步骤见下方「[本地 API 的 exe 从哪里获取？](#本地-api-的-exe-从哪里获取)」）。
+4.  重启 TRSS-Yunzai，进入机器人在的群聊，即可正常使用本插件。
 
 <a id="已实现的功能"></a>
 
