@@ -221,6 +221,31 @@ export function isPortAlive (host = '127.0.0.1', port = 5088) {
 }
 
 let exeSpawned = false
+let spawnedChild = null
+let exitHookRegistered = false
+
+// Yunzai 退出时，清理本插件拉起的 API 子进程，避免成为孤儿进程占用 5088 端口
+function registerExitHook () {
+  if (exitHookRegistered) return
+  exitHookRegistered = true
+  const killChild = () => {
+    if (!spawnedChild) return
+    try {
+      if (process.platform === 'win32') {
+        // Windows 下 detached 子进程直接用 child.kill 有时无效，用 taskkill 强制终止
+        try { spawnedChild.kill() } catch {}
+        spawn('taskkill', ['/F', '/PID', String(spawnedChild.pid)], { windowsHide: true, stdio: 'ignore' })
+      } else {
+        // Linux/macOS：detached 子进程属于独立进程组，向进程组发 SIGTERM
+        process.kill(-spawnedChild.pid, 'SIGTERM')
+      }
+    } catch { /* 已退出则忽略 */ }
+    spawnedChild = null
+  }
+  process.once('exit', killChild)
+  process.once('SIGINT', () => { killChild(); process.exit(1) })
+  process.once('SIGTERM', () => { killChild(); process.exit(0) })
+}
 
 /**
  * 确保 API 程序在运行：若端口未监听且配置了 autoLaunch，则跨平台自动拉起。
@@ -256,7 +281,9 @@ export async function ensureExeRunning () {
     if (process.platform === 'win32') spawnOpts.windowsHide = false
     const child = spawn(exePath, [], spawnOpts)
     child.unref()
+    spawnedChild = child
     exeSpawned = true
+    registerExitHook()
     logger.info(`[MajsoulProtocol] 已拉起 API 程序: ${exePath} (pid=${child.pid}, platform=${process.platform})`)
     return true
   } catch (e) {
