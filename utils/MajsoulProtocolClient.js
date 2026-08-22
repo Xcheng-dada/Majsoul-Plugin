@@ -300,7 +300,26 @@ export async function saveToLocal (paipu, options = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paipu, downloadAvatars, exportFiles, includeDataBase64 })
       })
-      if (!res.ok) { lastErr = new Error(`exe 返回 ${res.status}`); continue }
+      if (!res.ok) {
+        // 尝试解析 exe 返回的错误体，给出更明确的提示（尤其是版本过期）
+        let hint = `exe 返回 ${res.status}`
+        try {
+          const errBody = await res.json().catch(() => null)
+          if (errBody) {
+            const code = errBody?.serverError?.code
+            const name = errBody?.serverError?.name
+            const detail = errBody?.detail || ''
+            if (code === 151 || name === 'ERR_CLIENT_VERSION' ||
+                /client version/i.test(detail) || /ERR_CLIENT_VERSION/i.test(detail)) {
+              hint = '本地 API（exe）版本已过期，雀魂服务器拒绝了其协议请求（ERR_CLIENT_VERSION）。请前往本插件 Release 页面下载更新版本的 exe 后重试。'
+            } else if (detail) {
+              hint = `exe 返回 ${res.status}：${detail}`
+            }
+          }
+        } catch { /* 解析失败则保留原始提示 */ }
+        lastErr = new Error(hint)
+        continue
+      }
       const dto = await res.json()
       if (!dto || (!dto.dataBase64 && !dto.reference)) { lastErr = new Error('exe 返回数据无效'); continue }
       cachedExeBase = base

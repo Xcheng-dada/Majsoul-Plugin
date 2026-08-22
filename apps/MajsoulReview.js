@@ -124,7 +124,14 @@ export class MajsoulReview extends plugin {
 
     e.reply('⏳ 正在提交牌谱至 Mortal 进行 AI 分析，请稍候...')
 
-    const full = await client.fetchFullRecord(gameId)
+    let full
+    try {
+      full = await client.fetchFullRecord(gameId)
+    } catch (err) {
+      // 取谱阶段失败（如本地 API 版本过期、上游拒绝、exe 未启动等），
+      // 直接把底层提示回给用户，避免只打印裸 Error 到日志。
+      return e.reply(`❌ 取谱失败：${err.message || err}`)
+    }
     if (!full || !full.record) {
       // 区分「未登录」与「其他取谱失败」：未登录时本地 API 无 profile，
       // 牌谱分析依赖登录态取真实昵称/头像，必须先登录。
