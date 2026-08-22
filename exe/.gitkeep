@@ -1,3 +1,0 @@
-# 此目录用于放置本地协议登录 exe（如 Majsoul.ProtocolLogin.Api.exe）
-# exe 二进制文件不纳入版本库（见根目录 .gitignore 的 exe/*.exe 规则）
-# 请从对应发布渠道下载后放入本目录，并确保 config/majsoul-protocol.json 的 exeDir 指向 "exe"

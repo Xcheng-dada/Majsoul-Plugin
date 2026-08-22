@@ -1,7 +1,7 @@
 /**
  * 雀魂 AI 复盘（homura 的 majsoul.wget.es 线上 AI 分析引擎）
  *
- * 链路：雀魂原生 record（由外部 exe/浏览器桥取得） → MajsoulPaipuParser 转 tenhou
+ * 链路：雀魂原生 record（由外部 API 程序/浏览器桥取得） → MajsoulPaipuParser 转 tenhou
  *      → POST /review?type=Tenhou → 轮询 task → 落盘 ${gameId} - review.json
  *
  * 落盘路径与 reviewMortal 完全一致，渲染逻辑（MajsoulReview.js）零改动。

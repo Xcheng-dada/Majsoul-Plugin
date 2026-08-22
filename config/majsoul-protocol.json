@@ -4,5 +4,5 @@
   "apiKey": "",
   "timeoutMs": 20000,
   "autoLaunch": true,
-  "exeDir": "exe"
+  "apiDir": "api"
 }

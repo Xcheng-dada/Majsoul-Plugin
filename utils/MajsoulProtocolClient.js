@@ -162,17 +162,17 @@ export function discoverExe () {
 }
 
 /**
- * 在 exeDir 及若干常见位置中查找 exe 可执行文件。
- * exeDir 相对插件根目录（配置项），也可为绝对路径。
- * @returns {string|null} 找到的 exe 绝对路径
+ * 在 apiDir 及若干常见位置中查找 API 程序可执行文件。
+ * apiDir 相对插件根目录（配置项），也可为绝对路径。
+ * @returns {string|null} 找到的 API 程序绝对路径
  */
 export function findExeBinary () {
   let cfg = {}
   try { cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8')) } catch {}
-  const exeDir = cfg.exeDir || 'exe'
+  const apiDir = cfg.apiDir || 'api'
   const dirs = []
   // 配置的相对/绝对目录
-  dirs.push(path.isAbsolute(exeDir) ? exeDir : path.join(__dirname, '..', exeDir))
+  dirs.push(path.isAbsolute(apiDir) ? apiDir : path.join(__dirname, '..', apiDir))
   // 插件根目录、上级目录（兼容直接丢在插件根）
   dirs.push(__dirname)
   dirs.push(path.join(__dirname, '..'))
@@ -182,7 +182,18 @@ export function findExeBinary () {
   for (const d of dirs) {
     try {
       const entries = fs.readdirSync(d)
-      const hit = entries.find(f => /\.exe$/i.test(f) && /majsoul|protocol/i.test(f))
+      // 按当前平台过滤，避免同目录含 win/linux 双文件时误选：
+      //   Windows -> 仅匹配 *.exe；Linux -> 仅匹配无后缀且含 majsoul/protocol 的二进制
+      const hit = entries.find(f => {
+        const nameOk = /majsoul|protocol/i.test(f)
+        if (process.platform === 'win32') {
+          return nameOk && /\.exe$/i.test(f)
+        } else {
+          let isLinuxBin = false
+          try { isLinuxBin = !f.includes('.') && !fs.statSync(path.join(d, f)).isDirectory() } catch {}
+          return nameOk && isLinuxBin
+        }
+      })
       if (hit) return path.join(d, hit)
     } catch {}
   }
@@ -212,42 +223,44 @@ export function isPortAlive (host = '127.0.0.1', port = 5088) {
 let exeSpawned = false
 
 /**
- * 确保 exe 在运行：Windows 下若端口未监听且配置了 autoLaunch，则 spawn 拉起。
- * 非 Windows 或 autoLaunch=false 时直接跳过（不影响原有回退逻辑）。
- * 登录态由 exe 自身 UI 处理，本函数只负责“拉起进程”，不等待登录完成。
+ * 确保 API 程序在运行：若端口未监听且配置了 autoLaunch，则跨平台自动拉起。
+ * Windows 与 Linux 均支持；拉起前会检测 5088 端口，避免重复拉起导致冲突。
+ * 登录态由程序自身处理，本函数只负责“拉起进程”，不等待登录完成。
  */
 export async function ensureExeRunning () {
   let cfg = {}
   try { cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8')) } catch {}
   // 仅 enabled 且显式开启 autoLaunch 时才尝试拉起
   if (!cfg.enabled || !cfg.autoLaunch) return false
-  if (process.platform !== 'win32') {
-    logger.warn('[MajsoulProtocol] autoLaunch 仅支持 Windows，当前平台跳过')
-    return false
-  }
+  // 已在运行（端口被监听）则跳过，避免重复拉起冲突
   if (await isPortAlive()) {
-    logger.info('[MajsoulProtocol] exe 已在运行 (5088)')
+    logger.info('[MajsoulProtocol] API 程序已在运行 (5088)')
     return true
   }
   const exePath = findExeBinary()
   if (!exePath) {
-    logger.warn('[MajsoulProtocol] 未找到 exe 文件，请在 exeDir 配置目录放置 Majsoul.ProtocolLogin.Api-windows-amd64.exe，或手动启动')
+    logger.warn('[MajsoulProtocol] 未找到 API 程序，请在 apiDir 配置目录放置 Majsoul.ProtocolLogin.Api 对应平台的二进制文件，或手动启动')
     return false
   }
   if (exeSpawned) return false
   try {
-    const child = spawn(exePath, [], {
+    // Linux 下需先赋予可执行权限，否则 spawn 会 EACCES
+    if (process.platform !== 'win32') {
+      try { fs.chmodSync(exePath, 0o755) } catch {}
+    }
+    const spawnOpts = {
       detached: true,
-      stdio: 'ignore',
-      windowsHide: false // 保留窗口，便于用户登录
-    })
+      stdio: 'ignore'
+    }
+    // windowsHide 仅 Windows 支持，Linux 传该字段会报错
+    if (process.platform === 'win32') spawnOpts.windowsHide = false
+    const child = spawn(exePath, [], spawnOpts)
     child.unref()
     exeSpawned = true
-    logger.info(`[MajsoulProtocol] 已 spawn 拉起 exe: ${exePath} (pid=${child.pid})`)
-    // 提示：exe 启动后需完成雀魂登录，端口才会就绪
+    logger.info(`[MajsoulProtocol] 已拉起 API 程序: ${exePath} (pid=${child.pid}, platform=${process.platform})`)
     return true
   } catch (e) {
-    logger.error(`[MajsoulProtocol] 拉起 exe 失败: ${e.message}`)
+    logger.error(`[MajsoulProtocol] 拉起 API 程序失败: ${e.message}`)
     return false
   }
 }
