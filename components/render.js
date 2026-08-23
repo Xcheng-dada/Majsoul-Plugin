@@ -1532,7 +1532,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
     // 虚建议和牌帧：actual.type==='none' 但 expected==='hora'（你实际没有和、AI 建议和）。
     // Mortal 在此类帧的 tile/last_actor 经常错位（实锤：会把别处打出的牌串到这帧，
     // 如本该对家打 7m 荣和却挂错巡），画出来会误导，故直接跳过不渲染。
-    if (actualType === 'none' && aiType === 'hora') {
+    if (actualType === 'none' && (en.expected && en.expected.type) === 'hora') {
       if (en.actual && typeof en.actual.actor === 'number') actorId = en.actual.actor
       continue
     }
