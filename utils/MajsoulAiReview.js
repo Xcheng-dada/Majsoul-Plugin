@@ -43,7 +43,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
  * @returns {Promise<object|string>} 成功返回 {data:{review,player_id}}；失败返回 ❌ 提示字符串
  */
 export async function reviewTenhouProtocol (record, gameId, paipuUrl = '', playerId = 0) {
-  const reviewPath = path.join(REVIEW_PATH, `${gameId} - review.json`)
+  // 本次请求视角（0~3）；缓存文件按视角分别存储，避免切换座次互相覆盖 / 重复分析
+  const reqSeat = Number.isInteger(playerId) && playerId >= 0 && playerId <= 3 ? playerId : 0
+  const reviewPath = path.join(REVIEW_PATH, `${gameId} - seat${reqSeat} - review.json`)
 
   // 1. 三麻拦截（原生 record 玩家数判定）
   const players = record?.head?.result?.players || record?.head?.players || []
@@ -51,20 +53,34 @@ export async function reviewTenhouProtocol (record, gameId, paipuUrl = '', playe
     return '❌ 该牌谱是三麻（三人麻将），当前 AI 分析引擎（Mortal）仅支持四麻，无法分析。请提供四麻牌谱。'
   }
 
-  // 2. 本地缓存优先（与 reviewMortal 逻辑一致）
-  if (fs.existsSync(reviewPath)) {
+  // 2. 本地缓存优先：按视角命中（同牌谱不同视角结果不同，各自独立缓存）
+  // 兼容旧版不带 seat 的缓存文件（${gameId} - review.json）
+  const legacyPath = path.join(REVIEW_PATH, `${gameId} - review.json`)
+  const candidatePaths = [reviewPath, ...(legacyPath !== reviewPath ? [legacyPath] : [])]
+  for (const p of candidatePaths) {
+    if (!fs.existsSync(p)) continue
     try {
-      const cached = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
+      const cached = JSON.parse(fs.readFileSync(p, 'utf8'))
+      // 旧版缓存无 seat 后缀：以文件内 player_id / review.player_id 判定其视角
+      const cachedSeat = (Number.isInteger(cached.player_id) && cached.player_id >= 0 && cached.player_id <= 3)
+        ? cached.player_id
+        : ((cached.review && Number.isInteger(cached.review.player_id) && cached.review.player_id >= 0 && cached.review.player_id <= 3)
+            ? cached.review.player_id
+            : 0)
       if (cached.review && cached.review.kyokus) {
-        // 优先用调用方传入的 playerId（指定座位时刷新主视角），缓存里的 player_id 仅作兜底
-        const pid = (Number.isInteger(playerId) && playerId >= 0 && playerId <= 3) ? playerId : (cached.player_id || 0)
-        return { data: { review: cached.review, player_id: pid } }
+        if (cachedSeat === reqSeat) {
+          // 视角一致才可复用缓存，保证返回 player_id 与缓存视角一致
+          return { data: { review: cached.review, player_id: cachedSeat } }
+        }
+        // 视角不一致：跳过该缓存（旧版 seat0 缓存命中不了非 seat0 请求），继续分析
+        continue
       }
-      // 三麻错误响应不缓存
       if (/not a four-player|three-player|三麻/i.test(JSON.stringify(cached))) {
-        fs.rmSync(reviewPath, { force: true })
+        // 三麻错误响应不缓存
+        fs.rmSync(p, { force: true })
       } else {
-        return cached
+        // 旧格式/损坏缓存：忽略，走重新分析
+        continue
       }
     } catch (e) {
       logger.warn(`读取缓存失败，重新分析: ${e.message}`)

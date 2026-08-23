@@ -290,7 +290,12 @@ export class MajsoulReview extends plugin {
         msg.push('⚠️ 检测到本牌谱为四人东（东风战）。当前 AI 分析引擎固定为 Mortal，其训练数据以四麻半庄为主，东场表现未经充分验证，分析结果可能存在质量偏差，仅供参考。')
       }
     } catch (e) {}
+    // 主视角 seat 以调用方解析出的 mainSeat 为准（已按牌谱自身 accountId/座位参数确认），
+    // 不信任 Mortal 服务端返回的 player_id —— 服务端对相同 tenhou 日志有缓存时可能回 0，
+    // 若直接透传给渲染层，主视角会错回 seat0（曾实测出现）。
+    const mainSeatValid = Number.isInteger(mainSeat) && mainSeat >= 0 && mainSeat <= 3
     if (res.data && res.data.review && res.data.review.kyokus) {
+      if (mainSeatValid) res.data.player_id = mainSeat
       for (let i = 0; i < res.data.review.kyokus.length; i++) {
         const imgBuffer = await drawReviewInfoImg(mortalLog, res, i)
         if (typeof imgBuffer === 'string') {
@@ -303,7 +308,7 @@ export class MajsoulReview extends plugin {
       const adaptRes = {
         data: {
           review: res,
-          player_id: res.player_id || 0
+          player_id: mainSeatValid ? mainSeat : (res.player_id || 0)
         }
       }
       for (let i = 0; i < res.kyokus.length; i++) {

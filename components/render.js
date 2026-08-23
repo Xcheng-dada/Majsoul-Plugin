@@ -165,7 +165,7 @@ async function loadAvatarImage(avatarId) {
     const mjsdbUrl = `https://d7.mjsdb.ovh/s3/files/extracted/MyAssets/deco/character/${charDirName}/bighead/bighead.png`
     try {
       await fetchImageToFile(mjsdbUrl, localPath)
-      if (typeof logger !== 'undefined') logger.info(`[render.js] 头像走雀魂DB兜底成功 ${avatarId}: ${mjsdbUrl}`)
+      if (typeof logger !== 'undefined') logger.debug(`[render.js] 头像走雀魂DB兜底成功 ${avatarId}: ${mjsdbUrl}`)
       return await loadImageFromCache(localPath)
     } catch (err2) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像加载失败 ${avatarId}: ${url} -> ${err.message}；雀魂DB兜底亦失败: ${err2.message}`)
@@ -1373,7 +1373,6 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   // reviewData.player_id 即被分析玩家的座号（0~3）
   const seat = (data && data.data && data.data.player_id) ||
                (data && data.player_id) || 0
-  if (typeof logger !== 'undefined') logger.info(`[render.js] drawReviewInfoImg seat=${seat} dataPlayerId=${data?.data?.player_id} topPlayerId=${data?.player_id}`)
 
   // 名字用真实昵称（mortalLog.name，由 review 命令从本地 API 获取），
   // 其次 review.json 缓存的真实昵称，最后兜底为空。未登录不进行牌谱分析，故不再使用占位名。
