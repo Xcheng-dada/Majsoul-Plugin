@@ -6,8 +6,8 @@
  *
  * 落盘路径与 reviewMortal 完全一致，渲染逻辑（MajsoulReview.js）零改动。
  *
- * 注意：本文件只负责「exe 取谱之后」的分析环节。取牌谱（雀魂登录 + fetchGameRecord）
- * 由外部二进制（当前 Windows exe）完成，不在本文件内 —— 输入直接是雀魂原生 record。
+ * 注意：本文件只负责「本地 API 取谱之后」的分析环节。取牌谱（雀魂登录 + fetchGameRecord）
+ * 由外部二进制（当前 Windows 版为 Majsoul.ProtocolLogin.Api-win-x64.exe）完成，不在本文件内 —— 输入直接是雀魂原生 record。
  */
 
 import fs from 'fs'
@@ -96,6 +96,8 @@ export async function reviewTenhouProtocol (record, gameId, paipuUrl = '', playe
   // 不依赖 homura 是否回显 player_id，避免渲染主视角错回 seat0。
   const finalPlayerId = Number.isInteger(playerId) && playerId >= 0 && playerId <= 3 ? playerId : (reportData.player_id || 0)
   const saved = { ...reportData, player_id: finalPlayerId }
+  // 同步写入 review.player_id，供渲染层 reviewData.player_id 取主视角（避免 actorId 回退 seat0）
+  if (saved.review) saved.review.player_id = finalPlayerId
   if (!fs.existsSync(REVIEW_PATH)) fs.mkdirSync(REVIEW_PATH, { recursive: true })
   fs.writeFileSync(reviewPath, JSON.stringify(saved), 'utf8')
   logger.info(`已保存 AI 分析报告到: ${reviewPath} (player_id=${finalPlayerId})`)

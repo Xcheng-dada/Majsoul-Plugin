@@ -21,14 +21,14 @@ function findFreePort(start = 9230) {
   })
 }
 
-// 纯 exe（协议）模式：所有取谱均走本地 Majsoul.ProtocolLogin.exe。
+// 纯本地 API（协议）模式：所有取谱均走本地 Majsoul.ProtocolLogin.Api。
 // 浏览器桥（真实 Chrome）已彻底弃用，相关代码不再保留。
-// 登录态由 exe 自身持有，Yunzai 侧不保存 token/密码（#雀魂登录 直接把账号密码交给 exe）。
+// 登录态由 API 自身持有，Yunzai 侧不保存 token/密码（#雀魂登录 直接把账号密码交给 API）。
 
-// 通过协议客户端（exe）获取牌谱真实 head（含玩家昵称/头像/段位）。
+// 通过协议客户端（API）获取牌谱真实 head（含玩家昵称/头像/段位）。
 // 返回：
 //   { head }                —— 成功
-//   { __fetchFailed:true }  —— exe 未运行/未登录/取谱失败，调用方据此提示
+//   { __fetchFailed:true }  —— API 未运行/未登录/取谱失败，调用方据此提示
 async function fetchRealHead(gameId) {
   const client = getProtocolClient()
   if (!client.isEnabled()) {
@@ -68,10 +68,10 @@ function pickDanRateFromReport(report) {
   return found
 }
 
-// 拉取真实玩家信息（含 head）：纯走 exe（协议）通道
+// 拉取真实玩家信息（含 head）：纯走本地 API（协议）通道
 // 返回值约定：
 //   { head }                      —— 拉取成功
-//   { __fetchFailed: true, ... }  —— exe 未运行/未登录/拉取失败，调用方提示用户先启动并登录 exe
+//   { __fetchFailed: true, ... }  —— API 未运行/未登录/拉取失败，调用方提示用户先启动并登录 API
 
 export class MajsoulReview extends plugin {
   constructor() {
@@ -114,7 +114,7 @@ export class MajsoulReview extends plugin {
       paipuUrl = raw.slice(0, seatMatch.index).trim()
     }
 
-    // 纯协议取谱（对接本地 exe，不再走网页/浏览器桥）
+    // 纯协议取谱（对接本地 API，不再走网页/浏览器桥）
     if (!paipuUrl.startsWith('http')) {
       return e.reply('❌ 请输入完整的牌谱URL!\n例如：https://game.maj-soul.com/1/?paipu=xxx')
     }
@@ -139,7 +139,7 @@ export class MajsoulReview extends plugin {
     try {
       full = await client.fetchFullRecord(gameId)
     } catch (err) {
-      // 取谱阶段失败（如本地 API 版本过期、上游拒绝、exe 未启动等），
+      // 取谱阶段失败（如本地 API 版本过期、上游拒绝、API 未启动等），
       // 直接把底层提示回给用户，避免只打印裸 Error 到日志。
       return e.reply(`❌ 取谱失败：${err.message || err}`)
     }
@@ -148,7 +148,7 @@ export class MajsoulReview extends plugin {
       // 牌谱分析依赖登录态取真实昵称/头像，必须先登录。
       let notLoggedIn = false
       try {
-        const { ok, profiles } = await client.getExeProfiles()
+        const { ok, profiles } = await client.getApiProfiles()
         notLoggedIn = ok && (!profiles || profiles.length === 0)
       } catch { /* 忽略探测错误 */ }
 
@@ -185,7 +185,7 @@ export class MajsoulReview extends plugin {
     }
     if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位主源(牌谱自身解析): dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
 
-    // 主视角账号：仅用本地 API（exe）下发的 targetAccountId（真实账号 ID）。
+    // 主视角账号：仅用本地 API 下发的 targetAccountId（真实账号 ID）。
     // 牌谱链接 UUID 后的 _a64678917 是雀魂的分享访问令牌，并非账号 ID，
     // 不能当作 accountId 去匹配座位，故不再解析 URL 后缀。
     let mainAccountId = null
@@ -381,10 +381,10 @@ export class MajsoulReview extends plugin {
       avatarId: split0.avatarId || (rj.review && rj.review.avatarId) || []
     }
 
-    // 与 #牌谱Review 一致：尝试通过 exe（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
+    // 与 #牌谱Review 一致：尝试通过本地 API（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
     try {
       const logs = await fetchRealHead(matchedId)
-      // 拉取失败（exe 未运行/未登录）：不报错，降级使用 review.json 缓存中的昵称/头像继续出图
+      // 拉取失败（API 未运行/未登录）：不报错，降级使用 review.json 缓存中的昵称/头像继续出图
       if (logs && logs.__fetchFailed) {
         if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] 场况拉取真实昵称失败，降级用缓存: ${logs.error}`)
       }
@@ -434,8 +434,8 @@ export class MajsoulReview extends plugin {
 
   // 雀魂登录：#雀魂登录 账号 密码
   // 纯协议模式：账号密码直接交给本地 Majsoul.ProtocolLogin.Api 对应平台程序完成登录，
-  // 登录态由 exe 自身持有，Yunzai 侧不保存 token/密码。
-  // 需先启用 majsoul-protocol（enabled=true）且 exe 已在运行（或已开启 autoLaunch）。
+  // 登录态由 API 自身持有，Yunzai 侧不保存 token/密码。
+  // 需先启用 majsoul-protocol（enabled=true）且 API 已在运行（或已开启 autoLaunch）。
   async loginCommand(e) {
     const m = e.msg.match(/^#?雀魂登录\s+(\S+)\s+(.+)$/)
     if (!m) return e.reply('❌ 格式：雀魂登录 账号 密码')
@@ -449,14 +449,14 @@ export class MajsoulReview extends plugin {
 
     await e.reply('⏳ 正在通过本地 API 发起雀魂登录（账号密码将发送给本地 API，由它完成登录并持有登录态）...')
 
-    const res = await client.loginToExe(account, password, true)
+    const res = await client.loginToApi(account, password, true)
     if (!res.ok) {
       return e.reply(`❌ 登录失败：${res.error || '未知错误'}\n请确认本地 API 已运行、账号密码正确。`)
     }
 
     let nick = ''
     try {
-      const { ok, profiles } = await client.getExeProfiles()
+      const { ok, profiles } = await client.getApiProfiles()
       if (ok && Array.isArray(profiles) && profiles.length) {
         const loginId = res.data && (res.data.accountId || (res.data.account && res.data.account.accountId))
         const hit = loginId ? profiles.find(p => String(p.accountId) === String(loginId)) : null

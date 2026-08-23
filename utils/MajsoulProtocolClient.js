@@ -1,10 +1,10 @@
 /**
- * 雀魂协议客户端（exe 取谱通道）
+ * 雀魂协议客户端（本地 API 取谱通道）
  *
- * 数据来源：本地雀魂协议抓取 exe（HTTP 服务端，默认 http://127.0.0.1:5088）
- * 鉴权由 exe 自身完成，本类不再做模拟登录/WebSocket。
+ * 数据来源：本地雀魂协议抓取 API（HTTP 服务端，默认 http://127.0.0.1:5088）
+ * 鉴权由 API 自身完成，本类不再做模拟登录/WebSocket。
  *
- * 牌谱格式：exe 返回的 `dataBase64` 是 `lq.GameDetailRecords` 的 protobuf 编码：
+ * 牌谱格式：API 返回的 `dataBase64` 是 `lq.GameDetailRecords` 的 protobuf 编码：
  *   - records: 简短元数据（Any 包装，本通道忽略）
  *   - actions: 回放动作流（repeated GameAction）
  *
@@ -27,8 +27,8 @@ import Codec from './Codec.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROTOCOL_CFG_PATH = path.join(__dirname, '../config/majsoul-protocol.json')
 
-// 只需本进程内缓存 exe 地址，无需落盘
-let cachedExeBase = null
+// 只需本进程内缓存 API 地址，无需落盘
+let cachedApiBase = null
 
 // 日志（TRSS 全局 logger 或 console）
 const logger = globalThis.logger || console
@@ -67,7 +67,7 @@ function toBuf (x) {
 }
 
 /**
- * 把 exe 的 dataBase64 解码并重建为 ResGameRecord 形状
+ * 把 API 的 dataBase64 解码并重建为 ResGameRecord 形状
  * @param {string} dataBase64 GameDetailRecords 的 base64
  * @param {object} meta 来自 dto 的元信息 { players, uuid, endTime, standardRule }
  * @returns {{record:object, head:object}}
@@ -151,12 +151,14 @@ export async function decodeRecordBase64 (dataBase64, meta = {}) {
 }
 
 /**
- * 探测本地 exe 服务是否可达
+ * 探测本地 API 服务是否可达
  */
-export function discoverExe () {
+export function discoverApi () {
   const candidates = []
-  if (cachedExeBase) candidates.push(cachedExeBase)
-  if (process.env.MAJSOUL_EXE_URL) candidates.push(process.env.MAJSOUL_EXE_URL.replace(/\/+$/, ''))
+  if (cachedApiBase) candidates.push(cachedApiBase)
+  // 优先读新环境变量名（MAJSOUL_API_URL），兼容旧名 MAJSOUL_EXE_URL
+  const apiUrlEnv = process.env.MAJSOUL_API_URL || process.env.MAJSOUL_EXE_URL
+  if (apiUrlEnv) candidates.push(apiUrlEnv.replace(/\/+$/, ''))
   candidates.push('http://127.0.0.1:5088')
   return candidates
 }
@@ -166,7 +168,7 @@ export function discoverExe () {
  * apiDir 相对插件根目录（配置项），也可为绝对路径。
  * @returns {string|null} 找到的 API 程序绝对路径
  */
-export function findExeBinary () {
+export function findApiBinary () {
   let cfg = {}
   try { cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8')) } catch {}
   const apiDir = cfg.apiDir || 'api'
@@ -176,8 +178,9 @@ export function findExeBinary () {
   // 插件根目录、上级目录（兼容直接丢在插件根）
   dirs.push(__dirname)
   dirs.push(path.join(__dirname, '..'))
-  // 环境变量兜底
-  if (process.env.MAJSOUL_EXE_PATH) dirs.push(path.dirname(process.env.MAJSOUL_EXE_PATH))
+  // 环境变量兜底（优先新名 MAJSOUL_API_PATH，兼容旧名 MAJSOUL_EXE_PATH）
+  const apiPathEnv = process.env.MAJSOUL_API_PATH || process.env.MAJSOUL_EXE_PATH
+  if (apiPathEnv) dirs.push(path.dirname(apiPathEnv))
 
   for (const d of dirs) {
     try {
@@ -198,8 +201,8 @@ export function findExeBinary () {
     } catch {}
   }
   // 环境变量精确指定
-  if (process.env.MAJSOUL_EXE_PATH && fs.existsSync(process.env.MAJSOUL_EXE_PATH)) {
-    return process.env.MAJSOUL_EXE_PATH
+  if (apiPathEnv && fs.existsSync(apiPathEnv)) {
+    return apiPathEnv
   }
   return null
 }
@@ -220,7 +223,7 @@ export function isPortAlive (host = '127.0.0.1', port = 5088) {
   })
 }
 
-let exeSpawned = false
+let apiSpawned = false
 let spawnedChild = null
 let exitHookRegistered = false
 
@@ -252,7 +255,7 @@ function registerExitHook () {
  * Windows 与 Linux 均支持；拉起前会检测 5088 端口，避免重复拉起导致冲突。
  * 登录态由程序自身处理，本函数只负责“拉起进程”，不等待登录完成。
  */
-export async function ensureExeRunning () {
+export async function ensureApiRunning () {
   let cfg = {}
   try { cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8')) } catch {}
   // 仅 enabled 且显式开启 autoLaunch 时才尝试拉起
@@ -262,16 +265,16 @@ export async function ensureExeRunning () {
     logger.info('[MajsoulProtocol] API 程序已在运行 (5088)')
     return true
   }
-  const exePath = findExeBinary()
-  if (!exePath) {
+  const apiPath = findApiBinary()
+  if (!apiPath) {
     logger.warn('[MajsoulProtocol] 未找到 API 程序，请在 apiDir 配置目录放置 Majsoul.ProtocolLogin.Api 对应平台的二进制文件，或手动启动')
     return false
   }
-  if (exeSpawned) return false
+  if (apiSpawned) return false
   try {
     // Linux 下需先赋予可执行权限，否则 spawn 会 EACCES
     if (process.platform !== 'win32') {
-      try { fs.chmodSync(exePath, 0o755) } catch {}
+      try { fs.chmodSync(apiPath, 0o755) } catch {}
     }
     const spawnOpts = {
       detached: true,
@@ -279,12 +282,12 @@ export async function ensureExeRunning () {
     }
     // windowsHide 仅 Windows 支持，Linux 传该字段会报错
     if (process.platform === 'win32') spawnOpts.windowsHide = false
-    const child = spawn(exePath, [], spawnOpts)
+    const child = spawn(apiPath, [], spawnOpts)
     child.unref()
     spawnedChild = child
-    exeSpawned = true
+    apiSpawned = true
     registerExitHook()
-    logger.info(`[MajsoulProtocol] 已拉起 API 程序: ${exePath} (pid=${child.pid}, platform=${process.platform})`)
+    logger.info(`[MajsoulProtocol] 已拉起 API 程序: ${apiPath} (pid=${child.pid}, platform=${process.platform})`)
     return true
   } catch (e) {
     logger.error(`[MajsoulProtocol] 拉起 API 程序失败: ${e.message}`)
@@ -298,7 +301,7 @@ function readProtocolConfig () {
   } catch { return {} }
 }
 
-function isExeEnabled () {
+function isApiEnabled () {
   try {
     const cfg = readProtocolConfig()
     return cfg.enabled === true
@@ -313,11 +316,11 @@ function getTimeoutMs () {
 }
 
 /**
- * 调 exe 拉取牌谱元数据（含 dataBase64）
+ * 调本地 API 拉取牌谱元数据（含 dataBase64）
  */
 export async function saveToLocal (paipu, options = {}) {
   const { downloadAvatars = false, exportFiles = false, includeDataBase64 = true } = options
-  const bases = discoverExe()
+  const bases = discoverApi()
   let lastErr = null
   for (const base of bases) {
     // 未登录的本地 API 调用 /api/records/fetch 会抛未处理异常（刷服务端日志）。
@@ -341,8 +344,8 @@ export async function saveToLocal (paipu, options = {}) {
         body: JSON.stringify({ paipu, downloadAvatars, exportFiles, includeDataBase64 })
       })
       if (!res.ok) {
-        // 尝试解析 exe 返回的错误体，给出更明确的提示（尤其是版本过期）
-        let hint = `exe 返回 ${res.status}`
+        // 尝试解析 API 返回的错误体，给出更明确的提示（尤其是版本过期）
+        let hint = `本地 API 返回 ${res.status}`
         try {
           const errBody = await res.json().catch(() => null)
           if (errBody) {
@@ -351,9 +354,9 @@ export async function saveToLocal (paipu, options = {}) {
             const detail = errBody?.detail || ''
             if (code === 151 || name === 'ERR_CLIENT_VERSION' ||
                 /client version/i.test(detail) || /ERR_CLIENT_VERSION/i.test(detail)) {
-              hint = '本地 API（exe）版本已过期，雀魂服务器拒绝了其协议请求（ERR_CLIENT_VERSION）。请前往本插件 Release 页面下载更新版本的 exe 后重试。'
+              hint = '本地 API（Majsoul.ProtocolLogin.Api）版本已过期，雀魂服务器拒绝了其协议请求（ERR_CLIENT_VERSION）。请前往本插件 Release 页面下载更新版本的 API 后重试。'
             } else if (detail) {
-              hint = `exe 返回 ${res.status}：${detail}`
+              hint = `本地 API 返回 ${res.status}：${detail}`
             }
           }
         } catch { /* 解析失败则保留原始提示 */ }
@@ -361,12 +364,12 @@ export async function saveToLocal (paipu, options = {}) {
         continue
       }
       const dto = await res.json()
-      if (!dto || (!dto.dataBase64 && !dto.reference)) { lastErr = new Error('exe 返回数据无效'); continue }
-      cachedExeBase = base
+      if (!dto || (!dto.dataBase64 && !dto.reference)) { lastErr = new Error('本地 API 返回数据无效'); continue }
+      cachedApiBase = base
       return dto
     } catch (e) { lastErr = e }
   }
-  throw lastErr || new Error('未找到可用的 exe 服务')
+  throw lastErr || new Error('未找到可用的本地 API 服务')
 }
 
 /**
@@ -375,15 +378,15 @@ export async function saveToLocal (paipu, options = {}) {
  * @returns {Promise<{record:object, head:object}>}
  */
 /**
- * 向本地 exe 发起雀魂登录。登录态由 exe 自身持有，Yunzai 侧不保存 token。
+ * 向本地 API 发起雀魂登录。登录态由 API 自身持有，Yunzai 侧不保存 token。
  * @param {string} account 雀魂账号
  * @param {string} password 雀魂密码
- * @param {boolean} [saveProfile=true] 是否让 exe 持久化登录态
+ * @param {boolean} [saveProfile=true] 是否让 API 持久化登录态
  * @returns {Promise<{ok:boolean, data?:any, error?:string}>}
  */
-export async function loginToExe (account, password, saveProfile = true) {
+export async function loginToApi (account, password, saveProfile = true) {
   if (!account || !password) return { ok: false, error: '账号或密码为空' }
-  for (const base of discoverExe()) {
+  for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
@@ -403,15 +406,15 @@ export async function loginToExe (account, password, saveProfile = true) {
       logger.warn(`[MajsoulProtocol] 登录请求失败 base=${base}: ${e.message}`)
     }
   }
-  return { ok: false, error: '未找到可用的 exe 服务（请确认已启用 autoLaunch 或手动启动 exe）' }
+  return { ok: false, error: '未找到可用的本地 API 服务（请确认已启用 autoLaunch 或手动启动 API）' }
 }
 
 /**
- * 查询 exe 当前登录账户信息。用于判断是否已登录。
+ * 查询本地 API 当前登录账户信息。用于判断是否已登录。
  * @returns {Promise<{ok:boolean, account?:any}>}
  */
-export async function getExeAccount () {
-  for (const base of discoverExe()) {
+export async function getApiAccount () {
+  for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
@@ -427,11 +430,11 @@ export async function getExeAccount () {
 }
 
 /**
- * 查询 exe 已保存的全部登录档案（含昵称/头像）。
+ * 查询本地 API 已保存的全部登录档案（含昵称/头像）。
  * @returns {Promise<{ok:boolean, profiles?:Array<{nickname?:string, avatarId?:number, accountId?:number}>}>}
  */
-export async function getExeProfiles () {
-  for (const base of discoverExe()) {
+export async function getApiProfiles () {
+  for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
@@ -447,17 +450,17 @@ export async function getExeProfiles () {
 }
 
 export async function fetchFullRecord (paipu) {
-  if (!isExeEnabled()) throw new Error('majsoul-protocol 未启用')
+  if (!isApiEnabled()) throw new Error('majsoul-protocol 未启用')
   const dto = await saveToLocal(paipu, { includeDataBase64: true })
   // 优先用内联 dataBase64；若用户未勾选“返回 Base64 原始牌谱”，
-  // exe 走 reference 外链模式（dataBase64 为 null），需另行下载/读取牌谱数据。
+  // API 走 reference 外链模式（dataBase64 为 null），需另行下载/读取牌谱数据。
   let dataBase64 = dto.dataBase64
   if (!dataBase64 && dto.reference) {
     const ref = dto.reference
     try {
       if (ref.dataDownloadUrl) {
-        // 相对地址基于 exe 根地址；这里 base 在 saveToLocal 已缓存
-        const base = cachedExeBase || ''
+        // 相对地址基于 API 根地址；这里 base 在 saveToLocal 已缓存
+        const base = cachedApiBase || ''
         const dl = ref.dataDownloadUrl.startsWith('http')
           ? ref.dataDownloadUrl
           : `${base}${ref.dataDownloadUrl}`
@@ -471,8 +474,8 @@ export async function fetchFullRecord (paipu) {
       throw new Error(`reference 模式取牌谱失败：${e.message}`)
     }
   }
-  if (!dataBase64) throw new Error('exe 未返回牌谱数据（dataBase64 与 reference 均缺失）')
-  const decoded = decodeRecordBase64(dataBase64, {
+  if (!dataBase64) throw new Error('本地 API 未返回牌谱数据（dataBase64 与 reference 均缺失）')
+  const decoded = await decodeRecordBase64(dataBase64, {
     players: dto.players || [],
     uuid: dto.uuid,
     endTime: dto.endTime,
@@ -492,24 +495,24 @@ export async function fetchRecordHead (paipu) {
   return { head }
 }
 
-// 以下为旧版网页版/模拟登录相关接口的兼容占位，当前走 exe 通道不再需要。
+// 以下为旧版网页版/模拟登录相关接口的兼容占位，当前走本地 API 通道不再需要。
 // 保留空实现以避免 MajsoulReview.js 引用时报错（其已优先尝试协议通道）。
 export async function checkSession () { return false }
-export async function ensureSession () { throw new Error('协议通道由 exe 提供，无需模拟登录') }
-export async function getPlayerList () { throw new Error('协议通道由 exe 提供') }
-export async function fetchGameRecordByPlayer () { throw new Error('协议通道由 exe 提供') }
-export async function fetchGameRecord () { throw new Error('协议通道由 exe 提供') }
+export async function ensureSession () { throw new Error('协议通道由本地 API 提供，无需模拟登录') }
+export async function getPlayerList () { throw new Error('协议通道由本地 API 提供') }
+export async function fetchGameRecordByPlayer () { throw new Error('协议通道由本地 API 提供') }
+export async function fetchGameRecord () { throw new Error('协议通道由本地 API 提供') }
 export function clearLoginCache () {}
 export function getLoginInfo () { return null }
-export function getExeCandidates () { return discoverExe() }
+export function getApiCandidates () { return discoverApi() }
 
 /**
  * 协议通道是否启用（供 MajsoulReview 判断取谱入口是否可用）。
  */
 export function isEnabled () {
-  return isExeEnabled()
+  return isApiEnabled()
 }
-export function setExeBase (url) { cachedExeBase = url }
+export function setApiBase (url) { cachedApiBase = url }
 
 /**
  * 返回协议客户端对象（供 MajsoulReview 调用，保持原有 client.xxx() 写法）。
@@ -520,8 +523,8 @@ export function getProtocolClient () {
     isEnabled,
     fetchRecordHead,
     fetchFullRecord,
-    loginToExe,
-    getExeAccount,
-    getExeProfiles,
+    loginToApi,
+    getApiAccount,
+    getApiProfiles,
   }
 }

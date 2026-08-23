@@ -12,7 +12,7 @@ import { MajsoulHelp } from './apps/MajsoulHelp.js';
 import MajsoulSchedule from './utils/MajsoulSchedule.js';
 import { cleanupPaipu, cleanupAvatar, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
 import { updateLqc } from './utils/lqcUpdater.js';
-import { ensureExeRunning } from './utils/MajsoulProtocolClient.js';
+import { ensureApiRunning } from './utils/MajsoulProtocolClient.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -301,8 +301,8 @@ export class majsoul extends plugin {
     // 插件加载时的初始化
   async init() {
     console.log('[Majsoul-Plugin] 雀魂插件初始化...');
-    // Windows 下若启用 autoLaunch 且 exe 未运行，则自动 spawn 拉起（非 Windows/未开启则跳过）
-    ensureExeRunning().catch(e => console.error('[Majsoul-Plugin] 拉起 exe 失败:', e));
+    // Windows 下若启用 autoLaunch 且 API 未运行，则自动 spawn 拉起（非 Windows/未开启则跳过）
+    ensureApiRunning().catch(e => console.error('[Majsoul-Plugin] 拉起 API 失败:', e));
     // 启动时尝试更新 lqc.json（角色/皮肤映射）；失败不影响使用，内部已捕获
     updateLqc().catch(() => {});
     for (const [key, mod] of Object.entries(this.modules)) {
