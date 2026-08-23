@@ -56,7 +56,9 @@ export async function reviewTenhouProtocol (record, gameId, paipuUrl = '', playe
     try {
       const cached = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
       if (cached.review && cached.review.kyokus) {
-        return { data: { review: cached.review, player_id: cached.player_id || 0 } }
+        // 优先用调用方传入的 playerId（指定座位时刷新主视角），缓存里的 player_id 仅作兜底
+        const pid = (Number.isInteger(playerId) && playerId >= 0 && playerId <= 3) ? playerId : (cached.player_id || 0)
+        return { data: { review: cached.review, player_id: pid } }
       }
       // 三麻错误响应不缓存
       if (/not a four-player|three-player|三麻/i.test(JSON.stringify(cached))) {
@@ -90,14 +92,18 @@ export async function reviewTenhouProtocol (record, gameId, paipuUrl = '', playe
   if (typeof reportData === 'string') return reportData // 错误提示
 
   // 6. 落盘（结构对齐 reviewMortal）
+  // 主视角 seat 以调用方解析的 playerId 为准（来自牌谱链接后缀 accountId 匹配），
+  // 不依赖 homura 是否回显 player_id，避免渲染主视角错回 seat0。
+  const finalPlayerId = Number.isInteger(playerId) && playerId >= 0 && playerId <= 3 ? playerId : (reportData.player_id || 0)
+  const saved = { ...reportData, player_id: finalPlayerId }
   if (!fs.existsSync(REVIEW_PATH)) fs.mkdirSync(REVIEW_PATH, { recursive: true })
-  fs.writeFileSync(reviewPath, JSON.stringify(reportData), 'utf8')
-  logger.info(`已保存 AI 分析报告到: ${reviewPath}`)
+  fs.writeFileSync(reviewPath, JSON.stringify(saved), 'utf8')
+  logger.info(`已保存 AI 分析报告到: ${reviewPath} (player_id=${finalPlayerId})`)
 
-  if (reportData.review && reportData.review.kyokus) {
-    return { data: { review: reportData.review, player_id: reportData.player_id || 0 } }
+  if (saved.review && saved.review.kyokus) {
+    return { data: { review: saved.review, player_id: finalPlayerId } }
   }
-  return reportData
+  return saved
 }
 
 /**

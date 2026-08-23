@@ -449,13 +449,39 @@ export async function getExeProfiles () {
 export async function fetchFullRecord (paipu) {
   if (!isExeEnabled()) throw new Error('majsoul-protocol 未启用')
   const dto = await saveToLocal(paipu, { includeDataBase64: true })
-  if (!dto.dataBase64) throw new Error('exe 未返回 dataBase64，请开启 includeDataBase64')
-  return decodeRecordBase64(dto.dataBase64, {
+  // 优先用内联 dataBase64；若用户未勾选“返回 Base64 原始牌谱”，
+  // exe 走 reference 外链模式（dataBase64 为 null），需另行下载/读取牌谱数据。
+  let dataBase64 = dto.dataBase64
+  if (!dataBase64 && dto.reference) {
+    const ref = dto.reference
+    try {
+      if (ref.dataDownloadUrl) {
+        // 相对地址基于 exe 根地址；这里 base 在 saveToLocal 已缓存
+        const base = cachedExeBase || ''
+        const dl = ref.dataDownloadUrl.startsWith('http')
+          ? ref.dataDownloadUrl
+          : `${base}${ref.dataDownloadUrl}`
+        const buf = await fetch(dl, { signal: AbortSignal.timeout(getTimeoutMs()) })
+          .then(r => { if (!r.ok) throw new Error(`下载牌谱数据失败 ${r.status}`); return r.arrayBuffer() })
+        dataBase64 = Buffer.from(buf).toString('base64')
+      } else if (ref.dataFile && fs.existsSync(ref.dataFile)) {
+        dataBase64 = fs.readFileSync(ref.dataFile).toString('base64')
+      }
+    } catch (e) {
+      throw new Error(`reference 模式取牌谱失败：${e.message}`)
+    }
+  }
+  if (!dataBase64) throw new Error('exe 未返回牌谱数据（dataBase64 与 reference 均缺失）')
+  const decoded = decodeRecordBase64(dataBase64, {
     players: dto.players || [],
     uuid: dto.uuid,
     endTime: dto.endTime,
     standardRule: dto.standardRule
   })
+  // 透传主视角账号（本地 API 下发的 reference.targetAccountId），供上层匹配主视角 seat 使用
+  const targetAccountId = dto.reference?.targetAccountId ?? dto.targetAccountId
+  if (targetAccountId) decoded.targetAccountId = targetAccountId
+  return decoded
 }
 
 /**

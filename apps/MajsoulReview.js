@@ -101,9 +101,20 @@ export class MajsoulReview extends plugin {
     const raw = e.msg.replace(/^#?(牌谱Review|牌谱review|Review|review) /, '').trim()
     if (!raw) return e.reply('❌ 请输入有效的牌谱URL!')
 
-    // 纯协议取谱（对接本地 exe，不再走网页/浏览器桥）
-    const paipuUrl = raw
+    // 可选座位参数：review <牌谱链接> [座位]
+    // 座位支持：东/南/西/北、或 1/2/3/4（1=东=seat0，2=南=seat1，3=西=seat2，4=北=seat3）
+    // 例：review https://game.maj-soul.com/1/?paipu=xxx_a64678917 北
+    //     review https://game.maj-soul.com/1/?paipu=xxx_a64678917 4   （同样是北家 seat3）
+    let paipuUrl = raw
+    let forcedSeat = null
+    const seatMatch = raw.match(/\s+(东|南|西|北|1|2|3|4)\s*$/)
+    if (seatMatch) {
+      const SEAT_MAP = { '东': 0, '南': 1, '西': 2, '北': 3, '1': 0, '2': 1, '3': 2, '4': 3 }
+      forcedSeat = SEAT_MAP[seatMatch[1]]
+      paipuUrl = raw.slice(0, seatMatch.index).trim()
+    }
 
+    // 纯协议取谱（对接本地 exe，不再走网页/浏览器桥）
     if (!paipuUrl.startsWith('http')) {
       return e.reply('❌ 请输入完整的牌谱URL!\n例如：https://game.maj-soul.com/1/?paipu=xxx')
     }
@@ -174,7 +185,41 @@ export class MajsoulReview extends plugin {
     }
     if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位主源(牌谱自身解析): dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
 
-    const res = await reviewTenhouProtocol(full.record, gameId, paipuUrl)
+    // 主视角账号：仅用本地 API（exe）下发的 targetAccountId（真实账号 ID）。
+    // 牌谱链接 UUID 后的 _a64678917 是雀魂的分享访问令牌，并非账号 ID，
+    // 不能当作 accountId 去匹配座位，故不再解析 URL 后缀。
+    let mainAccountId = null
+    try {
+      if (Number.isFinite(Number(full?.targetAccountId)) && Number(full.targetAccountId) > 0) {
+        mainAccountId = Number(full.targetAccountId)
+      }
+    } catch {}
+    let mainSeat = null
+    if (Number.isInteger(forcedSeat) && forcedSeat >= 0 && forcedSeat <= 3) {
+      // 用户显式指定座位（东/南/西/北 或 0~3），优先使用，跳过主视角账号匹配
+      // 校验：指定座位不得超过实际玩家数（四麻 0~3，三麻 0~2）
+      const playerCount = (full?.head?.accounts || []).length || (full?.record?.head?.result?.players || []).length || 4
+      if (forcedSeat >= playerCount) {
+        const SEAT_CN = ['东', '南', '西', '北']
+        return e.reply(`❌ 本局仅有 ${playerCount} 名玩家，无法指定「${SEAT_CN[forcedSeat]}家」。\n可选座位：${SEAT_CN.slice(0, playerCount).map((s, i) => `${s}(${i + 1})`).join('、')}`)
+      }
+      mainSeat = forcedSeat
+    } else if (mainAccountId) {
+      // 主视角匹配用 full.head.accounts（含 account_id + seat），
+      // 注意 record.head.result.players 重建时不含 account_id，不可用。
+      const accounts = full?.head?.accounts || []
+      const me = accounts.find(p => Number(p.account_id) === mainAccountId)
+      if (me && typeof me.seat === 'number') mainSeat = me.seat
+    }
+    // 既无指定座位、又无法从牌谱 target 解析主视角时，不静默 fallback 到 seat0，
+    // 直接报错让用户明确提供座位参数。
+    if (mainSeat === null) {
+      return e.reply('❌ 无法确定分析的主视角：牌谱未携带主视角账号信息，且未指定座位参数。\n请附带座位再试，例如：#牌谱Review <URL> 北（东/南/西/北 或 0~3）。')
+    }
+    const SEAT_CN = ['东', '南', '西', '北']
+    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 主视角 seat=${mainSeat}(${SEAT_CN[mainSeat]}) forced=${forcedSeat ?? '否'} accountId=${mainAccountId ?? '未知'}`)
+
+    const res = await reviewTenhouProtocol(full.record, gameId, paipuUrl, mainSeat)
     if (typeof res === 'string') return e.reply(res)
 
     if (realHead && Array.isArray(realHead.accounts) && realHead.accounts.length) {

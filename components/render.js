@@ -1449,6 +1449,15 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
             if (rankImg) barCtx.drawImage(rankImg, 234, 32, 94, 94)
           } catch (e) {}
 
+  // 座次图标（东南西北）：seat 0~3 → east/south/west/north，画在头像右下角
+  // 头像区域 bar 内 (69,15) 128x128，右下角 = (69+128-41, 15+128-41) = (156,102)
+  // 素材来自 review_texture/{east,south,west,north}.png（41x41）
+  try {
+    const SEAT_IMG = ['east', 'south', 'west', 'north']
+    const seatImg = await loadResImage(`review_texture/${SEAT_IMG[seat] || 'east'}.png`)
+    if (seatImg) barCtx.drawImage(seatImg, 156, 102, 41, 41)
+  } catch (e) {}
+
   // 玩家名 (355,80) lm；段位文字 (653,80) mm；段位分 (817,80) mm
   // 段位名 / 段位分已优先使用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 26508~26518 行）
   drawText(barCtx, name, 355, 80, 34, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
