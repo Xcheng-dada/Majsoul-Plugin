@@ -255,23 +255,39 @@ function kyokuToString(kyoku) {
   return `${rounds[wind]}${number}局`
 }
 
-async function drawEnBg(en, index, _actorId) {
+async function drawEnBg(en, index, _actorId, entries) {
   const tehai = en.state.tehai || []
   const fuuros = en.state.fuuros || []
   const ai = en.expected
   const actual = en.actual
   const nowPai = en.tile
   const lastActor = en.last_actor
-  const isEqual = en.is_equal
+  const enIsEqual = en.is_equal
 
   const actorId = actual.actor !== undefined ? actual.actor : _actorId
 
   const actualType = actual.type
   const aiType = ai.type
 
-  // 立直(actual 无 pai)时，从 details 里同 actor 的 dahai 推导真正的立直打牌
+  // 立直(actual 无 pai)时，从「下一个同玩家的 dahai entry」推导真正的立直打牌。
+  // tenhou 日志里 reach 和 dahai 是两条连续事件，Mortal 的 actual.type==='reach' 不带 pai，
+  // 真正的立直打牌在后续 entry 里。注意：不能从 en.details 抓 AI 候选的 dahai，
+  // 否则会把 AI 建议（如“不立直就打 4m”）误当成实际打出的牌。
   function getReachDiscardPai(act, actor) {
     if (act && act.pai) return act.pai
+    if (!act || act.type !== 'reach') return null
+    if (!entries || !Array.isArray(entries)) return null
+    for (let i = index + 1; i < entries.length; i++) {
+      const a = entries[i].actual
+      if (a && a.actor === actor && a.type === 'dahai' && a.pai) return a.pai
+    }
+    return null
+  }
+  // AI 推荐立直时也没有直接 pai；按用户要求，AI 立直时显示的打牌取 details 中
+  // 第一个 AI 候选 dahai，以便在图中高亮展示推荐打牌。
+  function getAiReachDiscardPai(act, actor) {
+    if (act && act.pai) return act.pai
+    if (!act || act.type !== 'reach') return null
     for (const det of (en.details || [])) {
       const a = det && det.action
       if (a && a.type === 'dahai' && a.actor === actor && a.pai) return a.pai
@@ -279,10 +295,15 @@ async function drawEnBg(en, index, _actorId) {
     return null
   }
   const reachPai = actualType === 'reach' ? getReachDiscardPai(actual, actorId) : null
-  const aiReachPai = aiType === 'reach' ? getReachDiscardPai(ai, actorId) : null
+  const aiReachPai = aiType === 'reach' ? getAiReachDiscardPai(ai, actorId) : null
   // dahai 用 actual.pai；reach 用推导出的立直打牌
   const discardPai = actualType === 'reach' ? reachPai : (actual.pai || null)
   const aiDiscardPai = aiType === 'reach' ? aiReachPai : (ai.pai || null)
+  // 立直帧：actual/expected 都是 reach（is_equal 恒为 true），真正的分歧在
+  // 「立直打哪张」——用推导出的「你立直打牌」与「AI 立直打牌」是否一致来判定异议。
+  // 例如 AI 立直打 4m、你立直打 8m，应判为异议（no）而非一致。
+  const isReachDiff = actualType === 'reach' && (discardPai || aiDiscardPai) && discardPai !== aiDiscardPai
+  const isEqual = actualType === 'reach' ? !isReachDiff : enIsEqual
   // 摸切：打出的牌 == 刚摸到的牌（tsumogiri 或 立直打牌==摸牌）
   const isTsumogiri = actualType === 'dahai'
     ? (actual.tsumogiri === true)
@@ -350,6 +371,12 @@ function getActionText(action) {
     // 碰/吃后的打牌，不显示"出牌"，因为上边已经显示了操作类型
     frameName = ''
     frameStr = ''
+  } else if (actualType === "none") {
+    // 玩家无实际动作（跳过/无响应）：不显示"xxx出牌"。
+    // 注意：Mortal 在 none 帧的 en.tile/last_actor 经常错位（已实锤：会把历史出过的牌
+    // 串到这种帧上），画出来会误导，故此类帧不渲染右侧牌、不显示出牌来源。
+    frameName = ''
+    frameStr = ''
   } else if (actualType !== "ankan") {
     // 碰/吃/杠等反应操作，显示"xxx出牌"
     frameName = 'action.png'
@@ -385,8 +412,9 @@ function getActionText(action) {
     // 荣和/自摸的牌来自牌河或刚摸进，不在自己手牌里，因此不在手中抬起高亮
     actualPais = []
   } else if (actualType === "reach") {
-    // 立直打牌：actual 无 pai 时用推导出的 discardPai；摸切(打出==摸到)时左手不抬
-    actualPais = isTsumogiri ? [] : (discardPai ? [discardPai] : (tehai.length > 0 ? [tehai[0]] : []))
+    // 立直打牌：从后续 entry 推导出的 discardPai；摸切(打出==摸到)时左手不抬。
+    // 注意：不要 fallback 到 tehai[0]，否则会高亮错误的牌（如把 4m 当成立直打牌）。
+    actualPais = isTsumogiri ? [] : (discardPai ? [discardPai] : [])
   } else if (['chi', 'pon', 'kan', 'kakan'].includes(actualType)) {
     // 碰/吃/杠：高亮抬起的是手上被消耗的牌（做副露动作），而非对方打出的那一张
     if (actual.consumed && actual.consumed.length > 0) {
@@ -572,7 +600,7 @@ function getActionText(action) {
   // 碰/吃后的打牌其 tile 是副露牌，不应再画在右侧。
   // none（上家打牌、玩家跳过）时也把上家打出的牌显示在右侧；
   // 自摸打牌（isSelfDraw）显示"自己摸到"；碰/吃/杠显示获得的牌；荣和显示荣和的牌。
-  if (nowPai && (isSelfDraw || ['pon', 'chi', 'kan', 'kakan', 'hora', 'none'].includes(actualType))) {
+  if (nowPai && (isSelfDraw || ['pon', 'chi', 'kan', 'kakan', 'hora'].includes(actualType))) {
     try { 
       nowHaiImg = await loadResImage(`review_texture/pai/${nowPai}.png`) 
       const frameImg = await loadResImage(`review_texture/${frameName}`)
@@ -588,7 +616,7 @@ function getActionText(action) {
 
   drawText(ctx, frameStr, 1307, 236, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
 
-  return { canvas, actorId }
+  return { canvas, actorId, isMatch: isEqual }
 }
 
 const api = new MajsoulApi()
@@ -1487,12 +1515,23 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   
   for (let index = 0; index < limit; index++) {
     const en = kyokus.entries[index]
+    const actualType = (en.actual && en.actual.type) || 'none'
+
+    // 立直后的 dahai 帧（at_self_riichi）：它与「立直宣言(reach)帧」是同一手动作的两段，
+    // 真正的「AI 立直打 X / 你立直打 Y」分歧已在 reach 帧展示，故此处跳过避免重复。
+    // 立直后的自摸/暗杠/荣和（hora/ankan）不属于该重复帧，正常保留。
+    if (en.at_self_riichi === true && actualType === 'dahai') {
+      // 跳过渲染，但维持 actorId 链（与 drawEnBg 返回值一致：取本帧 actual.actor）
+      if (en.actual && typeof en.actual.actor === 'number') actorId = en.actual.actor
+      continue
+    }
+
     nowReviewed++
     
-    const { canvas: enBg, actorId: aId } = await drawEnBg(en, index, actorId)
+    const { canvas: enBg, actorId: aId, isMatch } = await drawEnBg(en, index, actorId, kyokus.entries)
     actorId = aId
-    
-    if (en.is_equal) nowMatches++
+
+    if (isMatch) nowMatches++
     else {
       let warning = false
       for (let proba of (en.details || [])) {
