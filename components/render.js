@@ -372,11 +372,13 @@ function getActionText(action) {
     frameName = ''
     frameStr = ''
   } else if (actualType === "none") {
-    // 玩家无实际动作（跳过/无响应）：不显示"xxx出牌"。
-    // 注意：Mortal 在 none 帧的 en.tile/last_actor 经常错位（已实锤：会把历史出过的牌
-    // 串到这种帧上），画出来会误导，故此类帧不渲染右侧牌、不显示出牌来源。
-    frameName = ''
-    frameStr = ''
+    // 玩家无实际动作（跳过/无响应）：这是「其他家出牌、你跳过」的帧。
+    // 在右侧显示对方打出的牌 + 来源（上家/对家/下家），让玩家看到他家出了什么。
+    // 注意：Mortal 在 none 帧的 en.tile/last_actor 偶有错位，但本帧的 tile 即对方刚打出的牌，
+    // 用 last_actor 与 actorId 的差定位来源，错位风险可控（虚建议和牌帧已在主循环单独跳过）。
+    frameName = 'action.png'
+    const targetStr = getDiff(actorId, lastActor)
+    frameStr = `${targetStr}出牌`
   } else if (actualType !== "ankan") {
     // 碰/吃/杠等反应操作，显示"xxx出牌"
     frameName = 'action.png'
@@ -597,10 +599,11 @@ function getActionText(action) {
   // 1. 自摸打牌显示摸到的牌
   // 2. 碰/吃/杠显示获得的牌
   // 3. 荣和显示荣和的牌（对方打出的牌）
+  // 4. none（他家出牌、玩家跳过）显示对方打出的牌
   // 碰/吃后的打牌其 tile 是副露牌，不应再画在右侧。
-  // none（上家打牌、玩家跳过）时也把上家打出的牌显示在右侧；
-  // 自摸打牌（isSelfDraw）显示"自己摸到"；碰/吃/杠显示获得的牌；荣和显示荣和的牌。
-  if (nowPai && (isSelfDraw || ['pon', 'chi', 'kan', 'kakan', 'hora'].includes(actualType))) {
+  // 自摸打牌（isSelfDraw）显示"自己摸到"；碰/吃/杠显示获得的牌；荣和显示荣和的牌；
+  // none 帧显示上家/对家/下家打出的牌（来源见上方 frameStr）。
+  if (nowPai && (isSelfDraw || actualType === 'none' || ['pon', 'chi', 'kan', 'kakan', 'hora'].includes(actualType))) {
     try { 
       nowHaiImg = await loadResImage(`review_texture/pai/${nowPai}.png`) 
       const frameImg = await loadResImage(`review_texture/${frameName}`)
@@ -1522,6 +1525,14 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
     // 立直后的自摸/暗杠/荣和（hora/ankan）不属于该重复帧，正常保留。
     if (en.at_self_riichi === true && actualType === 'dahai') {
       // 跳过渲染，但维持 actorId 链（与 drawEnBg 返回值一致：取本帧 actual.actor）
+      if (en.actual && typeof en.actual.actor === 'number') actorId = en.actual.actor
+      continue
+    }
+
+    // 虚建议和牌帧：actual.type==='none' 但 expected==='hora'（你实际没有和、AI 建议和）。
+    // Mortal 在此类帧的 tile/last_actor 经常错位（实锤：会把别处打出的牌串到这帧，
+    // 如本该对家打 7m 荣和却挂错巡），画出来会误导，故直接跳过不渲染。
+    if (actualType === 'none' && aiType === 'hora') {
       if (en.actual && typeof en.actual.actor === 'number') actorId = en.actual.actor
       continue
     }
