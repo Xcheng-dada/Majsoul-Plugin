@@ -1458,12 +1458,16 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
             if (rankImg) barCtx.drawImage(rankImg, 234, 32, 94, 94)
           } catch (e) {}
 
-  // 座次图标（东南西北）：seat 0~3 → east/south/west/north，画在头像右下角
+  // 座次图标（东南西北）：画在头像右下角
   // 头像区域 bar 内 (69,15) 128x128，右下角 = (69+128-41, 15+128-41) = (156,102)
   // 素材来自 review_texture/{east,south,west,north}.png（41x41）
+  // 注意：player_id 是被分析玩家的「起家座位」（固定身份 0~3），而每局的门风会顺延，
+  // 当前局门风 = (player_id - 本局序号 kyoku + 4) % 4（每过一局所有玩家逆时针轮一家）。
   try {
     const SEAT_IMG = ['east', 'south', 'west', 'north']
-    const seatImg = await loadResImage(`review_texture/${SEAT_IMG[seat] || 'east'}.png`)
+    const kyoku = Number(kyokus?.kyoku) || 0
+    const windSeat = ((seat - kyoku) % 4 + 4) % 4
+    const seatImg = await loadResImage(`review_texture/${SEAT_IMG[windSeat] || 'east'}.png`)
     if (seatImg) barCtx.drawImage(seatImg, 156, 102, 41, 41)
   } catch (e) {}
 
