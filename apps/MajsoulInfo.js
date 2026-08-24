@@ -250,7 +250,10 @@ export class MajsoulInfo extends plugin {
             const headPrefix = `${name}${rankStr ? `(${rankStr})` : ''} - `;
             
             if (targetEntry) {
-                lines.push(`${headPrefix}${cfg.label}最近${this.getGameCount(targetEntry)}战`);
+                // 标题用统计窗口 roundCount（可能封顶100）；真实总对局数放「对战数」行（finalPositionCounts 求和）
+                const total = this.getGameCount(targetEntry);
+                const recent = targetEntry.roundCount || total;
+                lines.push(`${headPrefix}${cfg.label}最近${Math.min(recent, total)}战`);
                 lines.push(...this.buildStatLines(targetEntry, mode));
             } else {
                 lines.push(`${headPrefix}暂无${mode === '3' ? '三麻' : '四麻'}${cfg.label}统计数据`);
@@ -340,10 +343,6 @@ export class MajsoulInfo extends plugin {
         if (entry.roundCount > 0) return entry.roundCount;
         if (Array.isArray(entry.recentGames)) return entry.recentGames.length;
         return 0;
-    }
-    
-    buildScopeTitle(label, entry) {
-        return `${label}最近${this.getGameCount(entry)}战`;
     }
     
     buildStatLines(entry, mode) {
