@@ -1356,7 +1356,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   ctx.drawImage(detailCanvas, 0, 1188)
   ctx.drawImage(mid, 0, 1161)
   drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo | Python-to-JS移植: QingFeng', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: 牌谱屋 + 雀魂官方 | Python-to-JS移植: QingFeng', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
 
   const rank4Icon = await getRankIcon(level4, data4, extended4, "4")
   const rank3Icon = await getRankIcon(level3, data3, extended3, "3")
@@ -1584,7 +1584,7 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     y += PLAYER_CARD_HEIGHT + CARD_GAP
   }
   
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: amae-koromo', width / 2, height - 12, 12, '#ffffff', 'center', 'bold')
+  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: 牌谱屋 + 雀魂官方', width / 2, height - 12, 12, '#ffffff', 'center', 'bold')
   
   return canvas.toBuffer('image/jpeg', 85)
 }
