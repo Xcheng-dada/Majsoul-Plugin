@@ -449,6 +449,74 @@ export async function getApiProfiles () {
   return { ok: false, profiles: [] }
 }
 
+/**
+ * 查询任意玩家的实时段位 PT（替代 BotLink 的实时 PT 通道）。
+ * 底层走本地 API 的 fetchMultiAccountBrief RPC：查询者需已登录（被查者无需好友），数据实时。
+ * @param {number|string} accountId 目标玩家 accountId
+ * @returns {Promise<object|null>} PlayerBriefDto: {accountId, nickname, avatarId, level:{id,score}, level3:{id,score}, ...}；失败返回 null
+ */
+export async function getPlayerBrief (accountId) {
+  if (accountId == null || accountId === '') return null
+  for (const base of discoverApi()) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
+      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}`, { signal: ctrl.signal })
+      clearTimeout(t)
+      if (r.ok) {
+        return await r.json().catch(() => null)
+      }
+    } catch (e) { /* try next */ }
+  }
+  return null
+}
+
+/**
+ * 获取玩家对局统计（本地 API /api/players/{accountId}/statistics）
+ * 返回 { accountId, entries }，entries 内每个元素含：
+ *   mahjongCategory(1四麻/2三麻) × gameCategory(1段位/2友人/4其他) × gameType
+ *   finalPositionCounts[顺位]、roundCount(封顶100)、ronRate/tsumoRate/dealInRate/winRate(0~1)、recentGames[{rank,finalPoint}]
+ * @returns {Promise<{accountId:number, entries:Array<object>}|null>}
+ */
+export async function getPlayerStatistics (accountId) {
+  if (accountId == null || accountId === '') return null
+  for (const base of discoverApi()) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
+      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}/statistics`, { signal: ctrl.signal })
+      clearTimeout(t)
+      if (r.ok) {
+        return await r.json().catch(() => null)
+      }
+    } catch (e) { /* try next */ }
+  }
+  return null
+}
+
+/**
+ * 好友码（公开玩家 ID）→ 账号信息（本地 API /api/players/resolve）。
+ * 好友码是雀魂个人资料展示的公开数字 ID，既不是 account_id 也不是昵称。
+ * 用于牌谱屋搜不到（无金之间对局）的铜银玩家兜底识别。
+ * @param {number|string} friendId 好友码
+ * @returns {Promise<object|null>} PlayerBriefDto: {accountId, nickname, avatarId, level:{id,score}, level3:{id,score}, ...}；失败返回 null
+ */
+export async function resolveFriendId (friendId) {
+  if (friendId == null || friendId === '') return null
+  for (const base of discoverApi()) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
+      const r = await fetch(`${base}/api/players/resolve?friendId=${encodeURIComponent(friendId)}`, { signal: ctrl.signal })
+      clearTimeout(t)
+      if (r.ok) {
+        return await r.json().catch(() => null)
+      }
+    } catch (e) { /* try next */ }
+  }
+  return null
+}
+
 export async function fetchFullRecord (paipu) {
   if (!isApiEnabled()) throw new Error('majsoul-protocol 未启用')
   const dto = await saveToLocal(paipu, { includeDataBase64: true })
@@ -526,5 +594,8 @@ export function getProtocolClient () {
     loginToApi,
     getApiAccount,
     getApiProfiles,
+    getPlayerBrief,
+    getPlayerStatistics,
+    resolveFriendId,
   }
 }

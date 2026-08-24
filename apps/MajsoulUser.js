@@ -1,7 +1,7 @@
 // plugins/Majsoul-Plugin/apps/MajsoulUser.js
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
-import BotLink from '../utils/BotLink.js';
+import { getPlayerBrief, resolveFriendId } from '../utils/MajsoulProtocolClient.js';
 import { drawSearchResultImg } from '../components/render.js';
 
 export class MajsoulUser extends plugin {
@@ -124,10 +124,30 @@ export class MajsoulUser extends plugin {
                 }
             }
             
-            const players = Object.values(mergedPlayers);
+            let players = Object.values(mergedPlayers);
+            
+            // 兜底：牌谱屋搜不到（无金之间对局）时，纯数字输入按好友码走本地 API resolve
+            if (players.length === 0 && /^\d{6,12}$/.test(playerName)) {
+                logger.debug(`[MajsoulUser] 尝试好友码解析: ${playerName}`);
+                const profile = await resolveFriendId(playerName);
+                if (profile && profile.accountId != null) {
+                    const uid = String(profile.accountId);
+                    const merged = {};
+                    merged[uid] = {
+                        id: profile.accountId,
+                        nickname: profile.nickname,
+                        level4: profile.level && profile.level.id >= 10000 && profile.level.id < 20000 ? { ...profile.level } : null,
+                        level3: profile.level3 && profile.level3.id >= 20000 && profile.level3.id < 30000 ? { ...profile.level3 } : null,
+                        playedModes4: [],
+                        playedModes3: [],
+                        latest_timestamp: 0
+                    };
+                    players = Object.values(merged);
+                }
+            }
             
             if (players.length === 0) {
-                await e.reply('暂未搜索到该玩家ID噢~\n提示: 需要在金之间有一定数量的对局才能被搜索到！');
+                await e.reply('暂未搜索到该玩家ID噢~\n提示: 该玩家需在金之间有一定数量的对局才能被搜索到；也可使用好友码搜索（#雀魂搜索 <好友码>）');
                 return true;
             }
             
@@ -181,30 +201,21 @@ export class MajsoulUser extends plugin {
                 }
             }
             
+            // 搜索卡片用实时段位（本地 API），订阅播报卡片另由 MajsoulSubscribeCore 渲染，不含实时段位
             const realtimeData = {};
-            
-            if (e.group_id) {
+            for (const player of players) {
                 try {
-                    logger.info('[MajsoulUser] 尝试获取实时PT数据...');
-                    const ptResult = await BotLink.queryPT(playerName, e.group_id);
-                    
-                    if (ptResult && ptResult.isRealTime) {
-                        if (ptResult.uid) {
-                            realtimeData[ptResult.uid] = ptResult;
-                        }
-                        
-                        for (const player of players) {
-                            if (realtimeData[player.id.toString()]) {
-                                continue;
-                            }
-                            
-                            if (ptResult.nickname && player.nickname === ptResult.nickname) {
-                                realtimeData[player.id.toString()] = ptResult;
-                            }
-                        }
-                    }
+                    const brief = await getPlayerBrief(player.id);
+                    if (!brief) continue;
+                    realtimeData[String(brief.accountId)] = {
+                        nickname: brief.nickname,
+                        uid: String(brief.accountId),
+                        isRealTime: true,
+                        fourPlayer: brief.level ? { levelId: brief.level.id, score: brief.level.score } : null,
+                        threePlayer: brief.level3 ? { levelId: brief.level3.id, score: brief.level3.score } : null
+                    };
                 } catch (error) {
-                    logger.warn('[MajsoulUser] 获取实时PT数据失败:', error);
+                    logger.warn(`[MajsoulUser] 获取玩家 ${player.id} 实时PT失败:`, error);
                 }
             }
             

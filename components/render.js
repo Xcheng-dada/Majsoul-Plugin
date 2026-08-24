@@ -2,6 +2,7 @@ import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { loadResImage, drawText, drawRoundRect, applyMask } from './canvas.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
+import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -70,11 +71,19 @@ async function fetchImageToFile(url, filePath) {
 
 // 角色头像资源在 CDN 上的真实 key 带语言前缀（lang/base/、jp/、cn/ 等），且前缀随版本变化，
 // 不能写死。这里用后缀匹配自动带上 locale 前缀并返回真实前缀，避免 404 / 旧前缀。
+// 注意：多数角色的 chs_t/jp/en/kr 前缀资源在国服 CDN 上 404，只有 lang/base/（基础资源）真实可用，
+// 因此候选优先选择 lang/base/，其次 lang/base_q7/，最后才是其它语言前缀。
 function findKeyBySuffix(source, suffix) {
   if (!source) return null
   if (source[suffix]) return suffix
   const normalized = suffix.replace(/\\/g, '/')
-  return Object.keys(source).find(k => k === normalized || k.endsWith(`/${normalized}`)) || null
+  const matches = Object.keys(source).filter(k => k === normalized || k.endsWith(`/${normalized}`))
+  if (matches.length === 0) return null
+  const langBase = matches.find(k => k.startsWith('lang/base/'))
+  if (langBase) return langBase
+  const langBaseQ7 = matches.find(k => k.startsWith('lang/base_q7/'))
+  if (langBaseQ7) return langBaseQ7
+  return matches[0]
 }
 
 let resversionCache = null
@@ -98,8 +107,8 @@ async function getResversionManifest() {
 
 const avatarAssetCache = new Map()
 
-async function resolveAvatarAsset(infoPath, extendRes) {
-  const suffix = `${infoPath}/bighead.png` // 形如 extendRes/charactor/jinwu/bighead.png
+async function resolveAvatarAsset(infoPath, extendRes, fileName = 'bighead.png') {
+  const suffix = `${infoPath}/${fileName}` // 形如 extendRes/charactor/jinwu/bighead.png
   if (avatarAssetCache.has(suffix)) return avatarAssetCache.get(suffix)
   let result
   // 1) 本地 extendRes.json（可能带 lang/base/ 等前缀，值即前缀字符串）
@@ -137,9 +146,13 @@ async function loadAvatarImage(avatarId) {
   const { lqc, extendRes } = loadAvatarConfig()
   const avatarInfo = lqc[String(avatarId)]
   if (!avatarInfo) {
-    if (typeof logger !== 'undefined') logger.warn(`[render.js] avatar_id=${avatarId} 不在 lqc.json 中，无法获取角色路径，回退默认头像`)
+    // 表外皮肤（lqc 缺失）：从 resources/person 随机头像，不再回退默认角色 400000
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] avatar_id=${avatarId} 不在 lqc.json 中，使用随机 person 头像`)
+    const randomPerson = getRandomPerson()
+    if (randomPerson) return await loadResImage(randomPerson)
+    return null
   }
-  const info = avatarInfo || lqc['400000']
+  const info = avatarInfo
   if (!info?.path) return null
 
   const charDirName = path.basename(info.path)
@@ -169,6 +182,104 @@ async function loadAvatarImage(avatarId) {
       return await loadImageFromCache(localPath)
     } catch (err2) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 头像加载失败 ${avatarId}: ${url} -> ${err.message}；雀魂DB兜底亦失败: ${err2.message}`)
+      return null
+    }
+  }
+}
+
+// ---- 服饰立绘处理：去黑边/透明边 + 保持 300:650 比例（Python 版 process_image 的 JS 移植） ----
+// 与 resources/person_full 的预处理规则一致：内容绝不拉伸，只补透明边，避免黑边/遮挡。
+async function processPortraitImage(buffer, targetW = 300, targetH = 650) {
+  const img = await loadImage(buffer)
+  const srcCanvas = createCanvas(img.width, img.height)
+  const srcCtx = srcCanvas.getContext('2d')
+  srcCtx.drawImage(img, 0, 0)
+  const { data } = srcCtx.getImageData(0, 0, img.width, img.height)
+
+  // 第一步：寻找有效内容边界（透明度 > 10 且 非接近纯黑 r+g+b > 10）
+  let left = img.width, top = img.height, right = 0, bottom = 0
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const i = (y * img.width + x) * 4
+      if (data[i + 3] > 10 && (data[i] + data[i + 1] + data[i + 2]) > 10) {
+        if (x < left) left = x
+        if (x > right) right = x
+        if (y < top) top = y
+        if (y > bottom) bottom = y
+      }
+    }
+  }
+  if (right <= left || bottom <= top) return buffer // 全透明/全黑：原样返回
+
+  const cw = right - left + 1
+  const ch = bottom - top + 1
+
+  // 第二步：按 targetW:targetH 比例补透明画布（内容不缩放）
+  const ratio = targetW / targetH
+  let newW, newH, ox = 0, oy = 0
+  if (cw / ch > ratio) {
+    // 偏宽：上下补透明条
+    newH = Math.round(cw / ratio)
+    newW = cw
+    oy = Math.round((newH - ch) / 2)
+  } else {
+    // 偏瘦高：左右补透明条
+    newW = Math.round(ch * ratio)
+    newH = ch
+    ox = Math.round((newW - cw) / 2)
+  }
+
+  const out = createCanvas(newW, newH)
+  const octx = out.getContext('2d')
+  octx.drawImage(img, left, top, cw, ch, ox, oy, cw, ch)
+  return out.toBuffer('image/png')
+}
+
+// 实时服饰立绘：avatarId → lqc.json path → CDN full.png → XOR解密 → 去黑边/比例处理 → 缓存 data/charactor/<角色>/full.png
+// CDN 失败时走雀魂DB 兜底（同头像 bighead 结构）；仅支持 lqc.json 内收录的皮肤，
+// 表外皮肤（lqc 缺失）返回 null，由调用方回退 person_full 随机图
+async function loadPortraitImage(avatarId) {
+  if (!avatarId) return null
+  const { lqc, extendRes } = loadAvatarConfig()
+  const info = lqc[String(avatarId)]
+  if (!info?.path) return null
+
+  const charDirName = path.basename(info.path)
+  const localPath = path.join(avatarCacheRoot, charDirName, 'full.png')
+  if (fs.existsSync(localPath)) {
+    try {
+      return await loadImageFromCache(localPath)
+    } catch (err) {
+      if (typeof logger !== 'undefined') logger.warn(`[render.js] 本地服饰缓存不可用 ${avatarId}: ${err.message}`)
+    }
+  }
+
+  // 解析真实资源路径（含 locale 前缀）与版本前缀
+  try {
+    const { assetPath, prefix } = await resolveAvatarAsset(info.path, extendRes, 'full.png')
+    const url = `https://game.maj-soul.com/1/${prefix}/${assetPath}`
+    const res = await (globalThis.fetch || (await import('node-fetch')).default)(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const raw = Buffer.from(await res.arrayBuffer())
+    const processed = await processPortraitImage(normalizeMajsoulImageBuffer(raw))
+    fs.mkdirSync(path.dirname(localPath), { recursive: true })
+    fs.writeFileSync(localPath, processed)
+    if (typeof logger !== 'undefined') logger.debug(`[render.js] 服饰立绘获取成功 ${avatarId}: ${url}`)
+    return await loadImage(processed)
+  } catch (err) {
+    // CDN 原路径取不到时，兜底走雀魂DB 资源镜像（与头像 bighead 同结构，full 为全身立绘）
+    const mjsdbUrl = `https://d7.mjsdb.ovh/s3/files/extracted/MyAssets/deco/character/${charDirName}/full/full.png`
+    try {
+      const res = await (globalThis.fetch || (await import('node-fetch')).default)(mjsdbUrl)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const raw = Buffer.from(await res.arrayBuffer())
+      const processed = await processPortraitImage(normalizeMajsoulImageBuffer(raw))
+      fs.mkdirSync(path.dirname(localPath), { recursive: true })
+      fs.writeFileSync(localPath, processed)
+      if (typeof logger !== 'undefined') logger.debug(`[render.js] 服饰立绘雀魂DB兜底成功 ${avatarId}: ${mjsdbUrl}`)
+      return await loadImage(processed)
+    } catch (err2) {
+      if (typeof logger !== 'undefined') logger.warn(`[render.js] 服饰立绘加载失败 ${avatarId}: ${err.message}；雀魂DB兜底亦失败: ${err2.message}`)
       return null
     }
   }
@@ -637,6 +748,20 @@ function getRandomPersonFull() {
   }
 }
 
+// 从 resources/person（角色头像图）随机取一张，用于表外皮肤的头像兜底
+function getRandomPerson() {
+  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person')
+  try {
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
+    if (files.length === 0) return null
+    const randomIndex = Math.floor(Math.random() * files.length)
+    return `person/${files[randomIndex]}`
+  } catch (e) {
+    if (typeof logger !== 'undefined') logger.warn(`[render.js] 读取person目录失败: ${e.message}`)
+    return null
+  }
+}
+
 
 
 
@@ -828,6 +953,59 @@ function parseRankFromText(rankText) {
   return { majorRank, minorRank };
 }
 
+// 牌谱屋两个模式都无数据的标记：drawMajsInfoImg 返回该串时，调用方应转文字兜底（本地API段位场）
+export const NO_MAJSOUL_STATS = '__NO_MAJSOUL_STATS__'
+
+/**
+ * 用本地 API 段位场(gc=2)数据填充牌谱屋无数据的模式（缺失字段保持零）。
+ * 牌谱屋只统计金/玉/王座，本地覆盖铜银金玉；这里仅把有对应关系的字段填上：
+ *   count/rank_rates/avg_rank ← finalPositionCounts
+ *   和牌率/自摸率/放铳率      ← winRate/tsumoRate/dealInRate
+ */
+async function fillModeFromLocal (data, extended, uid, mode) {
+  try {
+    const statRes = await getPlayerStatistics(uid)
+    if (!statRes || !Array.isArray(statRes.entries)) return
+    const mc = mode === 3 ? 2 : 1
+    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
+      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+    if (!entry) return
+    const fpc = entry.finalPositionCounts || []
+    const count = fpc.reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
+    if (count > 0) {
+      data.count = count
+      data.rank_rates = fpc.map(c => (c || 0) / count * 100)
+      while (data.rank_rates.length < 4) data.rank_rates.push(0)
+      data.rank_rates = data.rank_rates.slice(0, 4)
+      data.avg_rank = fpc.reduce((a, c, i) => a + ((c || 0) * (i + 1)), 0) / count
+    }
+    if (entry.winRate != null) extended['和牌率'] = entry.winRate
+    if (entry.tsumoRate != null) extended['自摸率'] = entry.tsumoRate
+    if (entry.dealInRate != null) extended['放铳率'] = entry.dealInRate
+    return entry
+  } catch (e) {
+    console.warn(`[render.js] 本地API填充模式${mode}数据失败: ${e.message}`)
+    return null
+  }
+}
+
+/**
+ * 无牌谱屋数据时，用本地 recentGames（顺位序列）构造走势图所需 record。
+ * 走势图按 旧→新 从左到右绘制，故 record 需为 新→旧（chart 内会 reverse）。
+ */
+function buildLocalRecord (entry, nickname, mode) {
+  if (!entry || !Array.isArray(entry.recentGames) || entry.recentGames.length === 0) return []
+  const n = mode === '3' ? 3 : 4
+  return entry.recentGames.slice(-16).reverse().map(g => {
+    const k = (g && g.rank != null && g.rank >= 1 && g.rank <= n) ? g.rank : n
+    const players = []
+    for (let i = 0; i < n; i++) {
+      players.push({ nickname: i === (k - 1) ? nickname : `__p${i}`, score: (n - i) * 100 })
+    }
+    return { players }
+  })
+}
+
 export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null) {
   let data4, data3, extended4, extended3
   
@@ -887,9 +1065,9 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     } catch {
       otherData = null
     }
-    // 另一模式也 404 → 两个模式都没打过金之间，返回文字
+    // 另一模式也 404 → 两个模式都没打过金之间，返回标记由调用方转文字兜底
     if (!otherData || otherData.retcode) {
-      return "未查找到该玩家...\n提示：该玩家可能尚未在金之间进行对局"
+      return NO_MAJSOUL_STATS
     }
   }
 
@@ -897,17 +1075,23 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const data4Valid = data4 && !data4.retcode
   const data3Valid = data3 && !data3.retcode
 
-  // 主模式 404 时，把数据替换为零对象（统计为 0）；替换后再用真实昵称兜底，避免被 "Player" 覆盖
+  let localEntry4 = null
+  let localEntry3 = null
+  // 主模式 404 时，把数据替换为零对象（统计为 0），并用本地 API 段位场数据填充有对应关系的字段
   // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行
   if (data4.retcode) {
     const realName = playerName || data3.nickname || otherData?.nickname || String(uid)
     data4 = JSON.parse(JSON.stringify(playerStatsZero))
     data4.nickname = realName
+    extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+    localEntry4 = await fillModeFromLocal(data4, extended4, uid, 4)
   }
   if (data3.retcode) {
     const realName = playerName || data4.nickname || otherData?.nickname || String(uid)
     data3 = JSON.parse(JSON.stringify(playerStatsZero))
     data3.nickname = realName
+    extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+    localEntry3 = await fillModeFromLocal(data3, extended3, uid, 3)
   }
   
 
@@ -927,7 +1111,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         record = []
       }
     } else {
-      record = []
+      record = buildLocalRecord(localEntry3, data3.nickname, '3')
     }
       if (roomFilter && data3Valid) {
         const mp = (roomFilter.ids[3] || []).join(',')
@@ -960,7 +1144,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         record = []
       }
     } else {
-      record = []
+      record = buildLocalRecord(localEntry4, data4.nickname, '4')
     }
     if (roomFilter && data4Valid) {
       const mp = (roomFilter.ids[4] || []).join(',')
@@ -994,33 +1178,53 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   if (realtimePT) {
     if (realtimePT.fourPlayer) {
-      const rank4 = parseRankFromText(realtimePT.fourPlayer.rank);
-      const level4Id = 1 * 10000 + rank4.majorRank * 100 + rank4.minorRank;
-      data4.level = { ...data4.level, id: level4Id };
-      if (realtimePT.fourPlayer.useApiScore && data4.level) {
+      // 优先用本地 API 直给的 levelId（已包含模式位 1/2），跳过 parseRankFromText
+      let level4Id = null;
+      if (realtimePT.fourPlayer.levelId != null) {
+        level4Id = realtimePT.fourPlayer.levelId;
+      } else if (realtimePT.fourPlayer.rank) {
+        const rank4 = parseRankFromText(realtimePT.fourPlayer.rank);
+        level4Id = 1 * 10000 + rank4.majorRank * 100 + rank4.minorRank;
+      }
+      if (level4Id != null) {
+        data4.level = { ...data4.level, id: level4Id };
+      }
+      // 本地 API 为实时数据：直给 score，不走 useApiScore 分支；仅在旧 BotLink 结构时回退原逻辑
+      if (realtimePT.fourPlayer.levelId != null) {
+        level4Score = realtimePT.fourPlayer.score;
+        // 本地 API 魂天 score 为 pt 值(0-2000)，需 /100 换算为 rating(0-20) 显示
+        if (level4Score != null && new PlayerLevel(level4Id, 0).isTenhou()) {
+          level4Score = level4Score / 100;
+        }
+      } else if (realtimePT.fourPlayer.useApiScore && data4.level) {
         const apiScore = data4.level.score + (data4.level.delta || 0);
         const level4Obj = new PlayerLevel(data4.level.id, 0);
-        if (level4Obj.isTenhou()) {
-          level4Score = apiScore / 100;
-        } else {
-          level4Score = apiScore;
-        }
+        level4Score = level4Obj.isTenhou() ? apiScore / 100 : apiScore;
       } else {
         level4Score = realtimePT.fourPlayer.score;
       }
     }
     if (realtimePT.threePlayer) {
-      const rank3 = parseRankFromText(realtimePT.threePlayer.rank);
-      const level3Id = 2 * 10000 + rank3.majorRank * 100 + rank3.minorRank;
-      data3.level = { ...data3.level, id: level3Id };
-      if (realtimePT.threePlayer.useApiScore && data3.level) {
+      let level3Id = null;
+      if (realtimePT.threePlayer.levelId != null) {
+        level3Id = realtimePT.threePlayer.levelId;
+      } else if (realtimePT.threePlayer.rank) {
+        const rank3 = parseRankFromText(realtimePT.threePlayer.rank);
+        level3Id = 2 * 10000 + rank3.majorRank * 100 + rank3.minorRank;
+      }
+      if (level3Id != null) {
+        data3.level = { ...data3.level, id: level3Id };
+      }
+      if (realtimePT.threePlayer.levelId != null) {
+        level3Score = realtimePT.threePlayer.score;
+        // 本地 API 魂天 score 为 pt 值(0-2000)，需 /100 换算为 rating(0-20) 显示
+        if (level3Score != null && new PlayerLevel(level3Id, 0).isTenhou()) {
+          level3Score = level3Score / 100;
+        }
+      } else if (realtimePT.threePlayer.useApiScore && data3.level) {
         const apiScore = data3.level.score + (data3.level.delta || 0);
         const level3Obj = new PlayerLevel(data3.level.id, 0);
-        if (level3Obj.isTenhou()) {
-          level3Score = apiScore / 100;
-        } else {
-          level3Score = apiScore;
-        }
+        level3Score = level3Obj.isTenhou() ? apiScore / 100 : apiScore;
       } else {
         level3Score = realtimePT.threePlayer.score;
       }
@@ -1163,15 +1367,26 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const charCtx = charCanvas.getContext('2d')
   charCtx.drawImage(charBg, 0, 0)
   try {
-    const randomPerson = getRandomPersonFull()
-    if (randomPerson) {
-      const personImg = await loadResImage(randomPerson)
-      const targetWidth = 289
-      const targetHeight = 617
-      const scale = Math.max(targetWidth / personImg.width, targetHeight / personImg.height)
-      const sx = (personImg.width - targetWidth / scale) / 2
-      const sy = (personImg.height - targetHeight / scale) / 2
-      charCtx.drawImage(personImg, sx, sy, targetWidth / scale, targetHeight / scale, 38, 37, targetWidth, targetHeight)
+    const avatarId = realtimePT && realtimePT.avatarId
+    const targetWidth = 289
+    const targetHeight = 617
+    // 优先：实时服饰立绘（已按 300:650 处理，contain 居中不裁内容）
+    let personImg = avatarId ? await loadPortraitImage(avatarId) : null
+    if (personImg) {
+      const scale = Math.min(targetWidth / personImg.width, targetHeight / personImg.height)
+      const dw = personImg.width * scale
+      const dh = personImg.height * scale
+      charCtx.drawImage(personImg, 0, 0, personImg.width, personImg.height, 38 + (targetWidth - dw) / 2, 37 + (targetHeight - dh) / 2, dw, dh)
+    } else {
+      // 回退：随机 person_full（cover 填满）
+      const randomPerson = getRandomPersonFull()
+      if (randomPerson) {
+        const randImg = await loadResImage(randomPerson)
+        const scale = Math.max(targetWidth / randImg.width, targetHeight / randImg.height)
+        const sx = (randImg.width - targetWidth / scale) / 2
+        const sy = (randImg.height - targetHeight / scale) / 2
+        charCtx.drawImage(randImg, sx, sy, targetWidth / scale, targetHeight / scale, 38, 37, targetWidth, targetHeight)
+      }
     }
   } catch(e) {}
   charCtx.drawImage(charFg, 0, 0)
@@ -1254,16 +1469,24 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     let level4, level3
     
     if (realtime && realtime.fourPlayer) {
-      const rank = parseRankFromText(realtime.fourPlayer.rank)
-      const levelId = rank.majorRank * 10000 + rank.majorRank * 100 + rank.minorRank
-      let score = realtime.fourPlayer.score
-      if (realtime.fourPlayer.useApiScore && player.level4) {
-        const apiScore = player.level4.score + (player.level4.delta || 0)
-        const tempLevel = new PlayerLevel(levelId, 0)
-        if (tempLevel.isTenhou()) {
-          score = apiScore / 100
-        } else {
-          score = apiScore
+      // 优先用本地 API 直给的 levelId；旧 BotLink 结构回退 parseRankFromText（修正模式位 bug）
+      let levelId
+      let score
+      if (realtime.fourPlayer.levelId != null) {
+        levelId = realtime.fourPlayer.levelId
+        score = realtime.fourPlayer.score
+        // 本地 API 魂天 score 为 pt 值(0-2000)，需 /100 换算为 rating(0-20) 显示
+        if (score != null && new PlayerLevel(levelId, 0).isTenhou()) {
+          score = score / 100
+        }
+      } else {
+        const rank = parseRankFromText(realtime.fourPlayer.rank)
+        levelId = 1 * 10000 + rank.majorRank * 100 + rank.minorRank
+        score = realtime.fourPlayer.score
+        if (realtime.fourPlayer.useApiScore && player.level4) {
+          const apiScore = player.level4.score + (player.level4.delta || 0)
+          const tempLevel = new PlayerLevel(levelId, 0)
+          score = tempLevel.isTenhou() ? apiScore / 100 : apiScore
         }
       }
       level4 = new PlayerLevel(levelId, score)
@@ -1271,18 +1494,25 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       const level4Score = player.level4.score + (player.level4.delta || 0)
       level4 = new PlayerLevel(player.level4.id, level4Score)
     }
-    
+
     if (realtime && realtime.threePlayer) {
-      const rank = parseRankFromText(realtime.threePlayer.rank)
-      const levelId = rank.majorRank * 10000 + rank.majorRank * 100 + rank.minorRank
-      let score = realtime.threePlayer.score
-      if (realtime.threePlayer.useApiScore && player.level3) {
-        const apiScore = player.level3.score + (player.level3.delta || 0)
-        const tempLevel = new PlayerLevel(levelId, 0)
-        if (tempLevel.isTenhou()) {
-          score = apiScore / 100
-        } else {
-          score = apiScore
+      let levelId
+      let score
+      if (realtime.threePlayer.levelId != null) {
+        levelId = realtime.threePlayer.levelId
+        score = realtime.threePlayer.score
+        // 本地 API 魂天 score 为 pt 值(0-2000)，需 /100 换算为 rating(0-20) 显示
+        if (score != null && new PlayerLevel(levelId, 0).isTenhou()) {
+          score = score / 100
+        }
+      } else {
+        const rank = parseRankFromText(realtime.threePlayer.rank)
+        levelId = 2 * 10000 + rank.majorRank * 100 + rank.minorRank
+        score = realtime.threePlayer.score
+        if (realtime.threePlayer.useApiScore && player.level3) {
+          const apiScore = player.level3.score + (player.level3.delta || 0)
+          const tempLevel = new PlayerLevel(levelId, 0)
+          score = tempLevel.isTenhou() ? apiScore / 100 : apiScore
         }
       }
       level3 = new PlayerLevel(levelId, score)
@@ -1611,7 +1841,7 @@ const HELP_DATA = {
       { name: "雀魂切换", desc: "切换已绑定的主账号", eg: "雀魂切换 <UID>", icon: "切换" },
       { name: "雀魂解绑", desc: "解绑指定或全部UID", eg: "雀魂解绑 [UID]", icon: "解绑" },
       { name: "雀魂我的绑定", desc: "查看已绑定的所有UID", eg: "雀魂我的绑定", icon: "我的绑定" },
-      { name: "雀魂搜索", desc: "搜索雀魂玩家信息", eg: "雀魂搜索 <玩家名>", icon: "搜索" }
+      { name: "雀魂搜索", desc: "搜索雀魂玩家信息（支持好友码）", eg: "雀魂搜索 <玩家名/好友码>", icon: "搜索" }
     ]
   },
   "玩家数据查询": {
@@ -1619,7 +1849,9 @@ const HELP_DATA = {
     items: [
       { name: "雀魂查询", desc: "查询四麻详细数据（默认）", eg: "雀魂查询 [玩家名] [房间]", icon: "查询" },
       { name: "查询四麻", desc: "查询四麻段位/统计/走势", eg: "查询四麻 [玩家名] [房间]", icon: "查询四麻" },
-      { name: "查询三麻", desc: "查询三麻段位/统计/走势", eg: "查询三麻 [玩家名] [房间]", icon: "查询三麻" }
+      { name: "查询三麻", desc: "查询三麻段位/统计/走势", eg: "查询三麻 [玩家名] [房间]", icon: "查询三麻" },
+      { name: "查询友人场", desc: "查看玩家友人场战绩", eg: "雀魂查询 友 <玩家名>", icon: "友人" },
+      { name: "查询比赛场", desc: "查看玩家比赛场战绩", eg: "雀魂查询 赛 <玩家名>", icon: "比赛" }
     ]
   },
   "对局查询": {
@@ -1633,7 +1865,7 @@ const HELP_DATA = {
   "AI牌谱分析": {
     desc: "基于 Mortal AI 的牌谱复盘与场况分析",
     items: [
-      { name: "牌谱Review", desc: "AI 分析牌谱每手最优选择", eg: "牌谱Review <URL>", icon: "牌谱" },
+      { name: "牌谱Review", desc: "AI 分析牌谱（可选座位）", eg: "牌谱Review <URL> [座位]", icon: "牌谱" },
       { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "场况 <URL> <局> [巡]", icon: "场况" },
       { name: "雀魂登录", desc: "登录账号以使用牌谱分析", eg: "雀魂登录 <账号> <密码>", icon: "登录" }
     ]
@@ -1731,7 +1963,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v5.2.4'
+  const versionText = 'v6.2.5'
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)
