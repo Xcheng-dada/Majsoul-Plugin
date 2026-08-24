@@ -253,7 +253,7 @@ export class MajsoulInfo extends plugin {
                 // 标题用统计窗口 roundCount（可能封顶100）；真实总对局数放「对战数」行（finalPositionCounts 求和）
                 const total = this.getGameCount(targetEntry);
                 const recent = targetEntry.roundCount || total;
-                lines.push(`${headPrefix}${cfg.label}最近${Math.min(recent, total)}战`);
+                lines.push(`${headPrefix}${cfg.label}最近${Math.min(recent, total)}场`);
                 lines.push(...this.buildStatLines(targetEntry, mode));
             } else {
                 lines.push(`${headPrefix}暂无${mode === '3' ? '三麻' : '四麻'}${cfg.label}统计数据`);
@@ -305,7 +305,7 @@ export class MajsoulInfo extends plugin {
             // 标题用统计窗口 roundCount（可能封顶100）；真实总对局数放「对战数」行（finalPositionCounts 求和）
             const total = this.getGameCount(entry);
             const recent = entry.roundCount || total;
-            lines.push(`${headPrefix}段位场最近${Math.min(recent, total)}场`);
+            lines.push(`${headPrefix}段位场最近${Math.min(recent, total)}战`);
             lines.push(...this.buildStatLines(entry, mode));
         } else {
             lines.push(`${headPrefix}暂无${mode === '3' ? '三麻' : '四麻'}段位场统计数据`);
