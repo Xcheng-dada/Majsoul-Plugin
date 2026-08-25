@@ -1025,7 +1025,8 @@ async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null) {
   const RANK_POS_3P = { 3: 316, 2: 199, 1: 73 }
   const RANK_POS = mode === '3' ? RANK_POS_3P : RANK_POS_4P
 
-  const list = (recentGames || []).slice(-16).reverse()
+  // 本地 API 的 recentGames 为 旧→新 顺序，直接取最近16场并按原序从左(旧)到右(新)绘制
+  const list = (recentGames || []).slice(-16)
   if (!list.length) {
     drawText(rctx, '暂无对局数据', 500, 200, 34, '#888888', 'center', 'bold')
   } else {
