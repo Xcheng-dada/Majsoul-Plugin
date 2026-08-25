@@ -1328,7 +1328,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   ctx.drawImage(bg, 0, 0)
   ctx.drawImage(title, 0, 0)
 
-  const subTitle = roomFilter ? roomFilter.name : (scopeLabel || `UID ${uid}`)
+  const subTitle = roomFilter ? roomFilter.name : `UID ${uid}`
   drawText(ctx, `${data.nickname} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
 
   if (!useLocalDetail) {
