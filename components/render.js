@@ -1052,7 +1052,7 @@ async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null) {
 
   // 整体缩放到趋势区（y=140 至卡片底部），水平居中，使走势图尽量贴近牌谱屋原生大小
   ctx.drawImage(rc, drawX, top, newW, newH)
-  drawText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 30, '#FFFFFF', 'center', 'bold')
+  drawText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 34, '#FFFFFF', 'center', 'bold')
 }
 
 export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null, scope = null) {
