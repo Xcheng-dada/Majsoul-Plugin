@@ -1424,8 +1424,9 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   drawText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', 'bold')
   } else {
     // 本地数据卡片（details_bg_3/4.png）：顶部数据（画在标签上方）+ 下方对局走势区（record_bg + 标题）
-    // 标签：三麻「自摸率|和牌率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」，
+    // 标签：三麻「自摸率|荣和率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」，
     // 四个标签中心 x = 153/293/569/706，文字带 y≈86-107，数值画在上方中心 y≈60
+    // 三麻第二槽位为荣和率（ronRate），与背景图标签「荣和率」对应；和牌率在段位卡已显示
     const localEntry = mainMode === 3 ? localEntry3 : localEntry4
     const fpc = localEntry?.finalPositionCounts || []
     const fpcTotal = fpc.reduce((a, b) => a + b, 0) || 1
@@ -1433,7 +1434,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     const valueY = 60
     if (mode === '3') {
       drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate(localEntry?.winRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate(localEntry?.ronRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
       drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
       drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
     } else {
