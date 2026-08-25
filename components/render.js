@@ -914,8 +914,8 @@ async function getRankIcon(level, stats, extended, mode = '4') {
   drawText(ctx, level.full_tag, 296, 78, 44, '#FFFFFF', 'center', 'bold')
   drawText(ctx, level.real_display_score, 460, 78, 28, '#C1C1C1', 'center')
   
-  drawText(ctx, String(stats.count), 282, 146, 36, '#FFFFFF', 'left', 'bold')
-  drawText(ctx, avgRank, 458, 146, 36, '#FFFFFF', 'left', 'bold')
+  drawText(ctx, String(stats.count), 282, 146, 32, '#FFFFFF', 'left', 'bold')
+  drawText(ctx, avgRank, 458, 146, 32, '#FFFFFF', 'left', 'bold')
   
   drawText(ctx, firstRate, 155, 239, 32, '#FFFFFF', 'center', 'bold')
   drawText(ctx, rongRate, 300, 239, 32, '#FFFFFF', 'center', 'bold')
@@ -953,28 +953,26 @@ function parseRankFromText(rankText) {
   return { majorRank, minorRank };
 }
 
-// 牌谱屋两个模式都无数据的标记：drawMajsInfoImg 返回该串时，调用方应转文字兜底（本地API段位场）
-export const NO_MAJSOUL_STATS = '__NO_MAJSOUL_STATS__'
-
 /**
- * 用本地 API 段位场(gc=2)数据填充牌谱屋无数据的模式（缺失字段保持零）。
- * 牌谱屋只统计金/玉/王座，本地覆盖铜银金玉；这里仅把有对应关系的字段填上：
+ * 用本地 API 统计（gameCategory=gc）填充牌谱屋无数据的模式（缺失字段保持零）。
+ * gc=2 段位场（覆盖铜银金玉），gc=1 友人场，gc=4 比赛场；
+ * 这里仅把有对应关系的字段填上：
  *   count/rank_rates/avg_rank ← finalPositionCounts
  *   和牌率/自摸率/放铳率      ← winRate/tsumoRate/dealInRate
  */
-async function fillModeFromLocal (data, extended, uid, mode) {
+async function fillModeFromLocal (data, extended, uid, mode, gc = 2) {
   try {
     const statRes = await getPlayerStatistics(uid)
     if (!statRes || !Array.isArray(statRes.entries)) return
     const mc = mode === 3 ? 2 : 1
-    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
-      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc && x.gameType === 1)
+      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc)
     if (!entry) return
     const fpc = entry.finalPositionCounts || []
     const count = fpc.reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
     if (count > 0) {
       data.count = count
-      data.rank_rates = fpc.map(c => (c || 0) / count * 100)
+      data.rank_rates = fpc.map(c => (c || 0) / count)
       while (data.rank_rates.length < 4) data.rank_rates.push(0)
       data.rank_rates = data.rank_rates.slice(0, 4)
       data.avg_rank = fpc.reduce((a, c, i) => a + ((c || 0) * (i + 1)), 0) / count
@@ -1006,7 +1004,57 @@ function buildLocalRecord (entry, nickname, mode) {
   })
 }
 
-export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null) {
+// 本地数据卡片（details_bg_3/4.png）下方对局走势区：
+// 以 record_bg_3/4.png 为背景（在原生 1000x400 坐标系绘制，再整体缩放到卡片趋势区），
+// 按旧→新画最近16场顺位点线，顶部写「最近16场对局记录走势」标题。
+async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null) {
+  const recordBg = await loadResImage(mode === '3' ? 'info_texture/record_bg_3.png' : 'info_texture/record_bg_4.png')
+  // 走势图放大到填满卡片趋势区（y=140 至卡片底部），水平居中，贴近牌谱屋原生大小
+  const cw = ctx.canvas.width
+  const ch = ctx.canvas.height
+  const top = 140
+  const scale = (ch - top) / recordBg.height
+  const newW = Math.round(recordBg.width * scale)
+  const newH = Math.round(recordBg.height * scale)
+  const drawX = Math.round((cw - newW) / 2)
+  const rc = createCanvas(recordBg.width, recordBg.height)
+  const rctx = rc.getContext('2d')
+  rctx.drawImage(recordBg, 0, 0)
+
+  const RANK_POS_4P = { 4: 316, 3: 237, 2: 155, 1: 73 }
+  const RANK_POS_3P = { 3: 316, 2: 199, 1: 73 }
+  const RANK_POS = mode === '3' ? RANK_POS_3P : RANK_POS_4P
+
+  const list = (recentGames || []).slice(-16).reverse()
+  if (!list.length) {
+    drawText(rctx, '暂无对局数据', 500, 200, 34, '#888888', 'center', 'bold')
+  } else {
+    let posPrev = null
+    for (let i = 0; i < list.length; i++) {
+      const g = list[i]
+      const n = mode === '3' ? 3 : 4
+      const k = (g && g.rank != null && g.rank >= 1 && g.rank <= n) ? g.rank : n
+      const pos = { x: 108 + i * 50, y: RANK_POS[k] }
+      if (posPrev) {
+        rctx.beginPath()
+        rctx.moveTo(posPrev.x + 15, posPrev.y + 15)
+        rctx.lineTo(pos.x + 15, pos.y + 15)
+        rctx.strokeStyle = '#FFFFFF'
+        rctx.lineWidth = 3
+        rctx.stroke()
+      }
+      const rankDot = await loadResImage(`info_texture/rank_${k}.png`)
+      rctx.drawImage(rankDot, pos.x, pos.y)
+      posPrev = pos
+    }
+  }
+
+  // 整体缩放到趋势区（y=140 至卡片底部），水平居中，使走势图尽量贴近牌谱屋原生大小
+  ctx.drawImage(rc, drawX, top, newW, newH)
+  drawText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 30, '#FFFFFF', 'center', 'bold')
+}
+
+export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null, scope = null) {
   let data4, data3, extended4, extended3
   
   const fetchStats = async (m) => api.getPlayerStats(uid, m).catch(e => {
@@ -1022,6 +1070,15 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   // 指令只查主模式（三麻或四麻），不存在 auto
   const mainMode = mode === '3' ? 3 : 4
+
+  // 友人场/比赛场：出本地卡，数据范围 gameCategory=1/4，走势标题加房间名
+  const scopeCfg = {
+    friend: { gc: 1, label: '友人场' },
+    match: { gc: 4, label: '比赛场' }
+  }
+  const scopeInfo = scopeCfg[scope] || null
+  const scopeGc = scopeInfo ? scopeInfo.gc : 2
+  const scopeLabel = scopeInfo ? scopeInfo.label : ''
 
   try {
     if (!api.token) {
@@ -1057,18 +1114,16 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   }
 
   // 主模式 404（该模式金之间无对局）：补查另一模式，判断是否「两个模式都没数据」
+  // 友人场/比赛场始终出本地卡，跳过该判断，直接走下方 fillModeFromLocal 填充
   let otherData = null
-  if ((mainMode === 3 && data3.retcode) || (mainMode === 4 && data4.retcode)) {
+  if (!scopeInfo && ((mainMode === 3 && data3.retcode) || (mainMode === 4 && data4.retcode))) {
     const otherMode = mainMode === 3 ? 4 : 3
     try {
       otherData = await fetchStats(otherMode)
     } catch {
       otherData = null
     }
-    // 另一模式也 404 → 两个模式都没打过金之间，返回标记由调用方转文字兜底
-    if (!otherData || otherData.retcode) {
-      return NO_MAJSOUL_STATS
-    }
+    // 两模式都 404（无金之间对局）不返回标记：下方 fillModeFromLocal 用本地段位场(gc=2)数据出本地卡
   }
 
   // 先记录主模式是否有有效数据（retcode 会被下方抹掉，后续判断需依赖此标记）
@@ -1077,21 +1132,26 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   let localEntry4 = null
   let localEntry3 = null
-  // 主模式 404 时，把数据替换为零对象（统计为 0），并用本地 API 段位场数据填充有对应关系的字段
-  // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行
-  if (data4.retcode) {
-    const realName = playerName || data3.nickname || otherData?.nickname || String(uid)
-    data4 = JSON.parse(JSON.stringify(playerStatsZero))
-    data4.nickname = realName
-    extended4 = JSON.parse(JSON.stringify(playerExtendZero))
-    localEntry4 = await fillModeFromLocal(data4, extended4, uid, 4)
+  // 主模式 404 或友人场/比赛场时，用本地 API 对应房间（gc=scopeGc）数据填充统计字段。
+  // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行；
+  // 友人场/比赛场且有牌谱屋数据时不重置（保留昵称/段位），仅覆盖统计字段。
+  if (data4.retcode || scopeInfo) {
+    const realName = playerName || data3.nickname || otherData?.nickname || data4.nickname || String(uid)
+    if (data4.retcode) {
+      data4 = JSON.parse(JSON.stringify(playerStatsZero))
+      data4.nickname = realName
+      extended4 = JSON.parse(JSON.stringify(playerExtendZero))
+    }
+    localEntry4 = await fillModeFromLocal(data4, extended4, uid, 4, scopeGc)
   }
-  if (data3.retcode) {
-    const realName = playerName || data4.nickname || otherData?.nickname || String(uid)
-    data3 = JSON.parse(JSON.stringify(playerStatsZero))
-    data3.nickname = realName
-    extended3 = JSON.parse(JSON.stringify(playerExtendZero))
-    localEntry3 = await fillModeFromLocal(data3, extended3, uid, 3)
+  if (data3.retcode || scopeInfo) {
+    const realName = playerName || data4.nickname || otherData?.nickname || data3.nickname || String(uid)
+    if (data3.retcode) {
+      data3 = JSON.parse(JSON.stringify(playerStatsZero))
+      data3.nickname = realName
+      extended3 = JSON.parse(JSON.stringify(playerExtendZero))
+    }
+    localEntry3 = await fillModeFromLocal(data3, extended3, uid, 3, scopeGc)
   }
   
 
@@ -1103,7 +1163,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     _mode = "三麻战绩"
     data = data3
     extended = extended3
-    if (data3Valid) {
+    if (data3Valid && !scopeInfo) {
       try {
         record = await api.getRecentRecords(uid, 3, 16)
       } catch (e) {
@@ -1136,7 +1196,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     _mode = "四麻战绩"
     data = data4
     extended = extended4
-    if (data4Valid) {
+    if (data4Valid && !scopeInfo) {
       try {
         record = await api.getRecentRecords(uid, 4, 16)
       } catch (e) {
@@ -1245,22 +1305,32 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   const bg = await loadResImage('bg.jpg')
   const detailBg = await loadResImage('info_texture/detail_bg.png')
+  // 本地兜底卡片按模式区分：三麻 details_bg_3.png / 四麻 details_bg_4.png
+  const detailsBg = await loadResImage(mode === '3' ? 'info_texture/details_bg_3.png' : 'info_texture/details_bg_4.png')
   const mid = await loadResImage('info_texture/mid.png')
   const title = await loadResImage('info_texture/title.png')
-  
-  const canvas = createCanvas(bg.width, bg.height)
+
+  // 主模式牌谱屋无数据（本地兜底）时，详情区使用本地数据专用卡片（无柱状图，卡片更短）；
+  // 友人场/比赛场始终出本地卡
+  const useLocalDetail = scopeInfo ? true : (mainMode === 3 ? !data3Valid : !data4Valid)
+  const detailBgImg = useLocalDetail ? detailsBg : detailBg
+  const detailCanvas = createCanvas(detailBgImg.width, detailBgImg.height)
+  const detailCtx = detailCanvas.getContext('2d')
+  detailCtx.drawImage(detailBgImg, 0, 0)
+
+  // 本地卡片不含柱状图区域：画布高度裁到「卡片底部 + 页脚」，不保留原 2200 高度
+  const detailBottom = 1188 + detailCanvas.height
+  const canvasHeight = useLocalDetail ? detailBottom + 63 : bg.height
+  const canvas = createCanvas(bg.width, canvasHeight)
   const ctx = canvas.getContext('2d')
 
   ctx.drawImage(bg, 0, 0)
   ctx.drawImage(title, 0, 0)
 
-  const subTitle = roomFilter ? roomFilter.name : `UID ${uid}`
+  const subTitle = roomFilter ? roomFilter.name : (scopeLabel || `UID ${uid}`)
   drawText(ctx, `${data.nickname} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
 
-  const detailCanvas = createCanvas(detailBg.width, detailBg.height)
-  const detailCtx = detailCanvas.getContext('2d')
-  detailCtx.drawImage(detailBg, 0, 0)
-
+  if (!useLocalDetail) {
   const zmRate = getRate(extended["自摸率"])
   const mtRate = getRate(extended["默听率"])
   const ljRate = getRate(extended["流局率"])
@@ -1351,12 +1421,40 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   detailCtx.drawImage(recordCanvas, 0, 558)
   const recordTitle = roomFilter ? `${roomFilter.name}最近16场对局记录走势` : '最近16场对局记录走势'
   drawText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', 'bold')
+  } else {
+    // 本地数据卡片（details_bg_3/4.png）：顶部数据（画在标签上方）+ 下方对局走势区（record_bg + 标题）
+    // 标签：三麻「自摸率|和牌率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」，
+    // 四个标签中心 x = 153/293/569/706，文字带 y≈86-107，数值画在上方中心 y≈60
+    const localEntry = mainMode === 3 ? localEntry3 : localEntry4
+    const fpc = localEntry?.finalPositionCounts || []
+    const fpcTotal = fpc.reduce((a, b) => a + b, 0) || 1
+    const slotX = [153, 293, 569, 706]
+    const valueY = 60
+    if (mode === '3') {
+      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate(localEntry?.winRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
+    } else {
+      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate((fpc[3] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
+    }
+    await drawLocalTrend(detailCtx, localEntry?.recentGames || [], mode, scopeLabel)
+  }
 
   // 拼接整体画面
-  ctx.drawImage(detailCanvas, 0, 1188)
+  ctx.drawImage(detailCanvas, useLocalDetail ? Math.floor((bg.width - detailCanvas.width) / 2) : 0, 1188)
   ctx.drawImage(mid, 0, 1161)
   drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, 'Majsoul-Plugin by 小橙c | Data: 牌谱屋 + 雀魂官方 | Python-to-JS移植: QingFeng', 500, 2151 + 30, 24, '#FFFFFF', 'center', 'bold')
+  // 页脚：本地卡片较短，页脚上移到卡片下方（距卡片底部 43px），标准卡保持原位置
+  // 本地卡为原生 JS 实现（数据来自本地 API/雀魂官方），无 Python→JS 移植署名；标准卡保留移植署名
+  const footerY = useLocalDetail ? detailBottom + 43 : 2151 + 30
+  const footerText = useLocalDetail
+    ? 'Majsoul-Plugin by 小橙c | Data: 雀魂官方'
+    : 'Majsoul-Plugin by 小橙c | Data: 牌谱屋 + 雀魂官方 | Python-to-JS移植: QingFeng'
+  drawText(ctx, footerText, 500, footerY, 24, '#FFFFFF', 'center', 'bold')
 
   const rank4Icon = await getRankIcon(level4, data4, extended4, "4")
   const rank3Icon = await getRankIcon(level3, data3, extended3, "3")
@@ -1963,7 +2061,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v6.2.5'
+  const versionText = 'v6.2.6'
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)

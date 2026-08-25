@@ -1,6 +1,6 @@
 {
   "name": "Majsoul-Plugin",
-  "version": "6.2.5",
+  "version": "6.2.6",
   "description": "雀魂多功能插件",
   "type": "module",
   "main": "index.js",
