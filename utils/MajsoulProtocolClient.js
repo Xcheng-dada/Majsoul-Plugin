@@ -474,7 +474,7 @@ export async function getPlayerBrief (accountId) {
 /**
  * 获取玩家对局统计（本地 API /api/players/{accountId}/statistics）
  * 返回 { accountId, entries }，entries 内每个元素含：
- *   mahjongCategory(1四麻/2三麻) × gameCategory(1段位/2友人/4其他) × gameType
+ *   mahjongCategory(1四麻/2三麻) × gameCategory(1友人/2段位/4比赛) × gameType
  *   finalPositionCounts[顺位]、roundCount(封顶100)、ronRate/tsumoRate/dealInRate/winRate(0~1)、recentGames[{rank,finalPoint}]
  * @returns {Promise<{accountId:number, entries:Array<object>}|null>}
  */
