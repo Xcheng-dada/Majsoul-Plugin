@@ -31,10 +31,11 @@ function readJson (filePath, fallback) {
 export function supportGuoba () {
   return {
     pluginInfo: {
-      name: 'majsoul-plugin',
-      title: 'Majsoul-Plugin',
+      name: 'Majsoul-Plugin',
+      title: '雀魂插件',
       description: '雀魂多功能插件：查询/牌谱Review/场况/抽卡/订阅播报',
-      author: 'Xcheng-dada',
+      author: '小橙c',
+      authorLink: 'https://github.com/Xcheng-dada',
       link: 'https://github.com/Xcheng-dada/Majsoul-Plugin',
       isV3: true,
       isV2: false,
