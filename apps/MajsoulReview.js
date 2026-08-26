@@ -432,12 +432,16 @@ export class MajsoulReview extends plugin {
       logger.info(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 data: ${!!res.data}`)
       if (res.data) logger.info(`[MajsoulReview] res.data keys: ${Object.keys(res.data).join(', ')}`)
     }
-    // review.json 有三种结构：
+    // review.json 结构梳理（实测）：
     //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
     //   2. { kyokus, ..., player_id } — 数据直接在顶层（兼容旧版）
-    //   3. { task_id, status, error, data: { kyokus, ... }, player_id } — 数据在 data 下（新版 API 响应）
+    //   3. { task_id, status, error, data: { review: { kyokus, ... }, ... }, player_id } — 新版 API 响应
+    //      data 下含 engine/game_length/review_time/review，kyokus 在 data.review 下
     // 统一适配为 drawReviewInfoImg 所需的 { data: { review, player_id } } 格式。
-    const reviewData = res.review || res.data || res
+    const reviewData = (res.review && res.review.kyokus) ? res.review
+      : (res.data && res.data.review) ? res.data.review
+      : (res.data && res.data.kyokus) ? res.data
+      : res
     const adaptRes = { data: { review: reviewData, player_id: res.player_id } }
     if (kyokuId >= (adaptRes.data.review.kyokus || []).length) {
       return e.reply(`❌ 局数超出范围! 该牌谱共 ${(adaptRes.data.review.kyokus || []).length} 局（从 1 开始编号）`)
