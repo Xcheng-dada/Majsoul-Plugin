@@ -48,7 +48,7 @@ export function supportGuoba () {
     configInfo: {
       schemas: [
         {
-          label: '本地 API（Majsoul.ProtocolLogin.Api）',
+          label: '本地 API',
           component: 'SOFT_GROUP_BEGIN'
         },
         {
