@@ -1,0 +1,7 @@
+{
+  "gachaDailyLimit": 5,
+  "subscribeInterval4": 3,
+  "subscribeInterval3": 5,
+  "paipuCleanupDays": 15,
+  "recordsLimit": 5
+}

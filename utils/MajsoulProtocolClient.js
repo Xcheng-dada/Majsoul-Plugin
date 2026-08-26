@@ -151,16 +151,49 @@ export async function decodeRecordBase64 (dataBase64, meta = {}) {
 }
 
 /**
+ * 本地 API 请求头：配置了 apiKey 时注入 X-Api-Key（服务器忽略未知请求头，无副作用）
+ * @param {object} [headers] 已有请求头
+ * @returns {object} 合并后的请求头
+ */
+function apiHeaders (headers = {}) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8'))
+    if (typeof cfg.apiKey === 'string' && cfg.apiKey.trim()) {
+      return { ...headers, 'X-Api-Key': cfg.apiKey.trim() }
+    }
+  } catch { /* 配置缺失则不加鉴权头 */ }
+  return headers
+}
+
+/**
+ * 统一构造本地 API 请求 options（自动注入 apiKey 请求头）
+ * @param {object} [extra] 额外 options（signal/method/body 等）
+ * @returns {object} 构造后的 options
+ */
+function requestOptions (extra = {}) {
+  const { headers, ...rest } = extra
+  return { ...rest, headers: apiHeaders(headers) }
+}
+
+/**
  * 探测本地 API 服务是否可达
  */
 export function discoverApi () {
   const candidates = []
   if (cachedApiBase) candidates.push(cachedApiBase)
-  // 优先读新环境变量名（MAJSOUL_API_URL），兼容旧名 MAJSOUL_EXE_URL
+  // 优先读配置文件的 baseUrl（锅巴面板修改后立即生效）
+  try {
+    const cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8'))
+    if (typeof cfg.baseUrl === 'string' && cfg.baseUrl.trim()) {
+      candidates.push(cfg.baseUrl.trim().replace(/\/+$/, ''))
+    }
+  } catch { /* 配置缺失则继续走环境变量/默认地址 */ }
+  // 读新环境变量名（MAJSOUL_API_URL），兼容旧名 MAJSOUL_EXE_URL
   const apiUrlEnv = process.env.MAJSOUL_API_URL || process.env.MAJSOUL_EXE_URL
   if (apiUrlEnv) candidates.push(apiUrlEnv.replace(/\/+$/, ''))
   candidates.push('http://127.0.0.1:5088')
-  return candidates
+  // 去重（配置文件 baseUrl 可能与默认地址相同）
+  return [...new Set(candidates)]
 }
 
 /**
@@ -327,7 +360,7 @@ export async function saveToLocal (paipu, options = {}) {
     // 先探测是否有已保存的 profile，没有则直接跳过，避免惹服务端报错。
     let loggedIn = true
     try {
-      const p = await fetch(`${base}/api/profiles`, { signal: AbortSignal.timeout(getTimeoutMs()) })
+      const p = await fetch(`${base}/api/profiles`, requestOptions({ signal: AbortSignal.timeout(getTimeoutMs()) }))
       if (p.ok) {
         const arr = await p.json().catch(() => [])
         loggedIn = Array.isArray(arr) && arr.length > 0
@@ -338,11 +371,11 @@ export async function saveToLocal (paipu, options = {}) {
       continue
     }
     try {
-      const res = await fetch(`${base}/api/records/fetch`, {
+      const res = await fetch(`${base}/api/records/fetch`, requestOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paipu, downloadAvatars, exportFiles, includeDataBase64 })
-      })
+      }))
       if (!res.ok) {
         // 尝试解析 API 返回的错误体，给出更明确的提示（尤其是版本过期）
         let hint = `本地 API 返回 ${res.status}`
@@ -390,12 +423,12 @@ export async function loginToApi (account, password, saveProfile = true) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/auth/login`, {
+      const r = await fetch(`${base}/api/auth/login`, requestOptions({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ account, password, saveProfile }),
         signal: ctrl.signal
-      })
+      }))
       clearTimeout(t)
       const text = await r.text()
       let data = null
@@ -418,7 +451,7 @@ export async function getApiAccount () {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/account`, { signal: ctrl.signal })
+      const r = await fetch(`${base}/api/account`, requestOptions({ signal: ctrl.signal }))
       clearTimeout(t)
       if (r.ok) {
         const data = await r.json().catch(() => null)
@@ -438,7 +471,7 @@ export async function getApiProfiles () {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/profiles`, { signal: ctrl.signal })
+      const r = await fetch(`${base}/api/profiles`, requestOptions({ signal: ctrl.signal }))
       clearTimeout(t)
       if (r.ok) {
         const data = await r.json().catch(() => null)
@@ -461,7 +494,7 @@ export async function getPlayerBrief (accountId) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}`, { signal: ctrl.signal })
+      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}`, requestOptions({ signal: ctrl.signal }))
       clearTimeout(t)
       if (r.ok) {
         return await r.json().catch(() => null)
@@ -484,7 +517,7 @@ export async function getPlayerStatistics (accountId) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}/statistics`, { signal: ctrl.signal })
+      const r = await fetch(`${base}/api/players/${encodeURIComponent(accountId)}/statistics`, requestOptions({ signal: ctrl.signal }))
       clearTimeout(t)
       if (r.ok) {
         return await r.json().catch(() => null)
@@ -507,7 +540,7 @@ export async function resolveFriendId (friendId) {
     try {
       const ctrl = new AbortController()
       const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
-      const r = await fetch(`${base}/api/players/resolve?friendId=${encodeURIComponent(friendId)}`, { signal: ctrl.signal })
+      const r = await fetch(`${base}/api/players/resolve?friendId=${encodeURIComponent(friendId)}`, requestOptions({ signal: ctrl.signal }))
       clearTimeout(t)
       if (r.ok) {
         return await r.json().catch(() => null)
@@ -532,7 +565,7 @@ export async function fetchFullRecord (paipu) {
         const dl = ref.dataDownloadUrl.startsWith('http')
           ? ref.dataDownloadUrl
           : `${base}${ref.dataDownloadUrl}`
-        const buf = await fetch(dl, { signal: AbortSignal.timeout(getTimeoutMs()) })
+        const buf = await fetch(dl, requestOptions({ signal: AbortSignal.timeout(getTimeoutMs()) }))
           .then(r => { if (!r.ok) throw new Error(`下载牌谱数据失败 ${r.status}`); return r.arrayBuffer() })
         dataBase64 = Buffer.from(buf).toString('base64')
       } else if (ref.dataFile && fs.existsSync(ref.dataFile)) {

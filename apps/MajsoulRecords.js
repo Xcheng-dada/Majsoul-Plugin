@@ -6,6 +6,7 @@ import { loadResImage, drawText, drawRoundRect, drawPartialRoundRect } from '../
 import { getRankImg } from '../components/render.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
+import { getFeatureConfigItem } from '../utils/Config.js';
 
 // 段位房筛选：关键词 -> { name(显示名), ids: { 4:[四麻modeId], 3:[三麻modeId] }, aliases(模糊匹配词) }
 // modeId 取自 utils/PlayerLevel.js 的 ROOM_LEVEL_MAP
@@ -93,8 +94,8 @@ export class MajsoulRecords extends plugin {
                 fromBinding = true;
             }
             
-            // 查询对局记录（可附带段位房筛选）
-            const result = await this._getRecords(playerName, mode, 5, fromBinding, roomFilter);
+            // 查询对局记录（可附带段位房筛选），默认场数由 config/config.json 的 recordsLimit 配置
+            const result = await this._getRecords(playerName, mode, getFeatureConfigItem('recordsLimit'), fromBinding, roomFilter);
             
             if (!result.success) {
                 await e.reply(result.message);

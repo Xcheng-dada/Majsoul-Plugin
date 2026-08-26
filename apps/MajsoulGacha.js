@@ -5,6 +5,7 @@ import path from 'path';
 import GachaCore from '../utils/GachaCore.js';
 import DailyLimiter from '../utils/DailyLimiter.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
+import { getFeatureConfigItem } from '../utils/Config.js';
 
 export class MajsoulGacha extends plugin {
     constructor() {
@@ -57,7 +58,8 @@ export class MajsoulGacha extends plugin {
             ]
         });
         this.gachaCore = new GachaCore();
-        this.dailyLimiter = new DailyLimiter(5); // 修改为每日5次
+        // 每日抽卡次数限制，可通过锅巴后台或 config/config.json 的 gachaDailyLimit 调整
+        this.dailyLimiter = new DailyLimiter(getFeatureConfigItem('gachaDailyLimit'));
     }
 
     /**

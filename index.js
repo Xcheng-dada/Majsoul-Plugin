@@ -13,6 +13,7 @@ import MajsoulSchedule from './utils/MajsoulSchedule.js';
 import { cleanupPaipu, cleanupAvatar, PAIPU_CLEANUP_DAYS } from './utils/PaipuCleanup.js';
 import { updateLqc } from './utils/lqcUpdater.js';
 import { ensureApiRunning } from './utils/MajsoulProtocolClient.js';
+import { getFeatureConfig, getFeatureConfigItem } from './utils/Config.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,11 +23,16 @@ const plugin = pluginModule.default || pluginModule.Plugin || pluginModule;
 // 模块级定时任务管理器（多实例共享，避免重复启动）
 let scheduleManager = null;
 
-// 定时检查配置：四麻每 3 分钟，三麻每 5 分钟
-const SCHEDULES = [
-  { type: 4, interval: 3 * 60 * 1000, label: '四麻' },
-  { type: 3, interval: 5 * 60 * 1000, label: '三麻' },
-];
+// 定时检查配置：间隔（分钟）通过 config/config.json 的 subscribeInterval4/3 配置（默认四麻3分钟、三麻5分钟）
+function buildSchedules () {
+  const cfg = getFeatureConfig();
+  const iv4 = Math.max(1, Number(cfg.subscribeInterval4) || 3);
+  const iv3 = Math.max(1, Number(cfg.subscribeInterval3) || 5);
+  return [
+    { type: 4, interval: iv4 * 60 * 1000, label: '四麻' },
+    { type: 3, interval: iv3 * 60 * 1000, label: '三麻' },
+  ];
+}
 
 export class majsoul extends plugin {
   constructor() {
@@ -327,6 +333,7 @@ export class majsoul extends plugin {
     if (typeof global.Bot !== 'undefined') scheduleManager.setBot(global.Bot);
     else if (this.bot) scheduleManager.setBot(this.bot);
 
+    const SCHEDULES = buildSchedules();
     for (const { type, interval, label } of SCHEDULES) {
       const timer = setInterval(async () => {
         try {
@@ -341,13 +348,16 @@ export class majsoul extends plugin {
     }
 
     scheduleManager.isRunning = true;
-    console.log('[Majsoul-Plugin] 定时任务启动成功（四麻3分钟/三麻5分钟）');
+    const iv4m = Math.max(1, Number(getFeatureConfigItem('subscribeInterval4')) || 3);
+    const iv3m = Math.max(1, Number(getFeatureConfigItem('subscribeInterval3')) || 5);
+    console.log(`[Majsoul-Plugin] 定时任务启动成功（四麻${iv4m}分钟/三麻${iv3m}分钟）`);
 
-    // 牌谱文件 + 头像缓存定时清理：每 24 小时执行一次，删除超过 ${PAIPU_CLEANUP_DAYS} 天的旧文件
+    // 牌谱文件 + 头像缓存定时清理：每 24 小时执行一次，删除超过 paipuCleanupDays 天的旧文件（默认 15 天）
+    const cleanupDays = Math.max(1, Number(getFeatureConfigItem('paipuCleanupDays')) || PAIPU_CLEANUP_DAYS);
     const paipuCleanupTimer = setInterval(() => {
       try {
-        cleanupPaipu(PAIPU_CLEANUP_DAYS);
-        cleanupAvatar(PAIPU_CLEANUP_DAYS);
+        cleanupPaipu(cleanupDays);
+        cleanupAvatar(cleanupDays);
       } catch (error) {
         logger?.error?.(`[Majsoul-Plugin] 牌谱清理失败: ${error.message}`);
       }
@@ -362,8 +372,8 @@ export class majsoul extends plugin {
     // 启动后稍作延迟执行一次牌谱/头像清理（避免刚启动就清理，给予缓冲）
     setTimeout(() => {
       try {
-        cleanupPaipu(PAIPU_CLEANUP_DAYS);
-        cleanupAvatar(PAIPU_CLEANUP_DAYS);
+        cleanupPaipu(cleanupDays);
+        cleanupAvatar(cleanupDays);
       } catch (error) {
         logger?.error?.(`[Majsoul-Plugin] 牌谱初始清理失败: ${error.message}`);
       }
