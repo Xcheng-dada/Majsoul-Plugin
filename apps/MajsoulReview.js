@@ -427,6 +427,10 @@ export class MajsoulReview extends plugin {
     }
 
     const res = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
+    if (typeof logger !== 'undefined') {
+      logger.debug(`[MajsoulReview] 场况 review.json 顶层 keys: ${Object.keys(res).join(', ')}`)
+      logger.debug(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 result: ${!!res.result}`)
+    }
     // review.json 有两种结构：
     //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
     //   2. { kyokus, ..., player_id } — 数据直接在顶层（兼容旧版）
