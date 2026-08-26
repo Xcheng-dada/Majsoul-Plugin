@@ -1396,7 +1396,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   for (let i = 0; i < revRecords.length; i++) {
     const r = revRecords[i]
     let ranks = []
-    r.players.forEach(p => ranks.push({ nick: p.nickname, score: p.gradingScore || p.score }))
+    r.players.forEach(p => ranks.push({ nick: p.nickname, score: p.score }))
     ranks.sort((a, b) => b.score - a.score)
     let rankNum = ranks.findIndex(p => p.nick === data.nickname) + 1
     
