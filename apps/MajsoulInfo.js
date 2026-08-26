@@ -73,16 +73,12 @@ export class MajsoulInfo extends plugin {
             
             let searchPlayerName = null;
             if (playerName) {
-                logger.debug(`[MajsoulInfo] 搜索玩家昵称: ${playerName}`);
                 const players = await api.searchPlayer(playerName, mode === '3' ? 3 : 4);
-                logger.debug(`[MajsoulInfo] 搜索结果: ${JSON.stringify(players)}`);
                 if (players && players.length > 0) {
                     uid = String(players[0].id);
                     searchPlayerName = players[0].nickname;
-                    logger.debug(`[MajsoulInfo] 提取到UID: ${uid}, 昵称: ${searchPlayerName}`);
                 } else {
                     // 不允许直接使用 UID 查询：昵称搜不到即提示，不当作 UID 使用
-                    logger.debug(`[MajsoulInfo] 昵称搜索无结果: ${playerName}`);
                     // 兜底：纯数字输入按好友码走本地 API（覆盖无金之间对局的铜银玩家）
                     if (/^\d{6,12}$/.test(playerName)) {
                         return await this.handleFriendCodeFallback(e, playerName, mode);
@@ -97,16 +93,12 @@ export class MajsoulInfo extends plugin {
                 if (!searchPlayerName) {
                     searchPlayerName = await api.getPlayerNickname(uid, mode === '3' ? 4 : 3);
                 }
-                if (searchPlayerName) {
-                    logger.debug(`[MajsoulInfo] 通过UID获取昵称: ${searchPlayerName}`);
-                }
             }
             
             // 走本地 API（Majsoul Pure Protocol API）取实时段位 PT，替代 BotLink。
             // 本地 API 与插件深度绑定，无需兜底；查询者需已登录（被查者无需好友）。
             let realtimePT = null;
             try {
-                logger.debug(`[MajsoulInfo] 通过本地 API 获取实时段位PT, uid=${uid}`);
                 const brief = await getPlayerBrief(uid);
                 if (brief) {
                     realtimePT = {
@@ -117,7 +109,6 @@ export class MajsoulInfo extends plugin {
                         fourPlayer: brief.level ? { levelId: brief.level.id, score: brief.level.score } : null,
                         threePlayer: brief.level3 ? { levelId: brief.level3.id, score: brief.level3.score } : null
                     };
-                    logger.debug(`[MajsoulInfo] 获取实时PT成功: ${JSON.stringify(realtimePT)}`);
                 } else {
                     logger.warn(`[MajsoulInfo] 本地 API 未返回玩家 brief，将使用牌谱屋数据`);
                 }
@@ -146,7 +137,6 @@ export class MajsoulInfo extends plugin {
     // 兜底：纯数字输入作为好友码，走本地 API 好友码→UID→段位场图卡（覆盖无金之间对局的铜银玩家）
     async handleFriendCodeFallback(e, friendCode, mode) {
         try {
-            logger.debug(`[MajsoulInfo] 尝试好友码解析: ${friendCode}`);
             const profile = await resolveFriendId(friendCode);
             if (!profile || profile.accountId == null) {
                 await e.reply(`未找到玩家，好友码「${friendCode}」无法解析`);

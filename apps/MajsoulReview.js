@@ -183,7 +183,6 @@ export class MajsoulReview extends plugin {
     } catch (err) {
       if (typeof logger !== 'undefined') logger.warn('[MajsoulReview] 牌谱自身解析段位失败，将依赖兜底源：' + (err?.message || err))
     }
-    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位主源(牌谱自身解析): dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
 
     // 主视角账号：仅用本地 API 下发的 targetAccountId（真实账号 ID）。
     // 牌谱链接 UUID 后的 _a64678917 是雀魂的分享访问令牌，并非账号 ID，
@@ -217,7 +216,6 @@ export class MajsoulReview extends plugin {
       return e.reply('❌ 无法确定分析的主视角：牌谱未携带主视角账号信息，且未指定座位参数。\n请附带座位再试，例如：#牌谱Review <URL> 北（东/南/西/北 或 0~3）。')
     }
     const SEAT_CN = ['东', '南', '西', '北']
-    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 主视角 seat=${mainSeat}(${SEAT_CN[mainSeat]}) forced=${forcedSeat ?? '否'} accountId=${mainAccountId ?? '未知'}`)
 
     const res = await reviewTenhouProtocol(full.record, gameId, paipuUrl, mainSeat)
     if (typeof res === 'string') return e.reply(res)
@@ -240,7 +238,6 @@ export class MajsoulReview extends plugin {
         // avatarId 优先用牌谱自身（parser 已按 seat 对齐）；桥仅兜底缺失座位
         if (!Array.isArray(mortalLog.avatarId)) mortalLog.avatarId = []
         if (!mortalLog.avatarId[i]) mortalLog.avatarId[i] = a.avatar_id
-        if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 座位${i} avatar_id=${a.avatar_id} nickname=${a.nickname || ''}`)
         // 昵称信任牌谱自身（parser/raw 或 review.json 的真实昵称），仅在缺失/占位（A/B/C/D 等）时桥兜底
         const cur = mortalLog.name[i]
         if (!cur || cur === '' || /^[A-D][さんn]?$/.test(cur)) {
@@ -272,10 +269,6 @@ export class MajsoulReview extends plugin {
               if (!mortalLog.name[i]) mortalLog.name[i] = src.name[i]
             }
           }
-          if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] 段位命中: dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
-        } else if (typeof logger !== 'undefined') {
-          // homura 返回的报告不含 dan/rate 属预期内（段位走牌谱自身解析主源），仅作 debug 提示
-          logger.debug(`[MajsoulReview] review.json 中未找到 dan/rate 数据（已走牌谱自身解析主源，忽略）`)
         }
       } catch (e) {}
     }
@@ -417,7 +410,6 @@ export class MajsoulReview extends plugin {
     if (!mortalLog.dan.length && Array.isArray(split0.dan)) mortalLog.dan = split0.dan
     if (!mortalLog.rate.length && Array.isArray(split0.rate)) mortalLog.rate = split0.rate
     if (!mortalLog.name.some(Boolean) && Array.isArray(split0.name)) mortalLog.name = split0.name
-    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] #场况 段位: dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
 
     // 与 #牌谱Review 一致：尝试通过本地 API（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
     try {
@@ -460,11 +452,6 @@ export class MajsoulReview extends plugin {
     }
 
     const res = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
-    if (typeof logger !== 'undefined') {
-      logger.info(`[MajsoulReview] 场况 review.json 顶层 keys: ${Object.keys(res).join(', ')}`)
-      logger.info(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 data: ${!!res.data}`)
-      if (res.data) logger.info(`[MajsoulReview] res.data keys: ${Object.keys(res.data).join(', ')}`)
-    }
     // review.json 结构梳理（实测）：
     //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
     //   2. { kyokus, ..., player_id } — 数据直接在顶层（兼容旧版）

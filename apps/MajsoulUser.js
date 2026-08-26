@@ -128,7 +128,6 @@ export class MajsoulUser extends plugin {
             
             // 兜底：牌谱屋搜不到（无金之间对局）时，纯数字输入按好友码走本地 API resolve
             if (players.length === 0 && /^\d{6,12}$/.test(playerName)) {
-                logger.debug(`[MajsoulUser] 尝试好友码解析: ${playerName}`);
                 const profile = await resolveFriendId(playerName);
                 if (profile && profile.accountId != null) {
                     const uid = String(profile.accountId);
@@ -172,7 +171,6 @@ export class MajsoulUser extends plugin {
                             player.level4 = level4Backup;
                         }
                     } catch (e) {
-                        logger.debug(`[MajsoulUser] 获取玩家 ${player.id} 四麻统计信息失败，使用搜索数据: ${e.message || e}`);
                         player.level4 = level4Backup;
                     }
                 } else {
@@ -193,7 +191,6 @@ export class MajsoulUser extends plugin {
                             player.level3 = level3Backup;
                         }
                     } catch (e) {
-                        logger.debug(`[MajsoulUser] 获取玩家 ${player.id} 三麻统计信息失败，使用搜索数据: ${e.message || e}`);
                         player.level3 = level3Backup;
                     }
                 } else {
