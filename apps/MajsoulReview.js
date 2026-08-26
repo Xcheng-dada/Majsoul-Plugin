@@ -430,6 +430,7 @@ export class MajsoulReview extends plugin {
     if (typeof logger !== 'undefined') {
       logger.info(`[MajsoulReview] 场况 review.json 顶层 keys: ${Object.keys(res).join(', ')}`)
       logger.info(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 data: ${!!res.data}`)
+      if (res.data) logger.info(`[MajsoulReview] res.data keys: ${Object.keys(res.data).join(', ')}`)
     }
     // review.json 有三种结构：
     //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
