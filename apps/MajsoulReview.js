@@ -379,20 +379,45 @@ export class MajsoulReview extends plugin {
     // 从 review.json 的 split_logs 重建绘图所需的昵称/段位/头像（下方按牌谱 UUID 拉取真实昵称/头像，覆盖占位名）
     const rj = JSON.parse(fs.readFileSync(path.resolve(`${paipuDir}/${matchedId} - review.json`), 'utf8'))
     // review.json 三种结构兼容：
-    //   1. { review: { name/dan/rate/avatarId }, player_id } — 数据在 review 下
+    //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
     //   2. { name/dan/rate/avatarId, player_id } — 数据直接在顶层
-    //   3. { task_id, status, error, data: { review: { name/dan/rate/avatarId }, ... }, player_id } — 新版 API 响应
+    //   3. { task_id, status, error, data: { review: { kyokus, ... }, ... }, player_id } — 新版 API 响应
     const rjReview = (rj.review && rj.review.kyokus) ? rj.review
       : (rj.data && rj.data.review) ? rj.data.review
       : (rj.data && rj.data.kyokus) ? rj.data
       : (rj.review || rj)
     const split0 = (rjReview.split_logs && rjReview.split_logs[0]) || {}
-    const mortalLog = {
-      name: split0.name || rjReview.name || ['', '', '', ''],
-      dan: split0.dan || rjReview.dan || [],
-      rate: split0.rate || rjReview.rate || [],
-      avatarId: split0.avatarId || rjReview.avatarId || []
+
+    // 段位/昵称/头像主源：优先本地 API 拉取完整牌谱 + parser 解析（与 #牌谱Review 一致）。
+    // 新版 review.json 不再携带 split_logs（无段位），必须从牌谱自身解析；旧格式则走 split_logs 兜底。
+    const mortalLog = { name: [], avatarId: [], dan: [], rate: [] }
+    try {
+      const client = getProtocolClient()
+      if (client.isEnabled()) {
+        const full = await client.fetchFullRecord(matchedId)
+        if (full && full.record) {
+          const parsed = new MajsoulPaipuParser().handleGameRecord(full.record)
+          if (parsed && Array.isArray(parsed.name)) {
+            for (let i = 0; i < 4; i++) {
+              const s = parsed.name[i]
+              if (typeof s === 'string' && s) mortalLog.name[i] = s
+              const av = parsed.avatarId?.[i]
+              if (av) mortalLog.avatarId[i] = av
+              if (typeof parsed.dan?.[i] === 'string' && parsed.dan[i]) mortalLog.dan[i] = parsed.dan[i]
+              if (typeof parsed.rate?.[i] === 'number') mortalLog.rate[i] = parsed.rate[i]
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (typeof logger !== 'undefined') logger.warn(`[MajsoulReview] #场况 本地API解析段位失败，将用 review.json 兜底: ${err.message || err}`)
     }
+
+    // 兜底：旧格式 review.json 的 split_logs[0]（含 dan/rate/name）
+    if (!mortalLog.dan.length && Array.isArray(split0.dan)) mortalLog.dan = split0.dan
+    if (!mortalLog.rate.length && Array.isArray(split0.rate)) mortalLog.rate = split0.rate
+    if (!mortalLog.name.some(Boolean) && Array.isArray(split0.name)) mortalLog.name = split0.name
+    if (typeof logger !== 'undefined') logger.info(`[MajsoulReview] #场况 段位: dan=${JSON.stringify(mortalLog.dan)} rate=${JSON.stringify(mortalLog.rate)}`)
 
     // 与 #牌谱Review 一致：尝试通过本地 API（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
     try {
