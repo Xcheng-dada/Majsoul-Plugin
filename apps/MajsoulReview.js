@@ -427,7 +427,12 @@ export class MajsoulReview extends plugin {
     }
 
     const res = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
-    const adaptRes = { data: { review: res.review, player_id: res.player_id } }
+    // review.json 有两种结构：
+    //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
+    //   2. { kyokus, ..., player_id } — 数据直接在顶层（兼容旧版）
+    // 统一适配为 drawReviewInfoImg 所需的 { data: { review, player_id } } 格式。
+    const reviewData = res.review || res
+    const adaptRes = { data: { review: reviewData, player_id: res.player_id } }
     if (kyokuId >= (adaptRes.data.review.kyokus || []).length) {
       return e.reply(`❌ 局数超出范围! 该牌谱共 ${(adaptRes.data.review.kyokus || []).length} 局（从 1 开始编号）`)
     }
