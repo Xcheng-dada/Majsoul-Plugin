@@ -429,13 +429,14 @@ export class MajsoulReview extends plugin {
     const res = JSON.parse(fs.readFileSync(reviewPath, 'utf8'))
     if (typeof logger !== 'undefined') {
       logger.info(`[MajsoulReview] 场况 review.json 顶层 keys: ${Object.keys(res).join(', ')}`)
-      logger.info(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 result: ${!!res.result}`)
+      logger.info(`[MajsoulReview] 场况 review.json 有 review: ${!!res.review}, 有 kyokus: ${!!res.kyokus}, 有 data: ${!!res.data}`)
     }
-    // review.json 有两种结构：
+    // review.json 有三种结构：
     //   1. { review: { kyokus, ... }, player_id } — 数据在 review 下
     //   2. { kyokus, ..., player_id } — 数据直接在顶层（兼容旧版）
+    //   3. { task_id, status, error, data: { kyokus, ... }, player_id } — 数据在 data 下（新版 API 响应）
     // 统一适配为 drawReviewInfoImg 所需的 { data: { review, player_id } } 格式。
-    const reviewData = res.review || res
+    const reviewData = res.review || res.data || res
     const adaptRes = { data: { review: reviewData, player_id: res.player_id } }
     if (kyokuId >= (adaptRes.data.review.kyokus || []).length) {
       return e.reply(`❌ 局数超出范围! 该牌谱共 ${(adaptRes.data.review.kyokus || []).length} 局（从 1 开始编号）`)
