@@ -1895,7 +1895,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   const nowStr = `${nowMatches} / ${nowReviewed}`
   const nowWStr = `${nowWarning} / ${nowReviewed}`
   const nowScore = (nowWarning * 0.6 + nowMatches) / nowReviewed
-  const nowScoreStr = `${(nowScore * 100).toFixed(2)}%`
+  const nowScoreStr = (nowScore * 100).toFixed(2)
   
   const totalColor = getColor(totalMatches / totalReviewed)
   const nowColor = getColor(nowMatches / nowReviewed)
