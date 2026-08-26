@@ -378,12 +378,20 @@ export class MajsoulReview extends plugin {
 
     // 从 review.json 的 split_logs 重建绘图所需的昵称/段位/头像（下方按牌谱 UUID 拉取真实昵称/头像，覆盖占位名）
     const rj = JSON.parse(fs.readFileSync(path.resolve(`${paipuDir}/${matchedId} - review.json`), 'utf8'))
-    const split0 = (rj.split_logs && rj.split_logs[0]) || {}
+    // review.json 三种结构兼容：
+    //   1. { review: { name/dan/rate/avatarId }, player_id } — 数据在 review 下
+    //   2. { name/dan/rate/avatarId, player_id } — 数据直接在顶层
+    //   3. { task_id, status, error, data: { review: { name/dan/rate/avatarId }, ... }, player_id } — 新版 API 响应
+    const rjReview = (rj.review && rj.review.kyokus) ? rj.review
+      : (rj.data && rj.data.review) ? rj.data.review
+      : (rj.data && rj.data.kyokus) ? rj.data
+      : (rj.review || rj)
+    const split0 = (rjReview.split_logs && rjReview.split_logs[0]) || {}
     const mortalLog = {
-      name: split0.name || (rj.review && rj.review.name) || ['', '', '', ''],
-      dan: split0.dan || (rj.review && rj.review.dan) || [],
-      rate: split0.rate || (rj.review && rj.review.rate) || [],
-      avatarId: split0.avatarId || (rj.review && rj.review.avatarId) || []
+      name: split0.name || rjReview.name || ['', '', '', ''],
+      dan: split0.dan || rjReview.dan || [],
+      rate: split0.rate || rjReview.rate || [],
+      avatarId: split0.avatarId || rjReview.avatarId || []
     }
 
     // 与 #牌谱Review 一致：尝试通过本地 API（协议）按牌谱 UUID 拉取真实昵称/头像，覆盖 review.json 的占位名（A/B/C/Dさん）
