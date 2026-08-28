@@ -83,7 +83,7 @@ export class MajsoulInfo extends plugin {
                     if (/^\d{6,12}$/.test(playerName)) {
                         return await this.handleFriendCodeFallback(e, playerName, mode);
                     }
-                    await e.reply(`未找到玩家「${playerName}」，请确认昵称正确且该玩家在金之间以上有过对局记录；铜银玩家可改用好友码查询：#雀魂查询 好友码`);
+                    await e.reply(`未找到玩家「${playerName}」，请确认昵称正确且该玩家在金之间以上有过对局记录；没有金之间对局记录的玩家可改用好友码查询：#雀魂查询 好友码`);
                     return true;
                 }
             } else if (uid) {
