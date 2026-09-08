@@ -3,6 +3,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 
 import { MajsoulGacha } from './apps/MajsoulGacha.js';
+import { MajsoulEconomy } from './apps/MajsoulEconomy.js';
 import { MajsoulUser } from './apps/MajsoulUser.js';
 import { MajsoulSubscribe } from './apps/MajsoulSubscribe.js';
 import { MajsoulRecords } from './apps/MajsoulRecords.js';
@@ -288,6 +289,7 @@ export class majsoul extends plugin {
     // 实例化各功能模块
     this.modules = {
       gacha: new MajsoulGacha(),
+      economy: new MajsoulEconomy(),
       user: new MajsoulUser(),
       subscribe: new MajsoulSubscribe(),
       records: new MajsoulRecords(),
