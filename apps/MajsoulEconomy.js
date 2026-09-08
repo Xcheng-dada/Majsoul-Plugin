@@ -68,7 +68,7 @@ export class MajsoulEconomy extends plugin {
                     fnc: 'claimMail'
                 },
                 {
-                    reg: `^#?设置(${Object.keys(SET_NAME_TO_KEY).join('|')})\\s+(\\d+)\\s+(-?\\d+)$`,
+                    reg: `^#?设置(?:货币\\s*)?(${Object.keys(SET_NAME_TO_KEY).join('|')})\\s+(\\d+)\\s+(-?\\d+)$`,
                     fnc: 'setCurrency',
                     permission: 'master'
                 }
@@ -304,7 +304,7 @@ export class MajsoulEconomy extends plugin {
         return true;
     }
 
-    // #设置货币 [ID] [数量]（master）
+    // #设置<货币名> [ID] [数量]（master）
     async setCurrency(e) {
         const match = e.msg.match(new RegExp(`^#?设置(${Object.keys(SET_NAME_TO_KEY).join('|')})\\s+(\\d+)\\s+(-?\\d+)$`));
         if (!match) return false;
