@@ -1978,11 +1978,16 @@ const HELP_DATA = {
     ]
   },
   "抽卡娱乐": {
-    desc: "十连抽卡与卡池切换，每日限5次",
+    desc: "签到攒辉玉，寻觅集雀士，带图鉴收集玩法",
     items: [
-      { name: "雀魂十连", desc: "模拟雀魂十连抽卡", eg: "雀魂十连", icon: "抽卡" },
-      { name: "查看雀魂卡池", desc: "查看本群当前卡池", eg: "查看雀魂卡池", icon: "抽卡" },
-      { name: "查询抽卡次数", desc: "查询今日剩余抽卡次数", eg: "查询抽卡次数 [QQ号]", icon: "抽卡" }
+      { name: "雀魂签到", desc: "每日签到领辉玉和寻觅卷轴", eg: "雀魂签到", icon: "抽卡" },
+      { name: "雀魂寻觅", desc: "消耗1卷轴或200辉玉单抽", eg: "雀魂寻觅", icon: "抽卡" },
+      { name: "雀魂十连", desc: "消耗1800辉玉或1张十连卷轴", eg: "雀魂十连", icon: "抽卡" },
+      { name: "雀魂钱包", desc: "查看七种货币余额", eg: "雀魂钱包", icon: "抽卡" },
+      { name: "雀魂图鉴", desc: "查看雀士/装扮收集进度", eg: "雀魂图鉴 [角色/装扮] [页码]", icon: "抽卡" },
+      { name: "雀魂兑换", desc: "用信仰兑换雀士（150/300）", eg: "雀魂兑换 四宫辉夜", icon: "抽卡" },
+      { name: "雀魂邮件", desc: "领取官方兑换码奖励邮件", eg: "雀魂邮件", icon: "抽卡" },
+      { name: "抢红包", desc: "抢机器人主发的辉玉红包", eg: "抢红包", icon: "抽卡" }
     ]
   }
 }
@@ -2063,7 +2068,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v6.2.6'
+  const versionText = 'v6.3.0'
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)

@@ -1,7 +1,14 @@
 {
-  "gachaDailyLimit": 5,
   "subscribeInterval4": 3,
   "subscribeInterval3": 5,
   "paipuCleanupDays": 15,
-  "recordsLimit": 5
+  "recordsLimit": 5,
+  "signJadeMin": 150,
+  "signJadeMax": 250,
+  "signCritRate": 8,
+  "signCritMulti": 2,
+  "singleGachaJade": 200,
+  "tenGachaJade": 1800,
+  "faithNormalCost": 150,
+  "faithLimitedCost": 300
 }

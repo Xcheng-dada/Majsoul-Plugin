@@ -115,19 +115,19 @@ export default class GachaCore {
     }
 
     // 主抽卡函数
-    async runGacha(groupId) {
+    async runGacha(groupId, times = 10) {
         // 检查抽卡开关状态
         const isEnabled = await this.getGachaStatus(groupId);
         if (!isEnabled) {
             throw new Error('本群抽卡功能已关闭');
         }
-        
+
         const pool = await this.gachaLoader();
         const groupPool = await this.groupPoolLoader();
 
         let poolName = null;
         const newGroupPool = [];
-        let hasGuaranteed = false; // 新增：保底标志
+        let hasGuaranteed = false; // 保底标志（仅十连生效）
 
         // 1. 查找并确定当前群组的卡池
         for (const item of groupPool) {
@@ -154,52 +154,51 @@ export default class GachaCore {
             await this.saveGroupPool(newGroupPool);
         }
 
-        // 3. 执行十连抽卡
+        // 3. 执行抽卡
         const result = [];
         const purpleGift = pool.purple_gift || []; // 保底紫色礼物列表
         let purpleFlag = 0;
 
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < times; i++) {
             const singleResult = await this.singlePull(pool, poolName);
+
+            // 十连保底机制：仅十连时生效，如果前9抽都是普通礼物且第10抽也是蓝礼物，强制出紫
+            if (times === 10 && i === times - 1 && purpleFlag === times - 1 && singleResult[0] === ITEM_TYPE.GIFT_BLUE) {
+                singleResult[0] = ITEM_TYPE.GIFT_PURPLE; // 改为紫色礼物标识
+                const randomIndex = Math.floor(Math.random() * purpleGift.length);
+
+                // 如果 giftName 已经有 .jpg 后缀，就不再加
+                let giftName = purpleGift[randomIndex];
+                if (!giftName.toLowerCase().endsWith('.jpg') && !giftName.toLowerCase().endsWith('.jpeg')) {
+                    giftName += '.jpg';
+                }
+
+                singleResult[1] = giftName;
+                hasGuaranteed = true; // 设置保底标志
+            }
+
             result.push(singleResult);
-            // 保底判断逻辑：只有蓝色礼物(GIFT_BLUE)且不在紫色礼物列表中才计数
+
+            // 保底计数逻辑：只有蓝色礼物(GIFT_BLUE)且不在紫色礼物列表中才计数
             if (singleResult[0] === ITEM_TYPE.GIFT_BLUE) {
-                // 获取礼物名称（不带扩展名）
                 let giftName = singleResult[1];
                 const extIndex = giftName.lastIndexOf('.');
                 if (extIndex !== -1) {
                     giftName = giftName.substring(0, extIndex);
                 }
-                // 检查是否在紫色礼物列表中
                 if (!purpleGift.includes(giftName + '.jpg') && !purpleGift.includes(giftName)) {
                     purpleFlag++;
                 }
             }
         }
 
-        // 4. 十连保底机制：如果前10抽都是普通礼物(蓝礼物且非紫礼物)，第10抽强制出紫
-        if (purpleFlag === 10 && result[9][0] === ITEM_TYPE.GIFT_BLUE) {
-            result[9][0] = ITEM_TYPE.GIFT_PURPLE; // 改为紫色礼物标识
-            const randomIndex = Math.floor(Math.random() * purpleGift.length);
-            
-            // 修复：确保不重复添加 .jpg 后缀
-            let giftName = purpleGift[randomIndex];
-            
-            // 如果 giftName 已经有 .jpg 后缀，就不再加
-            if (!giftName.toLowerCase().endsWith('.jpg') && !giftName.toLowerCase().endsWith('.jpeg')) {
-                giftName += '.jpg';
-            }
-            
-            result[9][1] = giftName;
-            hasGuaranteed = true; // 设置保底标志
-        }
-
-        // 5. 拼接图片并返回结果
+        // 4. 拼接图片并返回结果
         const imageBase64 = await this.concatImages(result, poolName);
         return {
             imageBase64: imageBase64,
             results: result,
-            hasGuaranteed: hasGuaranteed // 新增：返回保底标志
+            hasGuaranteed: hasGuaranteed, // 保底标志
+            poolName: poolName            // 本次抽卡使用的卡池
         };
     }
 
@@ -310,85 +309,112 @@ export default class GachaCore {
         return [objInt, prop];
     }
 
-    // 拼接图片
+    /**
+     * 定位抽卡物品图片的完整路径（供拼图与图鉴复用）
+     * @param {string} imgName 文件名（可含后缀）
+     * @param {number} objInt 物品类型（ITEM_TYPE）
+     * @param {string|null} poolName 卡池名（用于装扮优先查卡池子目录）
+     * @returns {Promise<string|null>} 图片绝对路径，未找到返回 null
+     */
+    async resolveItemImage(imgName, objInt, poolName) {
+        // 根据 objInt 判断图片所在目录
+        let possibleDirs = [];
+
+        if (objInt === ITEM_TYPE.GIFT_BLUE) {
+            possibleDirs = ['gift/intermediate']; // 中级礼物目录
+        } else if (objInt === ITEM_TYPE.GIFT_PURPLE) {
+            possibleDirs = ['gift/advanced']; // 高级礼物目录
+        } else if (objInt === ITEM_TYPE.DECORATION) {
+            // 装饰图片：需要尝试多个目录
+            possibleDirs = ['decoration'];
+            // 特殊卡池子目录逻辑
+            if (poolName && poolName !== 'normal') {
+                possibleDirs.unshift(path.join('decoration', poolName));
+            }
+        } else if (objInt === ITEM_TYPE.CHARACTER) {
+            possibleDirs = ['person'];
+        } else {
+            // 未知类型，尝试所有可能目录
+            possibleDirs = ['gift', 'decoration', 'person'];
+        }
+
+        const supportedExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+        // 遍历可能的目录
+        for (const dir of possibleDirs) {
+            const baseDir = path.join(this.resourcesRoot, dir);
+
+            // 情况A: imgName 已包含后缀，直接检查
+            if (path.extname(imgName)) {
+                const tryPath = path.join(baseDir, imgName);
+                try {
+                    await fs.access(tryPath);
+                    return tryPath;
+                } catch { continue; }
+            }
+            // 情况B: imgName 无后缀，尝试所有支持的后缀
+            else {
+                for (const ext of supportedExt) {
+                    const tryPath = path.join(baseDir, imgName + ext);
+                    try {
+                        await fs.access(tryPath);
+                        return tryPath;
+                    } catch { continue; }
+                }
+            }
+        }
+        return null;
+    }
+
+    // 拼接图片（行数动态：单抽居中放大 400px，多抽 5列动态行数 256px）
     async concatImages(imageResults, poolName) {
-        const COL = 5;
-        const ROW = 2;
-        const UNIT_SIZE = 266;
-        const GAP = 10;
-        const TARGET_SIZE = 256;
+        const count = imageResults.length;
+        const TARGET_SIZE = count === 1 ? 400 : 256;
 
         // 1. 准备图片Buffer数组
         const imageBuffers = await Promise.all(
             imageResults.map(async ([objInt, imgName]) => {
-                // 根据 objInt 判断图片所在目录
-                let possibleDirs = [];
-                
-                if (objInt === ITEM_TYPE.GIFT_BLUE) {
-                    possibleDirs = ['gift/intermediate']; // 中级礼物目录
-                } else if (objInt === ITEM_TYPE.GIFT_PURPLE) {
-                    possibleDirs = ['gift/advanced']; // 高级礼物目录
-                } else if (objInt === ITEM_TYPE.DECORATION) {
-                    // 装饰图片：需要尝试多个目录
-                    possibleDirs = ['decoration'];
-                    // 特殊卡池子目录逻辑
-                    if (poolName && poolName !== 'normal') {
-                        possibleDirs.unshift(path.join('decoration', poolName));
-                    }
-                } else if (objInt === ITEM_TYPE.CHARACTER) {
-                    possibleDirs = ['person'];
-                } else {
-                    // 未知类型，尝试所有可能目录
-                    possibleDirs = ['gift', 'decoration', 'person'];
-                }
+                const finalImagePath = await this.resolveItemImage(imgName, objInt, poolName);
 
-                // 2. 动态查找文件
-                let finalImagePath = null;
-                const supportedExt = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-
-                // 遍历可能的目录
-                for (const dir of possibleDirs) {
-                    if (finalImagePath) break;
-                    const baseDir = path.join(this.resourcesRoot, dir);
-
-                    // 情况A: imgName 已包含后缀，直接检查
-                    if (path.extname(imgName)) {
-                        const tryPath = path.join(baseDir, imgName);
-                        try {
-                            await fs.access(tryPath);
-                            finalImagePath = tryPath;
-                            break;
-                        } catch { continue; }
-                    } 
-                    // 情况B: imgName 无后缀，尝试所有支持的后缀
-                    else {
-                        for (const ext of supportedExt) {
-                            const tryPath = path.join(baseDir, imgName + ext);
-                            try {
-                                await fs.access(tryPath);
-                                finalImagePath = tryPath;
-                                break;
-                            } catch { continue; }
-                        }
-                    }
-                }
-
-                // 3. 如果未找到，抛出更清晰的错误
+                // 如果未找到，抛出更清晰的错误
                 if (!finalImagePath) {
-                    const searchedDirs = possibleDirs.map(d => `"${d}"`).join(', ');
-                    throw new Error(`无法找到图片文件 "${imgName}"。在目录 [${searchedDirs}] 中均未发现。`);
+                    throw new Error(`无法找到图片文件 "${imgName}"。`);
                 }
 
-                // 4. 使用找到的路径进行处理
                 logger.debug(`[GachaCore] 图片加载: ${path.relative(this.resourcesRoot, finalImagePath)}`);
                 return sharp(finalImagePath).resize(TARGET_SIZE, TARGET_SIZE).toBuffer();
             })
         );
 
-        // 2. 创建画布并拼接
-        const canvasWidth = UNIT_SIZE * COL + GAP;
-        const canvasHeight = UNIT_SIZE * ROW + GAP;
+        let canvasWidth, canvasHeight, positions;
 
+        if (count === 1) {
+            // 单抽：居中放大
+            const UNIT = TARGET_SIZE + 20;
+            canvasWidth = UNIT;
+            canvasHeight = UNIT;
+            positions = imageBuffers.map(buffer => ({
+                input: buffer,
+                top: 10,
+                left: 10,
+            }));
+        } else {
+            // 多抽：5列动态行数
+            const COL = 5;
+            const UNIT_SIZE = 266;
+            const GAP = 10;
+            const ROW = Math.ceil(count / COL);
+
+            canvasWidth = UNIT_SIZE * COL + GAP;
+            canvasHeight = UNIT_SIZE * ROW + GAP;
+            positions = imageBuffers.map((buffer, index) => ({
+                input: buffer,
+                top: GAP + Math.floor(index / COL) * UNIT_SIZE,
+                left: GAP + (index % COL) * UNIT_SIZE,
+            }));
+        }
+
+        // 2. 创建画布并合成、输出为JPEG、转为base64
         const canvas = sharp({
             create: {
                 width: canvasWidth,
@@ -398,15 +424,7 @@ export default class GachaCore {
             }
         });
 
-        // 3. 设置每张小图的位置
-        const compositeInputs = imageBuffers.map((buffer, index) => ({
-            input: buffer,
-            top: GAP + Math.floor(index / COL) * UNIT_SIZE,
-            left: GAP + (index % COL) * UNIT_SIZE,
-        }));
-
-        // 4. 合成、输出为JPEG、转为base64
-        const outputBuffer = await canvas.composite(compositeInputs).jpeg({ quality: 75 }).toBuffer();
+        const outputBuffer = await canvas.composite(positions).jpeg({ quality: 75 }).toBuffer();
         const base64Str = outputBuffer.toString('base64');
         return `base64://${base64Str}`;
     }

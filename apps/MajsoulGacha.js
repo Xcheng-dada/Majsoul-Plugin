@@ -3,8 +3,10 @@ import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import path from 'path';
 import GachaCore from '../utils/GachaCore.js';
-import DailyLimiter from '../utils/DailyLimiter.js';
+import GachaCollection from '../utils/GachaCollection.js';
+import GachaWallet from '../utils/GachaWallet.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
+import { appendSummary } from '../utils/CurrencyCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 
 export class MajsoulGacha extends plugin {
@@ -15,6 +17,10 @@ export class MajsoulGacha extends plugin {
             event: 'message',
             priority: 500,
             rule: [
+                {
+                    reg: '^#?雀魂寻觅$',
+                    fnc: 'singleGacha'
+                },
                 {
                     reg: '^#?雀魂十连$',
                     fnc: 'tenGacha'
@@ -38,28 +44,12 @@ export class MajsoulGacha extends plugin {
                 {
                     reg: '^#?雀魂抽卡状态$',
                     fnc: 'checkGachaStatus'
-                },
-                // 设置用户今日剩余抽卡次数
-                {
-                    reg: '^#?设置用户次数\\s+(\\d+)\\s+(\\d+)$',
-                    fnc: 'setUserCount',
-                    permission: 'master'
-                },
-                // 重置用户抽卡次数（清零）
-                {
-                    reg: '^#?重置用户次数\\s+(\\d+)$',
-                    fnc: 'resetUserLimit',
-                    permission: 'master'
-                },
-                {
-                    reg: '^#?查询抽卡次数\\s*(\\d+)?$',
-                    fnc: 'checkLimit'
                 }
             ]
         });
         this.gachaCore = new GachaCore();
-        // 每日抽卡次数限制，可通过锅巴后台或 config/config.json 的 gachaDailyLimit 调整
-        this.dailyLimiter = new DailyLimiter(getFeatureConfigItem('gachaDailyLimit'));
+        this.collection = new GachaCollection(this.gachaCore);
+        this.wallet = new GachaWallet();
     }
 
     /**
@@ -76,12 +66,27 @@ export class MajsoulGacha extends plugin {
         return false;
     }
 
-    // 十连抽卡（增加保底提示）
+    // 单抽（#雀魂寻觅）
+    async singleGacha(e) {
+        await this._doGacha(e, 1);
+        return true;
+    }
+
+    // 十连抽卡
     async tenGacha(e) {
-        // 检查是否在群聊中
+        await this._doGacha(e, 10);
+        return true;
+    }
+
+    /**
+     * 统一抽卡流程：检查开关 → 扣费 → 抽卡 → 重复转化与图鉴 → 信仰入账 → 摘要输出
+     * @param {object} e
+     * @param {1|10} times
+     */
+    async _doGacha(e, times) {
         if (!e.group_id) {
             await e.reply('雀魂抽卡功能仅限群聊使用');
-            return true;
+            return;
         }
 
         // 检查抽卡开关状态
@@ -89,96 +94,142 @@ export class MajsoulGacha extends plugin {
             const isEnabled = await this.gachaCore.getGachaStatus(e.group_id);
             if (!isEnabled) {
                 await e.reply('本群雀魂抽卡功能已关闭，请联系管理员开启');
-                return true;
+                return;
             }
         } catch (error) {
             logger.error('[雀魂抽卡] 检查开关状态失败:', error);
-            // 出错时继续执行，避免影响正常使用
+        }
+
+        const singleJade = Math.max(1, Number(getFeatureConfigItem('singleGachaJade')) || 200);
+        const tenJade = Math.max(1, Number(getFeatureConfigItem('tenGachaJade')) || 1800);
+
+        // 扣费：卷轴优先于辉玉；十连时单张寻觅卷轴不可用（需十连寻觅卷轴）
+        let cost = null;
+        let costDesc = '';
+        if (times === 1) {
+            const wallet = await this.wallet.get(e.user_id);
+            if (wallet.ticket >= 1) {
+                cost = { ticket: 1 };
+                costDesc = '寻觅卷轴 x1';
+            } else if (wallet.jade >= singleJade) {
+                cost = { jade: singleJade };
+                costDesc = `辉玉 x${singleJade}`;
+            } else {
+                await e.reply(`辉玉不足（需要 ${singleJade}，当前 ${wallet.jade}），且没有寻觅卷轴。\n每日签到可以获得辉玉和寻觅卷轴哦~`, true);
+                return;
+            }
+        } else {
+            const wallet = await this.wallet.get(e.user_id);
+            if (wallet.ticket10 >= 1) {
+                cost = { ticket10: 1 };
+                costDesc = '十连寻觅卷轴 x1';
+            } else if (wallet.jade >= tenJade) {
+                cost = { jade: tenJade };
+                costDesc = `辉玉 x${tenJade}`;
+            } else {
+                const ticketHint = wallet.ticket >= 1 ? '（单张寻觅卷轴无法十连，寻觅卷轴仅可用于单抽）' : '';
+                await e.reply(`辉玉不足（需要 ${tenJade}，当前 ${wallet.jade}），且没有十连寻觅卷轴。${ticketHint}\n每日签到可以获得辉玉和寻觅卷轴哦~`, true);
+                return;
+            }
+        }
+
+        const spendResult = await this.wallet.spend(e.user_id, cost);
+        if (!spendResult.ok) {
+            await e.reply(`${spendResult.lack}不足，无法寻觅~`, true);
+            return;
         }
 
         try {
-            const canGacha = await this.dailyLimiter.check(e.user_id);
-            if (!canGacha) {
-                const remaining = await this.dailyLimiter.getRemaining(e.user_id);
-                await e.reply(`今天已经抽了 ${this.dailyLimiter.limit} 次啦，剩余次数：${remaining}，明天再来吧~`, true);
-                return true;
-            }
+            const { imageBase64, results, hasGuaranteed } = await this.gachaCore.runGacha(e.group_id, times);
 
-            const { imageBase64, results, hasGuaranteed } = await this.gachaCore.runGacha(e.group_id);
-            await this.dailyLimiter.increase(e.user_id);
-
-            const currentCount = await this.dailyLimiter.getCount(e.user_id);
-            const remaining = await this.dailyLimiter.getRemaining(e.user_id);
-
-            const itemsByType = {
-                [ITEM_TYPE.CHARACTER]: [],
-                [ITEM_TYPE.DECORATION]: [],
-                [ITEM_TYPE.GIFT_BLUE]: [],
-                [ITEM_TYPE.GIFT_PURPLE]: []
-            };
-
-            for (const [objInt, itemName] of results) {
-                const name = path.parse(itemName).name;
-                itemsByType[objInt].push(name);
-            }
-
+            // 处理结果：礼物直接转粉尘；装扮/雀士首入图鉴、重复转石/许愿石
+            const gains = { jade: 0, ticket: 0, ticket10: 0, dust: 0, stone: 0, wish: 0, faith: times };
             const charCounts = {};
-            itemsByType[ITEM_TYPE.CHARACTER].forEach(name => {
-                charCounts[name] = (charCounts[name] || 0) + 1;
-            });
-            const charParts = Object.entries(charCounts).map(([name, count]) => 
-                count > 1 ? `${name}x${count}` : name
-            );
-
             const decorCounts = {};
-            itemsByType[ITEM_TYPE.DECORATION].forEach(name => {
-                decorCounts[name] = (decorCounts[name] || 0) + 1;
+            const charConv = {};   // 重复雀士转化的许愿石数量（按名字累计）
+            const decorConv = {};  // 重复装扮转化的星之石数量（按名字累计）
+            const giftCounts = { blue: 0, purple: 0 };
+
+            for (const [objInt, fileName] of results) {
+                const name = path.parse(fileName).name;
+                if (objInt === ITEM_TYPE.GIFT_BLUE) {
+                    giftCounts.blue++;
+                    gains.dust += 5;
+                } else if (objInt === ITEM_TYPE.GIFT_PURPLE) {
+                    giftCounts.purple++;
+                    gains.dust += 25;
+                } else if (objInt === ITEM_TYPE.DECORATION) {
+                    decorCounts[name] = (decorCounts[name] || 0) + 1;
+                    const { isNew } = await this.collection.add(e.user_id, 'decorations', name);
+                    if (!isNew) {
+                        decorConv[name] = (decorConv[name] || 0) + 5; // 重复装扮 → 5 星之石
+                        gains.stone += 5;
+                    }
+                } else if (objInt === ITEM_TYPE.CHARACTER) {
+                    charCounts[name] = (charCounts[name] || 0) + 1;
+                    const { isNew } = await this.collection.add(e.user_id, 'characters', name);
+                    if (!isNew) {
+                        // 重复雀士：限定 150 / 普通 75 许愿石
+                        const isLimited = await this.collection.isLimitedCharacter(name);
+                        const amount = isLimited ? 150 : 75;
+                        charConv[name] = (charConv[name] || 0) + amount;
+                        gains.wish += amount;
+                    }
+                }
+            }
+
+            // 聚合展示（去重并标注次数，重复项内联标注转换结果）
+            const mergeShow = (counts, convMap, convName) => Object.entries(counts).map(([n, c]) => {
+                const tag = convMap[n] ? `（已转换${convName}x${convMap[n]}）` : '';
+                return c > 1 ? `${n}x${c}${tag}` : `${n}${tag}`;
             });
-            const decorParts = Object.entries(decorCounts).map(([name, count]) => 
-                count > 1 ? `${name}x${count}` : name
-            );
+            const charShown = mergeShow(charCounts, charConv, '许愿石');
+            const decorShown = mergeShow(decorCounts, decorConv, '星之石');
 
-            const giftParts = [];
-            if (itemsByType[ITEM_TYPE.GIFT_BLUE].length > 0) {
-                giftParts.push(`中级礼物x${itemsByType[ITEM_TYPE.GIFT_BLUE].length}`);
-            }
-            if (itemsByType[ITEM_TYPE.GIFT_PURPLE].length > 0) {
-                giftParts.push(`高级礼物x${itemsByType[ITEM_TYPE.GIFT_PURPLE].length}`);
+            // 货币自动兑换提示（许愿石→粉尘→寻觅卷轴、星之石→粉尘）
+            const convertParts = [];
+            const { wallet: newWallet, converted } = await this.wallet.add(e.user_id, gains);
+            for (const line of converted) {
+                if (!convertParts.includes(line)) convertParts.push(line);
             }
 
-            let textSummary = `十连寻觅结果：`;
-            if (hasGuaranteed) {
-                textSummary += `（含保底）`;
+            // 纯图片输出：结果图 + 摘要条（拼接到结果图下方）
+            const label = times === 1 ? '雀魂寻觅结果' : '十连寻觅结果';
+            let titleLine = `${label}（${costDesc}）`;
+            if (times === 10 && hasGuaranteed) {
+                titleLine += '｜含保底';
             }
-            
-            if (charParts.length > 0) {
-                textSummary += `\n雀士：${charParts.join('、')}`;
+            const lines = [];
+            if (charShown.length > 0) {
+                lines.push(`雀士：${charShown.join('、')}`);
             }
-            if (decorParts.length > 0) {
-                textSummary += `\n装饰：${decorParts.join('、')}`;
+            if (decorShown.length > 0) {
+                lines.push(`装饰：${decorShown.join('、')}`);
             }
-            if (giftParts.length > 0) {
-                textSummary += `\n礼物：${giftParts.join('、')}`;
+            if (giftCounts.blue + giftCounts.purple > 0) {
+                const giftParts = [];
+                if (giftCounts.blue > 0) giftParts.push(`中级礼物x${giftCounts.blue}`);
+                if (giftCounts.purple > 0) giftParts.push(`高级礼物x${giftCounts.purple}`);
+                lines.push(`礼物：${giftParts.join('、')}`);
             }
+            if (convertParts.length > 0) {
+                lines.push(`转化：${convertParts.join('；')}`);
+            }
+            lines.push(`信仰 +${times}（当前 ${newWallet.faith}）｜寻觅卷轴 ${newWallet.ticket}｜辉玉 ${newWallet.jade}`);
 
-            textSummary += `\n今日抽卡：${currentCount}/${this.dailyLimiter.limit}（剩余${remaining}次）`;
-
-            const msg = [
-                textSummary,
-                segment.image(imageBase64)
-            ];
-            await e.reply(msg, true);
+            const finalImage = await appendSummary(imageBase64, titleLine, lines);
+            await e.reply(segment.image(finalImage), true);
 
         } catch (error) {
             logger.error('[雀魂抽卡] 抽卡失败:', error);
-            // 如果是开关关闭的错误，提示更友好的信息
-            if (error.message.includes('抽卡功能已关闭')) {
+            // 抽卡失败，原路退还
+            await this.wallet.refund(e.user_id, cost);
+            if (error.message && error.message.includes('抽卡功能已关闭')) {
                 await e.reply('本群雀魂抽卡功能已关闭，请联系管理员开启');
             } else {
-                await e.reply('抽卡过程出现异常，请联系维护者。', true);
+                await e.reply('抽卡过程出现异常，已退还本次消耗，请联系维护者。', true);
             }
         }
-        return true;
     }
 
     // 开关抽卡功能
@@ -191,13 +242,13 @@ export class MajsoulGacha extends plugin {
 
         const action = match[1];
         const isEnable = action === '开启';
-        
+
         try {
             const success = await this.gachaCore.setGachaStatus(e.group_id, isEnable);
             if (success) {
                 const statusText = isEnable ? '开启' : '关闭';
                 await e.reply(`已${statusText}本群雀魂抽卡功能`);
-                
+
                 // 如果是关闭操作，额外提示
                 if (!isEnable) {
                     await e.reply('提示：关闭后，所有成员将无法使用雀魂抽卡功能');
@@ -226,13 +277,11 @@ export class MajsoulGacha extends plugin {
                 `群 ${e.group_id} 雀魂抽卡功能状态：`,
                 `${statusText}`,
                 '',
-                isEnabled 
-                    ? '成员可以使用 #雀魂十连 进行抽卡'
-                    : '抽卡功能已禁用，请联系管理员开启',
-                '',
-                `每日抽卡次数限制：${this.dailyLimiter.limit}次`
+                isEnabled
+                    ? '成员可以使用 #雀魂寻觅 / #雀魂十连 进行抽卡'
+                    : '抽卡功能已禁用，请联系管理员开启'
             ].join('\n');
-            
+
             await e.reply(replyMsg);
         } catch (error) {
             logger.error('[雀魂抽卡] 查询状态失败:', error);
@@ -241,7 +290,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 切换卡池（更新：删除up池相关提示）
+    // 切换卡池
     async changePool(e) {
         const match = e.msg.match(/^#?切换雀魂卡池\s+(.+)$/);
         if (!match) {
@@ -304,92 +353,6 @@ export class MajsoulGacha extends plugin {
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
             await e.reply('查看卡池失败，可能是配置文件读取错误。');
-        }
-        return true;
-    }
-
-    // 查询抽卡次数
-    async checkLimit(e) {
-        const match = e.msg.match(/^#?查询抽卡次数\s*(\d+)?$/);
-        const targetUserId = match ? (match[1] || e.user_id) : e.user_id;
-
-        try {
-            const currentCount = await this.dailyLimiter.getCount(targetUserId);
-            const remaining = await this.dailyLimiter.getRemaining(targetUserId);
-
-            const userInfo = targetUserId === e.user_id ? '你' : `用户 ${targetUserId}`;
-            await e.reply(`${userInfo}今日已抽卡 ${currentCount} 次，剩余 ${remaining} 次，每日限制 ${this.dailyLimiter.limit} 次`);
-        } catch (error) {
-            logger.error('[雀魂抽卡] checkLimit 失败:', error);
-            await e.reply('查询抽卡次数失败：' + error.message);
-        }
-        return true;
-    }
-
-    // 设置用户今日剩余抽卡次数
-    async setUserCount(e) {
-        const match = e.msg.match(/^#?设置用户次数\s+(\d+)\s+(\d+)$/);
-        if (!match) {
-            await e.reply('指令格式错误！正确格式：#设置用户次数 [用户ID] [剩余次数]');
-            return true;
-        }
-
-        const targetUserId = match[1];
-        const remainingToSet = parseInt(match[2]);
-
-        // 基础校验：剩余次数必须在0到每日上限之间
-        if (isNaN(remainingToSet) || remainingToSet < 0 || remainingToSet > this.dailyLimiter.limit) {
-            await e.reply(`设置次数无效，请输入0到${this.dailyLimiter.limit}之间的整数。`);
-            return true;
-        }
-
-        try {
-            // 计算已抽次数 = 每日上限 - 设置的剩余次数
-            const usedCount = this.dailyLimiter.limit - remainingToSet;
-            
-            // 调用底层方法设置已抽次数
-            const success = await this.dailyLimiter.setCount(targetUserId, usedCount);
-            
-            if (success) {
-                await e.reply(`已将用户 ${targetUserId} 的今日抽卡次数设置为：\n` +
-                    `已抽次数：${usedCount} 次\n` +
-                    `剩余次数：${remainingToSet} 次\n` +
-                    `每日上限：${this.dailyLimiter.limit} 次`);
-            } else {
-                await e.reply('设置用户抽卡次数失败，请检查日志。');
-            }
-        } catch (error) {
-            logger.error('[雀魂抽卡] setUserCount 方法执行失败:', error);
-            await e.reply('执行操作时出现系统错误：' + error.message);
-        }
-        return true;
-    }
-
-    // 重置指定用户抽卡次数（清零）
-    async resetUserLimit(e) {
-        const match = e.msg.match(/^#?重置用户次数\s+(\d+)$/);
-        if (!match) {
-            await e.reply('指令格式错误！正确格式：#重置用户次数 [用户ID]');
-            return true;
-        }
-
-        const targetUserId = match[1];
-
-        try {
-            // 重置 = 设置已抽次数为0，剩余次数为每日上限
-            const success = await this.dailyLimiter.setCount(targetUserId, 0);
-            
-            if (success) {
-                await e.reply(`已重置用户 ${targetUserId} 的今日抽卡记录\n` +
-                    `已抽次数：0 次\n` +
-                    `剩余次数：${this.dailyLimiter.limit} 次\n` +
-                    `每日上限：${this.dailyLimiter.limit} 次`);
-            } else {
-                await e.reply('重置用户抽卡次数失败，请检查日志。');
-            }
-        } catch (error) {
-            logger.error('[雀魂抽卡] resetUserLimit 方法执行失败:', error);
-            await e.reply('执行操作时出现系统错误：' + error.message);
         }
         return true;
     }

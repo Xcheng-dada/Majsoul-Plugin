@@ -106,13 +106,88 @@ export function supportGuoba () {
           component: 'SOFT_GROUP_BEGIN'
         },
         {
-          field: 'gachaDailyLimit',
-          label: '抽卡每日次数限制',
-          bottomHelpMessage: '每位用户每天可抽卡的上限，默认 5 次',
+          label: '抽卡经济',
+          component: 'SOFT_GROUP_BEGIN'
+        },
+        {
+          field: 'signJadeMin',
+          label: '签到辉玉下限',
+          bottomHelpMessage: '每日签到随机获得的辉玉下限，默认 150',
           component: 'InputNumber',
           componentProps: {
             min: 0,
-            placeholder: '5'
+            placeholder: '150'
+          }
+        },
+        {
+          field: 'signJadeMax',
+          label: '签到辉玉上限',
+          bottomHelpMessage: '每日签到随机获得的辉玉上限，默认 250',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            placeholder: '250'
+          }
+        },
+        {
+          field: 'signCritRate',
+          label: '签到暴击概率（%）',
+          bottomHelpMessage: '签到辉玉触发暴击的概率，默认 8%',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            max: 100,
+            placeholder: '8'
+          }
+        },
+        {
+          field: 'signCritMulti',
+          label: '签到暴击倍数',
+          bottomHelpMessage: '签到暴击时辉玉的倍数，默认 2 倍',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            placeholder: '2'
+          }
+        },
+        {
+          field: 'singleGachaJade',
+          label: '单抽辉玉价格',
+          bottomHelpMessage: '#雀魂寻觅 使用辉玉单抽的价格，默认 200',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            placeholder: '200'
+          }
+        },
+        {
+          field: 'tenGachaJade',
+          label: '十连辉玉价格',
+          bottomHelpMessage: '#雀魂十连 使用辉玉十连的价格，默认 1800',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            placeholder: '1800'
+          }
+        },
+        {
+          field: 'faithNormalCost',
+          label: '信仰兑换普通雀士',
+          bottomHelpMessage: '#雀魂兑换 普通雀士所需的信仰值，默认 150',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            placeholder: '150'
+          }
+        },
+        {
+          field: 'faithLimitedCost',
+          label: '信仰兑换限定雀士',
+          bottomHelpMessage: '#雀魂兑换 限定雀士所需的信仰值，默认 300',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            placeholder: '300'
           }
         },
         {

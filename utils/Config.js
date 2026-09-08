@@ -10,11 +10,19 @@ const CONFIG_PATH = path.join(__dirname, '../config/config.json')
 
 // 功能配置默认值（与 config/config.json 保持一致，文件缺失/损坏时兜底）
 export const FEATURE_CONFIG_DEFAULTS = {
-  gachaDailyLimit: 5,        // 抽卡每日次数限制
   subscribeInterval4: 3,     // 四麻订阅检查间隔（分钟）
   subscribeInterval3: 5,     // 三麻订阅检查间隔（分钟）
   paipuCleanupDays: 15,      // 牌谱/头像自动清理天数
-  recordsLimit: 5            // 对局查询默认返回场数
+  recordsLimit: 5,           // 对局查询默认返回场数
+  // 抽卡经济系统
+  signJadeMin: 150,          // 签到随机辉玉下限
+  signJadeMax: 250,          // 签到随机辉玉上限
+  signCritRate: 8,           // 签到暴击概率（%）
+  signCritMulti: 2,          // 签到暴击倍数
+  singleGachaJade: 200,      // 单抽辉玉价格
+  tenGachaJade: 1800,        // 十连辉玉价格
+  faithNormalCost: 150,      // 信仰兑换普通雀士所需
+  faithLimitedCost: 300      // 信仰兑换限定雀士所需
 }
 
 /**

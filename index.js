@@ -45,6 +45,11 @@ export class majsoul extends plugin {
       rule: [
         // 抽卡相关指令
         {
+          reg: '^#?雀魂寻觅$',
+          fnc: 'majsoulGacha',
+          permission: 'group'
+        },
+        {
           reg: '^#?雀魂十连$',
           fnc: 'majsoulGacha',
           permission: 'group'
@@ -59,22 +64,54 @@ export class majsoul extends plugin {
           fnc: 'majsoulGacha',
           permission: 'group'
         },
+
+        // 抽卡经济系统指令
         {
-          reg: '^#?查询抽卡次数\\s*(\\d*)$',
-          fnc: 'majsoulGacha',
+          reg: '^#?雀魂签到$',
+          fnc: 'majsoulEconomy',
+          permission: 'all'
+        },
+        {
+          reg: '^#?雀魂钱包$',
+          fnc: 'majsoulEconomy',
+          permission: 'all'
+        },
+        {
+          reg: '^#?雀魂图鉴',
+          fnc: 'majsoulEconomy',
+          permission: 'all'
+        },
+        {
+          reg: '^#?雀魂兑换\\s+(.+)$',
+          fnc: 'majsoulEconomy',
+          permission: 'all'
+        },
+        {
+          reg: '^#?发红包\\s+(\\d+)\\s+(\\d+)$',
+          fnc: 'majsoulEconomy',
+          permission: 'master'
+        },
+        {
+          reg: '^#?抢红包$',
+          fnc: 'majsoulEconomy',
           permission: 'group'
         },
         {
-          reg: '^#?设置用户次数\\s+(\\d+)\\s+(\\d+)$',
-          fnc: 'majsoulGacha',
+          reg: '^#?发送邮件\\s+(.+)$',
+          fnc: 'majsoulEconomy',
           permission: 'master'
         },
         {
-          reg: '^#?重置用户次数\\s+(\\d+)$',
-          fnc: 'majsoulGacha',
+          reg: '^#?雀魂邮件$',
+          fnc: 'majsoulEconomy',
+          permission: 'group'
+        },
+        {
+          reg: '^#?设置(十连寻觅卷轴|寻觅卷轴|十连寻觅券|寻觅券|辉玉|星之粉尘|星之石|许愿石|信仰)\\s+(\\d+)\\s+(-?\\d+)$',
+          fnc: 'majsoulEconomy',
           permission: 'master'
         },
-        
+
         // 用户管理相关指令
         {
           reg: '^#?雀魂搜索\\s+(.+)$',
@@ -263,6 +300,11 @@ export class majsoul extends plugin {
   // 指令路由 - 抽卡相关
   async majsoulGacha(e) {
     return await this.modules.gacha.handle(e);
+  }
+
+  // 指令路由 - 抽卡经济系统
+  async majsoulEconomy(e) {
+    return await this.modules.economy.handle(e);
   }
   
   // 指令路由 - 用户管理相关
