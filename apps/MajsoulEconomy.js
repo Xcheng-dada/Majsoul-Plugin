@@ -226,14 +226,14 @@ export class MajsoulEconomy extends plugin {
         const total = parseInt(match[1]);
         const count = parseInt(match[2]);
 
-        const ownerName = e.sender?.card || e.sender?.nickname || String(e.user_id);
-        const result = await this.redpacketMgr.create(e.group_id, e.user_id, total, count, ownerName);
+        const result = await this.redpacketMgr.create(e.group_id, e.user_id, total, count);
         if (!result.ok) {
             await e.reply(result.reason, true);
             return true;
         }
-        const image = await renderPacketCover(ownerName, total, count);
-        await e.reply(segment.image(image), true);
+        const image = await renderPacketCover(total, count);
+        // 不引用回复发红包人
+        await e.reply(segment.image(image));
         return true;
     }
 
@@ -252,7 +252,7 @@ export class MajsoulEconomy extends plugin {
         const { converted } = await this.walletMgr.add(e.user_id, { jade: result.amount });
         const userName = e.sender?.card || e.sender?.nickname || String(e.user_id);
         const note = converted.length > 0 ? `自动兑换：${converted.join('；')}` : '';
-        const image = await renderGrabCard(userName, result.amount, result.ownerName || '群友', note);
+        const image = await renderGrabCard(userName, result.amount, note);
         await e.reply(segment.image(image), true);
         return true;
     }

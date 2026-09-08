@@ -24,7 +24,7 @@ table.insert(packet.claimed, { userId = uid, amount = amount })
 local ttl = redis.call('TTL', KEYS[1])
 if ttl < 1 then ttl = ${EXPIRE_SECONDS} end
 redis.call('SET', KEYS[1], cjson.encode(packet), 'EX', ttl)
-return cjson.encode({ amount = amount, ownerName = packet.ownerName or packet.owner })
+return tostring(amount)
 `;
 
 export default class GachaRedpacket {
@@ -38,10 +38,9 @@ export default class GachaRedpacket {
    * @param {string|number} owner 发红包人
    * @param {number} total 总辉玉
    * @param {number} count 份数
-   * @param {string} [ownerName] 发红包人昵称（展示用）
    * @returns {{ ok: boolean, amounts?: number[], reason?: string }}
    */
-  async create(groupId, owner, total, count, ownerName = '') {
+  async create(groupId, owner, total, count) {
     total = Math.floor(Number(total));
     count = Math.floor(Number(count));
     if (!total || total <= 0 || !count || count <= 0) {
@@ -70,7 +69,6 @@ export default class GachaRedpacket {
 
     const packet = {
       owner: String(owner),
-      ownerName: String(ownerName || owner),
       total,
       count,
       amounts,
@@ -101,13 +99,7 @@ export default class GachaRedpacket {
       if (code === '-1') return { ok: false, reason: '红包已过期或不存在' };
       if (code === '-2') return { ok: false, reason: '你已经抢过这个红包啦' };
       if (code === '-3') return { ok: false, reason: '手慢了，红包已被抢完' };
-      try {
-        const info = JSON.parse(code);
-        return { ok: true, amount: Number(info.amount), ownerName: String(info.ownerName || '') };
-      } catch {
-        // 兼容旧格式（纯金额字符串）
-        return { ok: true, amount: parseInt(code), ownerName: '' };
-      }
+      return { ok: true, amount: parseInt(code) };
     } catch (error) {
       logger.error('[GachaRedpacket] 抢红包失败:', error);
       return { ok: false, reason: '抢红包失败，系统异常' };

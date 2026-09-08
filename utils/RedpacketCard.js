@@ -51,12 +51,11 @@ async function loadJadeIcon(size) {
 
 /**
  * 渲染发红包封面图
- * @param {string} ownerName 发红包人昵称
  * @param {number} total 辉玉总额
  * @param {number} count 红包份数
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderPacketCover(ownerName, total, count) {
+export async function renderPacketCover(total, count) {
   const W = 560, H = 360;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -67,7 +66,7 @@ export async function renderPacketCover(ownerName, total, count) {
     ctx.drawImage(icon.img, (W - icon.size) / 2, 34, icon.size, icon.size);
   }
 
-  drawText(ctx, `${ownerName}的红包`, W / 2, 170, 42, GOLD, 'center', 'bold');
+  drawText(ctx, '辉玉红包', W / 2, 170, 44, GOLD, 'center', 'bold');
   drawText(ctx, `${total} 辉玉 · 共 ${count} 份`, W / 2, 228, 32, GOLD_BRIGHT, 'center', 'bold');
   drawText(ctx, '发送 #抢红包 开启 · 5分钟内有效', W / 2, 310, 24, 'rgba(255,255,255,0.85)');
 
@@ -78,11 +77,10 @@ export async function renderPacketCover(ownerName, total, count) {
  * 渲染抢到红包金额图
  * @param {string} userName 抢红包人昵称
  * @param {number} amount 抢到的辉玉数量
- * @param {string} ownerName 红包主人昵称
  * @param {string} [note] 底部附加说明（如自动兑换信息）
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderGrabCard(userName, amount, ownerName, note = '') {
+export async function renderGrabCard(userName, amount, note = '') {
   const W = 560, H = note ? 330 : 300;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -96,7 +94,7 @@ export async function renderGrabCard(userName, amount, ownerName, note = '') {
   }
   drawText(ctx, `${amount} 辉玉`, W / 2, 216, 52, GOLD, 'center', 'bold');
 
-  drawText(ctx, `来自 ${ownerName} 的红包 · 手气随机`, W / 2, 266, 22, 'rgba(255,255,255,0.8)');
+  drawText(ctx, '辉玉拼手气红包 · 手气随机', W / 2, 266, 22, 'rgba(255,255,255,0.8)');
   if (note) {
     drawText(ctx, note, W / 2, H - 32, 22, GOLD_BRIGHT);
   }
