@@ -89,11 +89,109 @@ export default class GachaCore {
         }
     }
 
-    // 加载卡池配置 gacha.json
+    // 加载卡池配置 gacha.json（并合并自定义UP池 data/custom_up.json 与性别池 data/gender_pool.json）
+    // 性别池：male=竹林之路（男池）、female=樱花之路（女池），概率与常驻一致，仅内容按性别区分；
+    // 名单为空时不生成对应池键，抽卡自动走常驻行为
     async gachaLoader() {
         const filePath = path.join(this.resourcesRoot, '..', 'config', 'gacha.json');
-        const data = await fs.readFile(filePath, 'utf-8');
-        return JSON.parse(data);
+        const data = JSON.parse(await fs.readFile(filePath, 'utf-8'));
+        const custom = await this.customPoolLoader();
+        if (custom && typeof custom === 'object') {
+            data.__customRates = {};
+            for (const [name, info] of Object.entries(custom)) {
+                if (Array.isArray(info?.characters) && info.characters.length > 0) {
+                    const poolId = `custom:${name}`;
+                    data[poolId] = info.characters;
+                    data.__customRates[poolId] = Number(info.upRate) || 59;
+                }
+            }
+        }
+        const gender = await this.genderPoolLoader();
+        if (gender) {
+            data.__genderMeta = {
+                male: Array.isArray(gender.maleDecors) ? gender.maleDecors : [],
+                female: Array.isArray(gender.femaleDecors) ? gender.femaleDecors : []
+            };
+            if (Array.isArray(gender.maleChars) && gender.maleChars.length > 0) {
+                data.male = gender.maleChars;
+            }
+            if (Array.isArray(gender.femaleChars) && gender.femaleChars.length > 0) {
+                data.female = gender.femaleChars;
+            }
+        }
+        return data;
+    }
+
+    // 自定义UP池文件路径（格式：{ "池名": { characters: [雀士名], upRate: 20 } })
+    get customPoolFile() {
+        return path.join(this.resourcesRoot, '..', 'data', 'custom_up.json');
+    }
+
+    // 加载自定义UP池（不存在返回 null）
+    async customPoolLoader() {
+        try {
+            const data = JSON.parse(await fs.readFile(this.customPoolFile, 'utf-8'));
+            return data && typeof data === 'object' ? data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    // 保存自定义UP池
+    async saveCustomPool(custom) {
+        await fs.writeFile(this.customPoolFile, JSON.stringify(custom, null, 4), 'utf-8');
+    }
+
+    // 删除自定义UP池
+    async removeCustomPool() {
+        try {
+            await fs.unlink(this.customPoolFile);
+        } catch {}
+    }
+
+    // 性别池文件路径（格式：{ maleChars: [], femaleChars: [], maleDecors: [], femaleDecors: [] }）
+    get genderPoolFile() {
+        return path.join(this.resourcesRoot, '..', 'data', 'gender_pool.json');
+    }
+
+    // 加载性别池（不存在返回 null）
+    async genderPoolLoader() {
+        try {
+            const data = JSON.parse(await fs.readFile(this.genderPoolFile, 'utf-8'));
+            return data && typeof data === 'object' ? data : null;
+        } catch {
+            return null;
+        }
+    }
+
+    // 保存性别池
+    async saveGenderPool(data) {
+        await fs.writeFile(this.genderPoolFile, JSON.stringify(data, null, 4), 'utf-8');
+    }
+
+    // 获取全部装扮名（decoration 根目录+子目录，无后缀），用于性别池装扮名单校验
+    async getAllDecorationNames() {
+        const root = path.join(this.resourcesRoot, 'decoration');
+        const names = new Set();
+        const supportedExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+        const walk = async (dir) => {
+            let entries;
+            try {
+                entries = await fs.readdir(dir, { withFileTypes: true });
+            } catch {
+                return;
+            }
+            for (const ent of entries) {
+                const full = path.join(dir, ent.name);
+                if (ent.isDirectory()) {
+                    await walk(full);
+                } else if (supportedExt.includes(path.extname(ent.name).toLowerCase())) {
+                    names.add(path.basename(ent.name, path.extname(ent.name)));
+                }
+            }
+        };
+        await walk(root);
+        return names;
     }
 
     // 加载群组卡池配置 group_pool.json
@@ -114,8 +212,43 @@ export default class GachaCore {
         await fs.writeFile(filePath, JSON.stringify(data, null, 4), 'utf-8');
     }
 
+    // 校验卡池是否存在（性别池始终视为存在：名单为空时等同常驻池行为）
+    async poolExists(poolId) {
+        if (poolId === 'male' || poolId === 'female') return true;
+        const data = await this.gachaLoader();
+        return !!data[poolId];
+    }
+
+    // 解析用户实际抽卡池：个人选择（Redis，校验存在）→ 群默认池 → 默认樱花之路（女池）
+    async resolveUserPool(groupId, userId) {
+        if (userId != null) {
+            try {
+                const userPick = await redis.get(`Yunzai:majsoul_gacha:userpool:${groupId}:${userId}`);
+                if (userPick && await this.poolExists(userPick)) {
+                    return userPick;
+                }
+            } catch (error) {
+                logger.error(`[GachaCore] 读取用户卡池选择失败:`, error);
+            }
+        }
+        try {
+            const groupPool = await this.groupPoolLoader();
+            for (const item of groupPool) {
+                if (item.gid === String(groupId)) {
+                    if (item.poolname && await this.poolExists(item.poolname)) {
+                        return item.poolname;
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            logger.error(`[GachaCore] 读取群默认卡池失败:`, error);
+        }
+        return 'female';
+    }
+
     // 主抽卡函数
-    async runGacha(groupId, times = 10) {
+    async runGacha(groupId, times = 10, userId = null) {
         // 检查抽卡开关状态
         const isEnabled = await this.getGachaStatus(groupId);
         if (!isEnabled) {
@@ -123,41 +256,13 @@ export default class GachaCore {
         }
 
         const pool = await this.gachaLoader();
-        const groupPool = await this.groupPoolLoader();
+        const poolName = await this.resolveUserPool(groupId, userId);
 
-        let poolName = null;
-        const newGroupPool = [];
-        let hasGuaranteed = false; // 保底标志（仅十连生效）
-
-        // 1. 查找并确定当前群组的卡池
-        for (const item of groupPool) {
-            if (item.gid === String(groupId)) {
-                poolName = item.poolname;
-                // 检查卡池是否存在，如果不存在则使用normal池
-                if (!pool[poolName]) {
-                    poolName = 'normal';
-                    item.poolname = 'normal';
-                }
-                newGroupPool.push(item);
-            } else {
-                newGroupPool.push(item);
-            }
-        }
-
-        // 2. 如果该群未设置卡池，使用默认"normal"池并保存
-        if (poolName === null) {
-            poolName = 'normal';
-            newGroupPool.push({
-                gid: String(groupId),
-                poolname: 'normal'
-            });
-            await this.saveGroupPool(newGroupPool);
-        }
-
-        // 3. 执行抽卡
+        // 执行抽卡
         const result = [];
         const purpleGift = pool.purple_gift || []; // 保底紫色礼物列表
         let purpleFlag = 0;
+        let hasGuaranteed = false; // 保底标志（仅十连生效）
 
         for (let i = 0; i < times; i++) {
             const singleResult = await this.singlePull(pool, poolName);
@@ -219,11 +324,24 @@ export default class GachaCore {
             : [];
 
         // 2. 异步读取其他目录
-        const [blueGiftList, purpleGiftList, baseDecorationList] = await Promise.all([
+        const [blueGiftList, purpleGiftList, rawDecorationList] = await Promise.all([
             this.fileLoader('gift/intermediate'),
             this.fileLoader('gift/advanced'),
             this.fileLoader('decoration') // 基础装饰（decoration根目录）
         ]);
+
+        // 性别池装扮过滤：竹林之路/樱花之路若配置了装扮名单，则装扮候选只从名单中选；交集为空回退全量
+        let baseDecorationList = rawDecorationList;
+        if (actualPoolName === 'male' || actualPoolName === 'female') {
+            const meta = pool.__genderMeta?.[actualPoolName];
+            if (Array.isArray(meta) && meta.length > 0) {
+                const metaSet = new Set(meta);
+                const filtered = rawDecorationList.filter(f => metaSet.has(path.basename(f, path.extname(f))));
+                if (filtered.length > 0) {
+                    baseDecorationList = filtered;
+                }
+            }
+        }
 
         // 3. 处理特殊卡池的UP装饰
         let upDecorationList = [];
@@ -249,15 +367,21 @@ export default class GachaCore {
             // 5% 角色
             objInt = ITEM_TYPE.CHARACTER;
             // 角色选择逻辑：如果up池存在且非空，按UP概率从UP池，否则从标配池
-            // 限定池 UP 概率为 20%，其余特殊池维持 59%
+            // 限定池 UP 概率为 20%，其余特殊池维持 59%，自定义UP池按创建时指定的概率
+            // 性别池（竹林之路/樱花之路）为 100% 池内名单（名单为空时池键不生成，走常驻行为）
             let rolePool;
             if (upPool.length > 0) {
-                const upRate = actualPoolName === 'xianding' ? 20 : 59;
-                const objIntPerson = Math.floor(Math.random() * 100) + 1;
-                if (objIntPerson <= upRate) {
+                if (actualPoolName === 'male' || actualPoolName === 'female') {
                     rolePool = upPool;
                 } else {
-                    rolePool = normalPool;
+                    const customRate = pool.__customRates?.[actualPoolName];
+                    const upRate = customRate ?? (actualPoolName === 'xianding' ? 20 : 59);
+                    const objIntPerson = Math.floor(Math.random() * 100) + 1;
+                    if (objIntPerson <= upRate) {
+                        rolePool = upPool;
+                    } else {
+                        rolePool = normalPool;
+                    }
                 }
             } else {
                 rolePool = normalPool; // up池不存在时，全从normal池抽
@@ -435,7 +559,10 @@ export default class GachaCore {
             '辉夜大小姐想让我告白': 'huiye',
             '咲-saki-1': 'saki1',
             '咲-saki-2': 'saki2',
-            '常驻池': 'normal',
+            '竹林之路': 'male',
+            '男池': 'male',
+            '樱花之路': 'female',
+            '女池': 'female',
             '斗牌传说': 'douhun',
             '狂赌之渊': 'kuangdu',
             '反叛的鲁路修': 'luluxiu',
@@ -448,8 +575,9 @@ export default class GachaCore {
             '刀剑神域': 'daojian'
         };
         // 处理包含关键词的情况
+        if (name.includes('竹林') || name.includes('男池')) return 'male';
+        if (name.includes('樱花') || name.includes('女池')) return 'female';
         if (name.includes('辉夜')) return 'huiye';
-        if (name.includes('常驻')) return 'normal';
         if (name.includes('斗牌')) return 'douhun';
         if (name.includes('狂赌')) return 'kuangdu';
         if (name.includes('saki') && name.includes('1')) return 'saki1';
@@ -466,12 +594,17 @@ export default class GachaCore {
         return map[name] || null;
     }
 
-    // 根据卡池ID获取名称
+    // 根据卡池ID获取名称（自定义UP池ID为 custom:<池名>）
     getPoolName(id) {
+        if (typeof id === 'string' && id.startsWith('custom:')) {
+            return id.slice('custom:'.length);
+        }
         const map = {
             'huiye': '辉夜大小姐想让我告白',
             'saki1': '咲-saki-1',
             'saki2': '咲-saki-2',
+            'male': '竹林之路（男池）',
+            'female': '樱花之路（女池）',
             'normal': '常驻池',
             'douhun': '斗牌传说',
             'kuangdu': '狂赌之渊',

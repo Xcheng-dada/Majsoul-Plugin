@@ -58,12 +58,56 @@ export class majsoul extends plugin {
         {
           reg: '^#?切换雀魂卡池\\s+(.+)$',
           fnc: 'majsoulGacha',
-          permission: 'group'
+          permission: 'admin'
         },
         {
           reg: '^#?查看雀魂卡池$',
           fnc: 'majsoulGacha',
           permission: 'group'
+        },
+        {
+          reg: '^#?(设置UP池关闭|取消UP池关闭|查看UP池关闭)',
+          fnc: 'majsoulGacha',
+          permission: 'admin'
+        },
+        {
+          reg: '^#?(创建UP池|解散UP池)',
+          fnc: 'majsoulGacha',
+          permission: 'admin'
+        },
+        {
+          reg: '^#?查看UP池$',
+          fnc: 'majsoulGacha'
+        },
+        {
+          reg: '^#?(切换|使用)(竹林|男池)(之路)?$',
+          fnc: 'majsoulGacha',
+          permission: 'group'
+        },
+        {
+          reg: '^#?(切换|使用)(樱花|女池)(之路)?$',
+          fnc: 'majsoulGacha',
+          permission: 'group'
+        },
+        {
+          reg: '^#?切换卡池\\s+(.+)$',
+          fnc: 'majsoulGacha',
+          permission: 'group'
+        },
+        {
+          reg: '^#?(重置卡池|我的卡池)$',
+          fnc: 'majsoulGacha',
+          permission: 'group'
+        },
+        {
+          reg: '^#?(设置|添加|移除)(竹林|樱花|男池|女池)(雀士|装扮)\\s+(.+)$',
+          fnc: 'majsoulGacha',
+          permission: 'master'
+        },
+        {
+          reg: '^#?(查看性别池|性别池列表)$',
+          fnc: 'majsoulGacha',
+          permission: 'master'
         },
 
         // 抽卡经济系统指令
@@ -407,6 +451,25 @@ export class majsoul extends plugin {
       }
     }, 24 * 60 * 60 * 1000);
     scheduleManager.paipuCleanupTimer = paipuCleanupTimer;
+
+    // UP池定时关闭检查：每分钟检查一次，到点把处于限定池/自定义UP池的群默认池退回樱花之路并通知
+    const poolScheduleTimer = setInterval(async () => {
+      try {
+        const result = await this.modules?.gacha?.poolSchedule?.check();
+        if (!result || result.affected === 0) return;
+        const bot = scheduleManager.bot || global.Bot;
+        for (const gid of result.gids) {
+          try {
+            await bot.pickGroup(gid).sendMsg('雀魂UP池已关闭，本群卡池已自动退回樱花之路（女池）');
+          } catch (error) {
+            logger?.error?.(`[Majsoul-Plugin] UP池关闭通知群 ${gid} 失败:`, error);
+          }
+        }
+      } catch (error) {
+        logger?.error?.('[Majsoul-Plugin] UP池定时关闭检查失败:', error);
+      }
+    }, 60 * 1000);
+    scheduleManager.poolScheduleTimer = poolScheduleTimer;
 
     // 启动后稍作延迟执行一次初始检查
     setTimeout(async () => {

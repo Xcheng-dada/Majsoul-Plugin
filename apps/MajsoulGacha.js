@@ -5,6 +5,7 @@ import path from 'path';
 import GachaCore from '../utils/GachaCore.js';
 import GachaCollection from '../utils/GachaCollection.js';
 import GachaWallet from '../utils/GachaWallet.js';
+import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
 import { appendSummary } from '../utils/CurrencyCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
@@ -34,6 +35,68 @@ export class MajsoulGacha extends plugin {
                     reg: '^#?(查看雀魂卡池|当前雀魂卡池)$',
                     fnc: 'viewPool'
                 },
+                // 群员个人卡池切换（仅对个人生效）
+                {
+                    reg: '^#?(切换|使用)(竹林|男池)(之路)?$',
+                    fnc: 'selectMalePool'
+                },
+                {
+                    reg: '^#?(切换|使用)(樱花|女池)(之路)?$',
+                    fnc: 'selectFemalePool'
+                },
+                {
+                    reg: '^#?切换卡池\\s+(.+)$',
+                    fnc: 'selectCustomPool'
+                },
+                {
+                    reg: '^#?重置卡池$',
+                    fnc: 'resetUserPool'
+                },
+                {
+                    reg: '^#?我的卡池$',
+                    fnc: 'myPool'
+                },
+                // master 维护性别池名单
+                {
+                    reg: '^#?(设置|添加|移除)(竹林|樱花|男池|女池)(雀士|装扮)\\s+(.+)$',
+                    fnc: 'editGenderPool',
+                    permission: 'master'
+                },
+                {
+                    reg: '^#?(查看性别池|性别池列表)$',
+                    fnc: 'viewGenderPool',
+                    permission: 'master'
+                },
+                // UP池定时关闭：到点自动退回樱花之路
+                {
+                    reg: '^#?设置UP池关闭\\s+(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2})$',
+                    fnc: 'setUpPoolClose',
+                    permission: 'admin'
+                },
+                {
+                    reg: '^#?取消UP池关闭$',
+                    fnc: 'cancelUpPoolClose',
+                    permission: 'admin'
+                },
+                {
+                    reg: '^#?查看UP池关闭$',
+                    fnc: 'viewUpPoolClose'
+                },
+                // 自定义UP池：指定雀士创建
+                {
+                    reg: '^#?创建UP池\\s+(.+)$',
+                    fnc: 'createUpPool',
+                    permission: 'admin'
+                },
+                {
+                    reg: '^#?解散UP池$',
+                    fnc: 'destroyUpPool',
+                    permission: 'admin'
+                },
+                {
+                    reg: '^#?查看UP池$',
+                    fnc: 'viewUpPool'
+                },
                 // 抽卡开关功能
                 {
                     reg: '^#?(开启|关闭)雀魂抽卡$',
@@ -50,6 +113,7 @@ export class MajsoulGacha extends plugin {
         this.gachaCore = new GachaCore();
         this.collection = new GachaCollection(this.gachaCore);
         this.wallet = new GachaWallet();
+        this.poolSchedule = new PoolSchedule(this.gachaCore);
     }
 
     /**
@@ -140,7 +204,7 @@ export class MajsoulGacha extends plugin {
         }
 
         try {
-            const { imageBase64, results, hasGuaranteed } = await this.gachaCore.runGacha(e.group_id, times);
+            const { imageBase64, results, hasGuaranteed, poolName } = await this.gachaCore.runGacha(e.group_id, times, e.user_id);
 
             // 处理结果：礼物直接转粉尘；装扮/雀士首入图鉴、重复转石/许愿石
             const gains = { jade: 0, ticket: 0, ticket10: 0, dust: 0, stone: 0, wish: 0, faith: times };
@@ -195,7 +259,8 @@ export class MajsoulGacha extends plugin {
 
             // 纯图片输出：结果图 + 摘要条（拼接到结果图下方）
             const label = times === 1 ? '雀魂寻觅结果' : '十连寻觅结果';
-            let titleLine = `${label}（${costDesc}）`;
+            const poolTitle = this.gachaCore.getPoolName(poolName);
+            let titleLine = `${label}｜${poolTitle}（${costDesc}）`;
             if (times === 10 && hasGuaranteed) {
                 titleLine += '｜含保底';
             }
@@ -290,7 +355,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 切换卡池
+    // 切换卡池（管理员设置本群默认池，群员可自行切换个人卡池）
     async changePool(e) {
         const match = e.msg.match(/^#?切换雀魂卡池\s+(.+)$/);
         if (!match) {
@@ -299,10 +364,22 @@ export class MajsoulGacha extends plugin {
         }
 
         const input = match[1];
-        const poolId = this.gachaCore.getPoolId(input);
+        let poolId = this.gachaCore.getPoolId(input);
+        // 自定义UP池：直接按创建时的池名匹配
         if (!poolId) {
-            const supportedPools = "辉夜大小姐想让我告白、Fate、咲-saki-1、咲-saki-2、斗牌传说、反叛的鲁路修、狂赌之渊、银魂、常驻池、限定、魔法少女伊莉雅、蔚蓝档案、偶像大师闪耀色彩";
+            const custom = await this.gachaCore.customPoolLoader();
+            if (custom && custom[input]) {
+                poolId = `custom:${input}`;
+            }
+        }
+        if (!poolId) {
+            const supportedPools = "竹林之路（男池）、樱花之路（女池）、辉夜大小姐想让我告白、Fate、咲-saki-1、咲-saki-2、斗牌传说、反叛的鲁路修、狂赌之渊、银魂、魔法少女伊莉雅、蔚蓝档案、偶像大师闪耀色彩，以及已创建的自定义UP池名";
             await e.reply(`没有找到该名称的卡池，当前支持的卡池有：${supportedPools}`);
+            return true;
+        }
+        // 常驻池与限定池已退役，不再支持设置
+        if (poolId === 'normal' || poolId === 'xianding') {
+            await e.reply('常驻池与限定池已退役，请使用：竹林之路（男池）、樱花之路（女池）或自定义UP池\n限定雀士可用 #创建UP池 <池名> 贵人 <雀士名> 发放（20%UP）');
             return true;
         }
 
@@ -328,7 +405,7 @@ export class MajsoulGacha extends plugin {
 
             await this.gachaCore.saveGroupPool(newGroupPool);
             const poolName = this.gachaCore.getPoolName(poolId);
-            await e.reply(`已成功将本群卡池切换到：${poolName}`);
+            await e.reply(`已将本群默认卡池设为：${poolName}\n群员可用 #切换竹林 / #切换樱花 / #切换卡池 <自定义池名> 切换个人卡池`);
 
         } catch (error) {
             logger.error('[雀魂抽卡] 切换卡池失败:', error);
@@ -337,23 +414,389 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看卡池
+    // 查看卡池（本群默认池 + 个人当前卡池）
     async viewPool(e) {
         try {
-            const groupPool = await this.gachaCore.groupPoolLoader();
-            let currentPool = 'normal'; // 默认池改为normal
-            for (const item of groupPool) {
-                if (item.gid === String(e.group_id)) {
-                    currentPool = item.poolname;
-                    break;
+            let defaultPool = null;
+            if (e.group_id) {
+                const groupPool = await this.gachaCore.groupPoolLoader();
+                for (const item of groupPool) {
+                    if (item.gid === String(e.group_id)) {
+                        defaultPool = item.poolname;
+                        break;
+                    }
                 }
             }
-            const poolName = this.gachaCore.getPoolName(currentPool);
-            await e.reply(`本群启用的雀魂卡池为：${poolName}`);
+            let userPick = null;
+            try {
+                if (e.group_id && e.user_id) {
+                    userPick = await redis.get(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
+                }
+            } catch {}
+            const parts = [];
+            if (defaultPool) {
+                parts.push(`本群默认池：${this.gachaCore.getPoolName(defaultPool)}`);
+            }
+            if (userPick) {
+                parts.push(`你当前使用：${this.gachaCore.getPoolName(userPick)}`);
+            } else {
+                parts.push('你当前使用：跟随本群默认池');
+            }
+            await e.reply(parts.join('\n'));
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
             await e.reply('查看卡池失败，可能是配置文件读取错误。');
         }
+        return true;
+    }
+
+    // 群员个人卡池选择（Redis：Yunzai:majsoul_gacha:userpool:{gid}:{uid}，仅对个人生效）
+    async _setUserPool(e, poolId) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return false;
+        }
+        try {
+            await redis.set(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`, poolId);
+            return true;
+        } catch (error) {
+            logger.error('[雀魂抽卡] 保存个人卡池选择失败:', error);
+            await e.reply('切换失败，系统异常', true);
+            return false;
+        }
+    }
+
+    // #切换竹林 / #切换男池
+    async selectMalePool(e) {
+        if (await this._setUserPool(e, 'male')) {
+            await e.reply(`已切换到${this.gachaCore.getPoolName('male')}，仅对你生效`);
+        }
+        return true;
+    }
+
+    // #切换樱花 / #切换女池
+    async selectFemalePool(e) {
+        if (await this._setUserPool(e, 'female')) {
+            await e.reply(`已切换到${this.gachaCore.getPoolName('female')}，仅对你生效`);
+        }
+        return true;
+    }
+
+    // #切换卡池 <自定义UP池名>（仅限自定义UP池）
+    async selectCustomPool(e) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+        const match = e.msg.match(/^#?切换卡池\s+(.+)$/);
+        const name = match?.[1]?.trim();
+        const custom = await this.gachaCore.customPoolLoader();
+        if (!name || !custom || !custom[name]) {
+            const existing = custom ? Object.keys(custom) : [];
+            await e.reply(
+                existing.length > 0
+                    ? `没有找到自定义UP池「${name || ''}」，现有：${existing.join('、')}`
+                    : '当前没有自定义UP池，可联系管理员用 #创建UP池 创建',
+                true
+            );
+            return true;
+        }
+        if (await this._setUserPool(e, `custom:${name}`)) {
+            await e.reply(`已切换到自定义UP池「${name}」，仅对你生效`);
+        }
+        return true;
+    }
+
+    // #重置卡池（回本群默认池）
+    async resetUserPool(e) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+        try {
+            await redis.del(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
+            await e.reply('已重置，将跟随本群默认池');
+        } catch (error) {
+            logger.error('[雀魂抽卡] 重置个人卡池失败:', error);
+            await e.reply('重置失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // #我的卡池
+    async myPool(e) {
+        return await this.viewPool(e);
+    }
+
+    // 创建自定义UP池：#创建UP池 <池名> [贵人/普通] <雀士名>...（贵人=限定UP 20%，普通=59%，缺省普通；创建后本群自动切换）
+    async createUpPool(e) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+        const match = e.msg.match(/^#?创建UP池\s+(.+)$/);
+        if (!match) return false;
+
+        const tokens = match[1].trim().split(/[\s,，、]+/).filter(Boolean);
+        if (tokens.length < 2) {
+            await e.reply('格式：#创建UP池 <池名> [贵人/普通] <雀士名>...\n如：#创建UP池 贵人池 贵人 四宫辉夜（20%UP）\n或：#创建UP池 新年池 四宫辉夜 一之濑空（缺省普通 59%UP）', true);
+            return true;
+        }
+
+        const poolName = tokens[0];
+        let nameTokens = tokens.slice(1);
+        let upRate = 59;
+        let typeText = '普通';
+        if (/^(贵人|限定)$/.test(nameTokens[0])) {
+            upRate = 20;
+            typeText = '贵人';
+            nameTokens = nameTokens.slice(1);
+        } else if (/^(联动|普通)$/.test(nameTokens[0])) {
+            upRate = 59;
+            nameTokens = nameTokens.slice(1);
+        }
+        const names = [...new Set(nameTokens)];
+        if (names.length === 0) {
+            await e.reply('请指定至少一个雀士名，雀士名需与雀士文件名一致', true);
+            return true;
+        }
+
+        try {
+            await this.gachaCore._buildCharacterFileMap();
+            const fileMap = this.gachaCore.characterFileMap;
+            const invalid = names.filter(name => !fileMap.get(name));
+            if (invalid.length > 0) {
+                await e.reply(`以下雀士名无法识别（需与雀士文件名一致）：${invalid.join('、')}`, true);
+                return true;
+            }
+
+            const custom = (await this.gachaCore.customPoolLoader()) || {};
+            custom[poolName] = { characters: names, upRate };
+            await this.gachaCore.saveCustomPool(custom);
+
+            // 本群自动切换到该自定义池
+            const poolId = `custom:${poolName}`;
+            const groupPool = await this.gachaCore.groupPoolLoader();
+            let found = false;
+            for (const item of groupPool) {
+                if (item.gid === String(e.group_id)) {
+                    item.poolname = poolId;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                groupPool.push({ gid: String(e.group_id), poolname: poolId });
+            }
+            await this.gachaCore.saveGroupPool(groupPool);
+
+            await e.reply(
+                `自定义UP池「${poolName}」已创建：${names.join('、')}\n` +
+                `类型：${typeText}（UP雀士概率 ${upRate}%，其余为常驻雀士）\n` +
+                `本群已切换至该池，可搭配 #设置UP池关闭 时间 到点自动退回樱花之路（女池）`,
+                true
+            );
+        } catch (error) {
+            logger.error('[雀魂抽卡] 创建UP池失败:', error);
+            await e.reply('创建UP池失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // 解散自定义UP池：#解散UP池 <池名>，处于该池的群默认池退回樱花之路
+    async destroyUpPool(e) {
+        const match = e.msg.match(/^#?解散UP池(?:\s+(.+))?$/);
+        const poolName = match?.[1]?.trim();
+        try {
+            const custom = (await this.gachaCore.customPoolLoader()) || {};
+            const existing = Object.keys(custom);
+            if (existing.length === 0) {
+                await e.reply('当前没有自定义UP池', true);
+                return true;
+            }
+            if (!poolName || !custom[poolName]) {
+                await e.reply(`请指定要解散的池名，现有：${existing.join('、')}\n如：#解散UP池 ${existing[0]}`, true);
+                return true;
+            }
+
+            delete custom[poolName];
+            if (Object.keys(custom).length === 0) {
+                await this.gachaCore.removeCustomPool();
+            } else {
+                await this.gachaCore.saveCustomPool(custom);
+            }
+
+            const poolId = `custom:${poolName}`;
+            const groupPool = await this.gachaCore.groupPoolLoader();
+            let affected = 0;
+            for (const item of groupPool) {
+                if (item.poolname === poolId) {
+                    item.poolname = 'female';
+                    affected++;
+                }
+            }
+            await this.gachaCore.saveGroupPool(groupPool);
+
+            // 清理指向该池的用户个人选择（回本群默认池）
+            let userAffected = 0;
+            try {
+                const keys = await redis.keys('Yunzai:majsoul_gacha:userpool:*');
+                for (const k of keys) {
+                    if (await redis.get(k) === poolId) {
+                        await redis.del(k);
+                        userAffected++;
+                    }
+                }
+            } catch (error) {
+                logger.error('[雀魂抽卡] 清理个人卡池选择失败:', error);
+            }
+
+            const extra = [];
+            if (affected > 0) extra.push(`${affected} 个群默认池已退回樱花之路`);
+            if (userAffected > 0) extra.push(`${userAffected} 位群友的个人选择已重置`);
+            await e.reply(`自定义UP池「${poolName}」已解散${extra.length > 0 ? `，${extra.join('，')}` : ''}`, true);
+        } catch (error) {
+            logger.error('[雀魂抽卡] 解散UP池失败:', error);
+            await e.reply('解散UP池失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // 查看自定义UP池内容
+    async viewUpPool(e) {
+        const custom = (await this.gachaCore.customPoolLoader()) || {};
+        const entries = Object.entries(custom);
+        if (entries.length === 0) {
+            await e.reply('当前没有自定义UP池，管理员可用 #创建UP池 <池名> [贵人/普通] <雀士名> 创建');
+            return true;
+        }
+        const lines = entries.map(([name, info]) => {
+            const rate = Number(info.upRate) || 59;
+            const type = rate === 20 ? '贵人' : '普通';
+            return `「${name}」（${type} UP率${rate}%）：${(info.characters || []).join('、')}`;
+        });
+        await e.reply(lines.join('\n'));
+        return true;
+    }
+
+    // 设置UP池关闭时间（到点自动把处于UP池的群默认池退回樱花之路）
+    async setUpPoolClose(e) {
+        if (!e.group_id) {
+            await e.reply('此功能仅限群聊使用');
+            return true;
+        }
+        const match = e.msg.match(/^#?设置UP池关闭\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
+        if (!match) return false;
+
+        const result = await this.poolSchedule.set(match[1]);
+        if (!result.ok) {
+            await e.reply(result.reason, true);
+            return true;
+        }
+        await e.reply(`已设置：${result.endAt} 自动关闭UP池，届时处于限定池/自定义UP池的群将默认退回樱花之路（女池）`, true);
+        return true;
+    }
+
+    // 取消UP池定时关闭
+    async cancelUpPoolClose(e) {
+        await this.poolSchedule.cancel();
+        await e.reply('已取消UP池定时关闭', true);
+        return true;
+    }
+
+    // 查看UP池定时关闭设置
+    async viewUpPoolClose(e) {
+        const schedule = await this.poolSchedule.get();
+        if (schedule) {
+            await e.reply(`当前UP池关闭时间：${schedule.endAt}（到点后处于限定池/自定义UP池的群默认退回樱花之路）`);
+        } else {
+            await e.reply('当前未设置UP池定时关闭');
+        }
+        return true;
+    }
+
+    // 维护性别池名单：#(设置|添加|移除)(竹林|樱花|男池|女池)(雀士|装扮) <名字...>
+    // 设置=覆盖名单；添加=去重追加；移除=过滤。雀士校验 person 目录文件名，装扮校验 decoration 全部目录文件名
+    async editGenderPool(e) {
+        const match = e.msg.match(/^#?(设置|添加|移除)(竹林|樱花|男池|女池)(雀士|装扮)\s+(.+)$/);
+        if (!match) return false;
+
+        const action = match[1];
+        const gender = /竹林|男池/.test(match[2]) ? 'male' : 'female';
+        const isChar = match[3] === '雀士';
+        const genderText = gender === 'male' ? '竹林之路（男池）' : '樱花之路（女池）';
+        const kindText = isChar ? '雀士' : '装扮';
+
+        const inputNames = [...new Set(match[4].trim().split(/[\s,，、]+/).filter(Boolean))];
+        if (inputNames.length === 0) {
+            await e.reply(`请至少指定一个${kindText}名（需与文件名一致）`, true);
+            return true;
+        }
+
+        try {
+            // 名字校验
+            const invalid = [];
+            if (isChar) {
+                await this.gachaCore._buildCharacterFileMap();
+                for (const name of inputNames) {
+                    if (!this.gachaCore.characterFileMap.get(name)) invalid.push(name);
+                }
+            } else {
+                const decorNames = await this.gachaCore.getAllDecorationNames();
+                for (const name of inputNames) {
+                    if (!decorNames.has(name)) invalid.push(name);
+                }
+            }
+            if (invalid.length > 0) {
+                await e.reply(`以下${kindText}名无法识别（需与文件名一致）：${invalid.join('、')}`, true);
+                return true;
+            }
+
+            const data = (await this.gachaCore.genderPoolLoader()) || {
+                maleChars: [], femaleChars: [], maleDecors: [], femaleDecors: []
+            };
+            const key = gender + (isChar ? 'Chars' : 'Decors');
+            const list = Array.isArray(data[key]) ? data[key] : [];
+
+            if (action === '设置') {
+                data[key] = inputNames;
+            } else if (action === '添加') {
+                data[key] = [...new Set([...list, ...inputNames])];
+            } else {
+                data[key] = list.filter(n => !inputNames.includes(n));
+            }
+            await this.gachaCore.saveGenderPool(data);
+
+            const actionText = { 设置: '已覆盖', 添加: '已添加', 移除: '已移除' }[action];
+            const emptyHint = data[key].length === 0 && isChar
+                ? `\n注意：当前${genderText}雀士名单为空，抽卡时该池将等同常驻池（全部雀士）`
+                : '';
+            await e.reply(
+                `${genderText}${kindText}名单${actionText}：${inputNames.join('、')}\n` +
+                `当前名单共 ${data[key].length} 个：${data[key].join('、') || '（空）'}${emptyHint}`,
+                true
+            );
+        } catch (error) {
+            logger.error('[雀魂抽卡] 维护性别池失败:', error);
+            await e.reply('维护性别池失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // 查看性别池名单
+    async viewGenderPool(e) {
+        const data = (await this.gachaCore.genderPoolLoader()) || {
+            maleChars: [], femaleChars: [], maleDecors: [], femaleDecors: []
+        };
+        const fmt = (list) => list.length > 0 ? list.join('、') : '（空，等同常驻池/全部装扮）';
+        await e.reply(
+            '【竹林之路（男池）】\n' +
+            `雀士（${(data.maleChars || []).length}）：${fmt(data.maleChars || [])}\n` +
+            `装扮（${(data.maleDecors || []).length}）：${fmt(data.maleDecors || [])}\n` +
+            '【樱花之路（女池）】\n' +
+            `雀士（${(data.femaleChars || []).length}）：${fmt(data.femaleChars || [])}\n` +
+            `装扮（${(data.femaleDecors || []).length}）：${fmt(data.femaleDecors || [])}`
+        );
         return true;
     }
 }
