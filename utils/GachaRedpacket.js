@@ -75,7 +75,8 @@ export default class GachaRedpacket {
       claimed: []
     };
     try {
-      await redis.set(this._key(groupId), JSON.stringify(packet), 'EX', EXPIRE_SECONDS);
+      // node-redis 的过期参数为 { EX: 秒 }
+      await redis.set(this._key(groupId), JSON.stringify(packet), { EX: EXPIRE_SECONDS });
       return { ok: true, amounts };
     } catch (error) {
       logger.error('[GachaRedpacket] 创建红包失败:', error);
@@ -89,12 +90,11 @@ export default class GachaRedpacket {
    */
   async grab(groupId, userId) {
     try {
-      const result = await redis.eval(
-        GRAB_SCRIPT,
-        1,
-        this._key(groupId),
-        String(userId)
-      );
+      // TRSS-Yunzai 使用 node-redis（@redis/client），eval 签名为 { keys, arguments }
+      const result = await redis.eval(GRAB_SCRIPT, {
+        keys: [this._key(groupId)],
+        arguments: [String(userId)]
+      });
       const code = String(result);
       if (code === '-1') return { ok: false, reason: '红包已过期或不存在' };
       if (code === '-2') return { ok: false, reason: '你已经抢过这个红包啦' };
