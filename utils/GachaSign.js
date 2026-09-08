@@ -53,14 +53,13 @@ export default class GachaSign {
     // 连签判断：昨天签过则 +1，否则重新计数
     const streak = data.lastDate === yesterdayStr() ? data.streak + 1 : 1;
 
-    // 随机辉玉 + 暴击
+    // 随机辉玉 + 暴击（暴击=直接取当日上限，保证单日不超上限值）
     const min = Math.max(0, Number(getFeatureConfigItem('signJadeMin')) || 150);
     const max = Math.max(min, Number(getFeatureConfigItem('signJadeMax')) || 250);
     let jade = min + Math.floor(Math.random() * (max - min + 1));
     const critRate = Math.min(100, Math.max(0, Number(getFeatureConfigItem('signCritRate')) || 8));
-    const critMulti = Math.max(1, Number(getFeatureConfigItem('signCritMulti')) || 2);
     const crit = Math.random() * 100 < critRate;
-    if (crit) jade *= critMulti;
+    if (crit) jade = max;
 
     // 基础奖励：1 寻觅卷轴；连签第 7 天加 1 张十连寻觅卷轴
     let ticket = 1;

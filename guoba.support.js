@@ -141,16 +141,6 @@ export function supportGuoba () {
           }
         },
         {
-          field: 'signCritMulti',
-          label: '签到暴击倍数',
-          bottomHelpMessage: '签到暴击时辉玉的倍数，默认 2 倍',
-          component: 'InputNumber',
-          componentProps: {
-            min: 1,
-            placeholder: '2'
-          }
-        },
-        {
           field: 'singleGachaJade',
           label: '单抽辉玉价格',
           bottomHelpMessage: '#雀魂寻觅 使用辉玉单抽的价格，默认 200',

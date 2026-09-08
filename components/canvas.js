@@ -83,7 +83,7 @@ export function drawPartialRoundRect(ctx, x, y, width, height, radius, topLeft, 
   }
 }
 
-export function drawText(ctx, text, x, y, size = 30, color = '#FFFFFF', align = 'center', weight = 'normal', family = 'Microsoft YaHei, sans-serif') {
+export function drawText(ctx, text, x, y, size = 30, color = '#FFFFFF', align = 'center', weight = 'normal', family = 'Microsoft YaHei, Segoe UI Emoji, sans-serif') {
   ctx.font = `${weight} ${size}px ${family}`
   ctx.fillStyle = color
   ctx.textAlign = align

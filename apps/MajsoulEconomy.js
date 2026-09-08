@@ -9,6 +9,7 @@ import GachaRedpacket from '../utils/GachaRedpacket.js';
 import GachaMail from '../utils/GachaMail.js';
 import GachaCore from '../utils/GachaCore.js';
 import { renderCurrencyCard, CURRENCY_ICONS } from '../utils/CurrencyCard.js';
+import { renderPacketCover, renderGrabCard } from '../utils/RedpacketCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 
 // 货币中文名 → key（设置货币命令用，长名优先）
@@ -225,12 +226,14 @@ export class MajsoulEconomy extends plugin {
         const total = parseInt(match[1]);
         const count = parseInt(match[2]);
 
-        const result = await this.redpacketMgr.create(e.group_id, e.user_id, total, count);
+        const ownerName = e.sender?.card || e.sender?.nickname || String(e.user_id);
+        const result = await this.redpacketMgr.create(e.group_id, e.user_id, total, count, ownerName);
         if (!result.ok) {
             await e.reply(result.reason, true);
             return true;
         }
-        await e.reply(`红包来啦！共 ${total} 辉玉，${count} 个，发送"抢红包"开抢（5 分钟后过期）`);
+        const image = await renderPacketCover(ownerName, total, count);
+        await e.reply(segment.image(image), true);
         return true;
     }
 
@@ -247,9 +250,10 @@ export class MajsoulEconomy extends plugin {
         }
         // 入钱包
         const { converted } = await this.walletMgr.add(e.user_id, { jade: result.amount });
-        let text = `抢到 ${result.amount} 辉玉！`;
-        if (converted.length > 0) text += `\n自动兑换：${converted.join('；')}`;
-        await e.reply(text, true);
+        const userName = e.sender?.card || e.sender?.nickname || String(e.user_id);
+        const note = converted.length > 0 ? `自动兑换：${converted.join('；')}` : '';
+        const image = await renderGrabCard(userName, result.amount, result.ownerName || '群友', note);
+        await e.reply(segment.image(image), true);
         return true;
     }
 
