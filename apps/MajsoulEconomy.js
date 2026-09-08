@@ -143,7 +143,7 @@ export class MajsoulEconomy extends plugin {
             items,
             footer: '许愿石 1:1、星之石每10→5 星之粉尘、粉尘每50→1 寻觅卷轴，获得后自动兑换'
         });
-        await e.reply(segment.image(image), true);
+        await e.reply(segment.image(image));
         return true;
     }
 
@@ -253,7 +253,7 @@ export class MajsoulEconomy extends plugin {
         const userName = e.sender?.card || e.sender?.nickname || String(e.user_id);
         const note = converted.length > 0 ? `自动兑换：${converted.join('；')}` : '';
         const image = await renderGrabCard(userName, result.amount, note);
-        await e.reply(segment.image(image), true);
+        await e.reply(segment.image(image));
         return true;
     }
 

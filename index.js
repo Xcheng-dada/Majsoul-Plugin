@@ -56,11 +56,6 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
-          reg: '^#?切换雀魂卡池\\s+(.+)$',
-          fnc: 'majsoulGacha',
-          permission: 'admin'
-        },
-        {
           reg: '^#?查看雀魂卡池$',
           fnc: 'majsoulGacha',
           permission: 'group'
@@ -68,12 +63,12 @@ export class majsoul extends plugin {
         {
           reg: '^#?(设置UP池关闭|取消UP池关闭|查看UP池关闭)',
           fnc: 'majsoulGacha',
-          permission: 'admin'
+          permission: 'master'
         },
         {
           reg: '^#?(创建UP池|解散UP池)',
           fnc: 'majsoulGacha',
-          permission: 'admin'
+          permission: 'master'
         },
         {
           reg: '^#?查看UP池$',
@@ -100,12 +95,12 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
-          reg: '^#?(设置|添加|移除)(竹林|樱花|男池|女池)(雀士|装扮)\\s+(.+)$',
+          reg: '^#?查看UP池$',
           fnc: 'majsoulGacha',
           permission: 'master'
         },
         {
-          reg: '^#?(查看性别池|性别池列表)$',
+          reg: '^#?(开启联动|关闭联动|查看联动池)',
           fnc: 'majsoulGacha',
           permission: 'master'
         },

@@ -10,8 +10,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '..', 'data', 'pool_schedule.json');
 
 const RETREAT_POOL = 'female'; // UP池关闭后的退回池：樱花之路（女池）
-// UP池判定：限定池（贵人）与所有自定义UP池（ID为 custom:<池名>）
-const isUpPool = (poolname) => poolname === 'xianding' || String(poolname).startsWith('custom:');
+// UP池判定：限定池（贵人）、自定义UP池、已开启的联动池（主题池）等临时池
+// （normal 为历史遗留默认值，male/female 为常驻性别池，均不算UP池）
+const isUpPool = (poolname) => {
+  if (!poolname) return false;
+  const p = String(poolname);
+  return p !== 'normal' && p !== 'male' && p !== 'female';
+};
 
 export default class PoolSchedule {
   constructor(gachaCore) {
@@ -106,6 +111,18 @@ export default class PoolSchedule {
     }
     if (userAffected > 0) {
       logger.mark(`[PoolSchedule] UP池已关闭，${userAffected} 位群友的个人卡池选择已重置`);
+    }
+
+    // 全局池若为UP池（含联动池），退回樱花之路并清理挂靠配置
+    try {
+      const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+      if (globalPool && isUpPool(globalPool)) {
+        await redis.set('Yunzai:majsoul_gacha:globalpool', RETREAT_POOL);
+        await redis.del('Yunzai:majsoul_gacha:globalbase');
+        logger.mark(`[PoolSchedule] 全局池退回樱花之路`);
+      }
+    } catch (error) {
+      logger.error('[PoolSchedule] 清理全局卡池失败:', error);
     }
 
     await this._remove();
