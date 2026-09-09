@@ -26,10 +26,6 @@ export class MajsoulGacha extends plugin {
                     reg: '^#?雀魂十连$',
                     fnc: 'tenGacha'
                 },
-                {
-                    reg: '^#?(查看雀魂卡池|当前雀魂卡池)$',
-                    fnc: 'viewPool'
-                },
                 // 群员个人卡池切换（仅对个人生效）
                 {
                     reg: '^#?(切换|使用)竹林(之路)?$',
@@ -62,10 +58,6 @@ export class MajsoulGacha extends plugin {
                     fnc: 'cancelUpPoolClose',
                     permission: 'master'
                 },
-                {
-                    reg: '^#?查看UP池关闭$',
-                    fnc: 'viewUpPoolClose'
-                },
                 // 自定义UP池（挂靠竹林/樱花）：主人创建后全局生效
                 {
                     reg: '^#?创建UP池\\s+(.+)$',
@@ -92,10 +84,6 @@ export class MajsoulGacha extends plugin {
                     reg: '^#?查看联动池$',
                     fnc: 'viewCollab',
                     permission: 'master'
-                },
-                {
-                    reg: '^#?查看UP池$',
-                    fnc: 'viewUpPool'
                 },
                 // 抽卡开关功能
                 {
@@ -373,8 +361,13 @@ export class MajsoulGacha extends plugin {
             const parts = [`当前卡池：${await this.gachaCore.getPoolDisplayTitle(current)}`];
             const ups = await this._getUpCharacters(current);
             if (ups) parts.push(`UP雀士：${ups}`);
-            // 当前可用池（仅池名，去重）
-            const pools = (await this.gachaCore.getAvailablePools()).map(p => p.name.replace(/（[^）]*）/, ''));
+            // 当前可用池（仅池名，去重；临时池带关闭倒计时）
+            const countdown = await this._poolCountdownText();
+            const pools = (await this.gachaCore.getAvailablePools()).map(p => {
+                const name = p.name.replace(/（[^）]*）/, '');
+                const isTemp = p.id !== 'male' && p.id !== 'female';
+                return isTemp && countdown ? `${name}（${countdown}后关闭）` : name;
+            });
             parts.push(`当前可用池：${[...new Set(pools)].join('、')}`);
             parts.push('切换命令：切换竹林 / 切换樱花 / 切换卡池 <池名> / 重置卡池');
             await e.reply(parts.join('\n'), true);
@@ -405,6 +398,24 @@ export class MajsoulGacha extends plugin {
             }
         } catch {}
         return null;
+    }
+
+    // UP池关闭倒计时文本（如：2天5小时），未设置或已过期返回空串
+    async _poolCountdownText() {
+        try {
+            const schedule = await this.poolSchedule.get();
+            if (!schedule?.endAt) return '';
+            const ms = new Date(String(schedule.endAt).replace('-', '/')).getTime() - Date.now();
+            if (ms <= 0) return '';
+            const hours = Math.floor(ms / 3600000);
+            const days = Math.floor(hours / 24);
+            const h = hours % 24;
+            if (days > 0) return `${days}天${h}小时`;
+            if (hours > 0) return `${hours}小时`;
+            return '不足1小时';
+        } catch {
+            return '';
+        }
     }
 
     // 群员个人卡池选择（Redis：Yunzai:majsoul_gacha:userpool:{gid}:{uid}，仅对个人生效）
@@ -672,24 +683,6 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看自定义UP池内容
-    async viewUpPool(e) {
-        const custom = (await this.gachaCore.customPoolLoader()) || {};
-        const entries = Object.entries(custom);
-        if (entries.length === 0) {
-            await e.reply('当前没有UP池，主人可用 #创建UP池 <池名> <樱花/竹林> [贵人] <雀士名> 创建（创建后全局生效）');
-            return true;
-        }
-        const lines = entries.map(([name, info]) => {
-            const rate = Number(info.upRate) || 59;
-            const type = rate === 20 ? '贵人' : '普通';
-            const base = info.base === 'male' ? '竹林之路' : '樱花之路';
-            return `「${name}」（${type} UP率${rate}%，挂${base}）：${(info.characters || []).join('、')}`;
-        });
-        await e.reply(lines.join('\n'));
-        return true;
-    }
-
     // 开启联动池（主人）：联动池（主题池）资源已预先配置
     // 开启后樱花+竹林双池同时可用（池名自带"樱花/竹林"的只开对应单池），全局默认抽樱花变体
     // UP率为主题池内置 59%，可搭配 #设置UP池关闭 定时退回
@@ -792,17 +785,6 @@ export class MajsoulGacha extends plugin {
     async cancelUpPoolClose(e) {
         await this.poolSchedule.cancel();
         await e.reply('已取消UP池定时关闭', true);
-        return true;
-    }
-
-    // 查看UP池定时关闭设置
-    async viewUpPoolClose(e) {
-        const schedule = await this.poolSchedule.get();
-        if (schedule) {
-            await e.reply(`当前UP池关闭时间：${schedule.endAt}（到点后全局池退回樱花之路，处于UP池的个人选择同步重置）`);
-        } else {
-            await e.reply('当前未设置UP池定时关闭');
-        }
         return true;
     }
 
