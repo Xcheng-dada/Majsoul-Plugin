@@ -68,6 +68,11 @@ export class MajsoulEconomy extends plugin {
                     fnc: 'claimMail'
                 },
                 {
+                    reg: '^#?删除邮件(?:\\s+(\\d+|全部))?$',
+                    fnc: 'deleteMail',
+                    permission: 'master'
+                },
+                {
                     reg: `^#?设置(?:货币\\s*)?(${Object.keys(SET_NAME_TO_KEY).join('|')})\\s+(\\d+)\\s+(-?\\d+)$`,
                     fnc: 'setCurrency',
                     permission: 'master'
@@ -311,11 +316,47 @@ export class MajsoulEconomy extends plugin {
             .map(key => ({ icon: CURRENCY_ICONS[key], count: totals[key] }));
         const image = await renderCurrencyCard({ title: `邮件奖励（${mails.length} 封）`, items });
 
-        let text = mails.map(m => `「${m.title}」${GachaMail.formatRewards(m.rewards)}`).join('\n');
+        let text = `成功领取 ${mails.length} 封邮件\n` + mails.map(m => `「${m.title}」${GachaMail.formatRewards(m.rewards)}`).join('\n');
         if (converted.length > 0) {
             text += `\n自动兑换：${converted.join('；')}`;
         }
         await e.reply([segment.image(image), '\n' + text], true);
+        return true;
+    }
+
+    // #删除邮件 [序号/全部]（master）：列出邮件或删除指定邮件
+    async deleteMail(e) {
+        if (!e.group_id) {
+            await e.reply('邮件功能仅限群聊使用');
+            return true;
+        }
+        const match = e.msg.match(/^#?删除邮件(?:\s+(\d+|全部))?$/);
+        const target = match?.[1];
+
+        // 不带参数：列出全部邮件
+        if (!target) {
+            const mails = await this.mailMgr.list(e.group_id);
+            if (mails.length === 0) {
+                await e.reply('当前没有邮件', true);
+                return true;
+            }
+            const lines = mails.map((m, i) =>
+                `${i + 1}. 「${m.title}」${GachaMail.formatRewards(m.rewards)}（已领 ${Array.isArray(m.claimed) ? m.claimed.length : 0} 人）`
+            );
+            await e.reply(`共 ${mails.length} 封邮件：\n${lines.join('\n')}\n删除：#删除邮件 <序号>，全部删除：#删除邮件 全部`);
+            return true;
+        }
+
+        const result = await this.mailMgr.remove(e.group_id, target);
+        if (!result.ok) {
+            await e.reply(result.reason, true);
+            return true;
+        }
+        if (target === '全部') {
+            await e.reply(`已删除全部 ${result.removed} 封邮件`);
+        } else {
+            await e.reply(`已删除邮件「${result.mail.title}」：${GachaMail.formatRewards(result.mail.rewards)}`);
+        }
         return true;
     }
 

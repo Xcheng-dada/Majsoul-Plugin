@@ -156,6 +156,11 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
+          reg: '^#?删除邮件(?:\\s+(\\d+|全部))?$',
+          fnc: 'majsoulEconomy',
+          permission: 'master'
+        },
+        {
           reg: '^#?设置(十连寻觅卷轴|寻觅卷轴|十连寻觅券|寻觅券|辉玉|星之粉尘|星之石|许愿石|信仰)\\s+(\\d+)\\s+(-?\\d+)$',
           fnc: 'majsoulEconomy',
           permission: 'master'

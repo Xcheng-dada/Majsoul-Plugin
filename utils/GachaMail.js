@@ -48,7 +48,7 @@ export default class GachaMail {
     const now = Date.now();
     const mail = {
       id: `${now.toString(36)}${Math.floor(Math.random() * 1000).toString(36)}`,
-      title: title || '雀魂官方兑换码奖励',
+      title: title || '奖励邮件',
       rewards,
       createdAt: now,
       expireAt: now + MAIL_TTL_DAYS * 86400 * 1000,
@@ -93,9 +93,34 @@ export default class GachaMail {
   }
 
   /**
+   * 删除邮件（master）
+   * @param {string|number} groupId
+   * @param {string} target 序号（1 开始，按列出顺序）或 "all"
+   * @returns {{ ok: boolean, reason?: string, removed?: number, mail?: object }}
+   */
+  async remove(groupId, target) {
+    const mails = await this.list(groupId);
+    if (mails.length === 0) return { ok: false, reason: '当前没有邮件' };
+
+    if (String(target).toLowerCase() === 'all') {
+      await redis.del(this._key(groupId));
+      return { ok: true, removed: mails.length };
+    }
+
+    const idx = parseInt(target);
+    if (!idx || idx < 1 || idx > mails.length) {
+      return { ok: false, reason: `序号无效，有效范围 1-${mails.length}` };
+    }
+    const [mail] = mails.splice(idx - 1, 1);
+    await redis.set(this._key(groupId), JSON.stringify(mails));
+    return { ok: true, removed: 1, mail };
+  }
+
+  /**
    * 解析奖励文本为货币数量（如"星之粉尘5 寻觅卷轴1"、"辉玉x200"）
+   * 非货币的剩余文字作为邮件标题返回（如"新春活动 辉玉100000"→ 标题"新春活动"）
    * @param {string} text
-   * @returns {object|null} rewards；无法解析返回 null
+   * @returns {{ rewards: object, title: string }|null} 无有效奖励返回 null
    */
   static parseRewards(text) {
     if (!text) return null;
@@ -115,7 +140,10 @@ export default class GachaMail {
         }
       }
     }
-    return Object.keys(rewards).length > 0 ? rewards : null;
+    if (Object.keys(rewards).length === 0) return null;
+    // 剩余文字清理后作为标题（去掉分隔符、截断过长内容）
+    const rest = working.replace(/^[\s,，、/|丨-]+|[\s,，、/|丨-]+$/g, '').slice(0, 20).trim();
+    return { rewards, title: rest || '奖励邮件' };
   }
 
   // 奖励转文字描述（如"星之粉尘x5 寻觅卷轴x1"）

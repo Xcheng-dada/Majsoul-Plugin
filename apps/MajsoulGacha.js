@@ -479,8 +479,8 @@ export class MajsoulGacha extends plugin {
         const existing = custom ? Object.keys(custom) : [];
         await e.reply(
             existing.length > 0
-                ? `没有找到自定义UP池「${name || ''}」，现有：${existing.join('、')}\n联动池变体切换：#切换卡池 <联动池名> <樱花/竹林>`
-                : '当前没有自定义UP池，可联系管理员用 #创建UP池 创建\n联动开启时可用 #切换卡池 <联动池名> <樱花/竹林> 切换联动池',
+                ? `没有找到UP池「${name || ''}」，现有：${existing.join('、')}\n联动池变体切换：#切换卡池 <联动池名> <樱花/竹林>`
+                : '当前没有UP池，可联系管理员用 #创建UP池 创建\n联动开启时可用 #切换卡池 <联动池名> <樱花/竹林> 切换联动池',
             true
         );
         return true;
@@ -667,7 +667,7 @@ export class MajsoulGacha extends plugin {
         const custom = (await this.gachaCore.customPoolLoader()) || {};
         const entries = Object.entries(custom);
         if (entries.length === 0) {
-            await e.reply('当前没有自定义UP池，主人可用 #创建UP池 <池名> <樱花/竹林> [贵人] <雀士名> 创建（创建后全局生效）');
+            await e.reply('当前没有UP池，主人可用 #创建UP池 <池名> <樱花/竹林> [贵人] <雀士名> 创建（创建后全局生效）');
             return true;
         }
         const lines = entries.map(([name, info]) => {
