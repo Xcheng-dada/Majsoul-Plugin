@@ -310,16 +310,20 @@ export class MajsoulEconomy extends plugin {
         // 奖励入钱包（自动兑换链）
         const { converted } = await this.walletMgr.add(e.user_id, totals);
 
-        // 渲染邮件奖励卡片
+        // 渲染邮件奖励卡片（奖励为空/数据异常时仅发文字，避免渲染崩溃）
         const items = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith']
             .filter(key => totals[key])
             .map(key => ({ icon: CURRENCY_ICONS[key], count: totals[key] }));
-        const image = await renderCurrencyCard({ title: `邮件奖励（${mails.length} 封）`, items });
 
         let text = `成功领取 ${mails.length} 封邮件\n` + mails.map(m => `「${m.title}」${GachaMail.formatRewards(m.rewards)}`).join('\n');
         if (converted.length > 0) {
             text += `\n自动兑换：${converted.join('；')}`;
         }
+        if (items.length === 0) {
+            await e.reply(text + '\n（该邮件无有效奖励内容，可用 #删除邮件 清理）', true);
+            return true;
+        }
+        const image = await renderCurrencyCard({ title: `邮件奖励（${mails.length} 封）`, items });
         await e.reply([segment.image(image), '\n' + text], true);
         return true;
     }
