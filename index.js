@@ -104,6 +104,15 @@ export class majsoul extends plugin {
           fnc: 'majsoulGacha',
           permission: 'master'
         },
+        {
+          reg: '^#?(开启|关闭)雀魂抽卡$',
+          fnc: 'majsoulGacha',
+          permission: 'admin'
+        },
+        {
+          reg: '^#?雀魂抽卡状态$',
+          fnc: 'majsoulGacha'
+        },
 
         // 抽卡经济系统指令
         {
@@ -151,6 +160,11 @@ export class majsoul extends plugin {
           fnc: 'majsoulEconomy',
           permission: 'master'
         },
+        {
+          reg: '^#?保存数据$',
+          fnc: 'majsoulEconomy',
+          permission: 'master'
+        },
 
         // 用户管理相关指令
         {
@@ -177,6 +191,10 @@ export class majsoul extends plugin {
           reg: '^#?雀魂我的绑定$',
           fnc: 'majsoulUser',
           permission: 'group'
+        },
+        {
+          reg: '^#?设置token\\s+(\\S+)$',
+          fnc: 'majsoulUser'
         },
         
         // 对局订阅相关指令 (四麻)
