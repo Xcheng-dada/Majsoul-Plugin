@@ -589,7 +589,7 @@ export class MajsoulGacha extends plugin {
                 ? `该池已全局生效（机器人所在所有群默认抽该池）`
                 : `当前全局默认池仍为「${activeGlobalName}」，群员可 #切换卡池 ${poolName} 切换到新池`;
             await e.reply(
-                `自定义UP池「${poolName}」已创建：${names.join('、')}\n` +
+                `UP池「${poolName}」已创建：${names.join('、')}\n` +
                 `挂靠：${baseText}（未命中UP时从${baseText}抽雀士，不与常驻混池）\n` +
                 `类型：${typeText}（UP雀士概率 ${upRate}%）\n` +
                 globalText + '\n' +
@@ -611,7 +611,7 @@ export class MajsoulGacha extends plugin {
             const custom = (await this.gachaCore.customPoolLoader()) || {};
             const existing = Object.keys(custom);
             if (existing.length === 0) {
-                await e.reply('当前没有自定义UP池', true);
+                await e.reply('当前没有UP池', true);
                 return true;
             }
             if (!poolName || !custom[poolName]) {
@@ -654,7 +654,7 @@ export class MajsoulGacha extends plugin {
 
             const extra = [];
             if (userAffected > 0) extra.push(`${userAffected} 位群友的个人选择已重置`);
-            await e.reply(`自定义UP池「${poolName}」已解散${extra.length > 0 ? `，${extra.join('，')}` : ''}`, true);
+            await e.reply(`UP池「${poolName}」已解散${extra.length > 0 ? `，${extra.join('，')}` : ''}`, true);
         } catch (error) {
             logger.error('[雀魂抽卡] 解散UP池失败:', error);
             await e.reply('解散UP池失败，系统异常', true);

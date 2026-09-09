@@ -1,5 +1,5 @@
 // plugins/Majsoul-Plugin/utils/GachaMail.js
-// 奖励邮件：管理员按雀魂官方兑换码内容群发奖励（仅当前群可领，30 天过期）
+// 奖励邮件：管理员向全群发放奖励邮件（任意奖励组合，仅当前群可领，30 天过期）
 // 数据结构 Yunzai:majsoul_gacha:mail:{groupId}（永久 key，条目自带 expireAt，读取时惰性清理）：
 // [{ id, title, rewards: {dust:5, ticket:1}, createdAt, expireAt, claimed: [userId] }]
 

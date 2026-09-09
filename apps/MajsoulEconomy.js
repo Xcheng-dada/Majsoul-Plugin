@@ -284,14 +284,14 @@ export class MajsoulEconomy extends plugin {
             return true;
         }
         const match = e.msg.match(/^#?发送邮件\s+(.+)$/);
-        const rewards = GachaMail.parseRewards(match[1]);
-        if (!rewards) {
-            await e.reply('未解析到有效奖励，示例：#发送邮件 星之粉尘5 寻觅卷轴1', true);
+        const parsed = GachaMail.parseRewards(match[1]);
+        if (!parsed) {
+            await e.reply('未解析到有效奖励，示例：#发送邮件 星之粉尘5 寻觅卷轴1\n可在奖励前加标题，如：#发送邮件 新春活动 辉玉100000', true);
             return true;
         }
 
-        const mail = await this.mailMgr.send(e.group_id, rewards, '雀魂官方兑换码奖励');
-        await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(rewards)}\n成员发送"雀魂邮件"即可领取（30 天内有效）`);
+        const mail = await this.mailMgr.send(e.group_id, parsed.rewards, parsed.title);
+        await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(parsed.rewards)}\n成员发送"雀魂邮件"即可领取（30 天内有效）`);
         return true;
     }
 
