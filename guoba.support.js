@@ -161,6 +161,26 @@ export function supportGuoba () {
           }
         },
         {
+          field: 'dailySinglePullLimit',
+          label: '每日单抽上限（次）',
+          bottomHelpMessage: '每人每天最多单抽次数，防止刷屏；0 表示不限制，默认 3',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            placeholder: '3'
+          }
+        },
+        {
+          field: 'dailyTenPullLimit',
+          label: '每日十连上限（次）',
+          bottomHelpMessage: '每人每天最多十连次数，防止刷屏；0 表示不限制，默认 30',
+          component: 'InputNumber',
+          componentProps: {
+            min: 0,
+            placeholder: '30'
+          }
+        },
+        {
           field: 'faithNormalCost',
           label: '信仰兑换普通雀士',
           bottomHelpMessage: '#雀魂兑换 普通雀士所需的信仰值，默认 150',

@@ -191,6 +191,13 @@ export class MajsoulGacha extends plugin {
             return;
         }
 
+        // 扣费成功才计入当日次数（48 小时过期，跨天自动作废）
+        if (dailyLimit > 0) {
+            try {
+                await redis.set(cntKey, usedToday + 1, { EX: 172800 });
+            } catch {}
+        }
+
         try {
             const { imageBase64, results, hasGuaranteed, poolName } = await this.gachaCore.runGacha(e.group_id, times, e.user_id);
 

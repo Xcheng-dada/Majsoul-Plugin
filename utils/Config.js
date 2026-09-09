@@ -21,7 +21,9 @@ export const FEATURE_CONFIG_DEFAULTS = {
   singleGachaJade: 200,      // 单抽辉玉价格
   tenGachaJade: 1800,        // 十连辉玉价格
   faithNormalCost: 150,      // 信仰兑换普通雀士所需
-  faithLimitedCost: 300      // 信仰兑换限定雀士所需
+  faithLimitedCost: 300,     // 信仰兑换限定雀士所需
+  dailyTenPullLimit: 30,     // 每日十连次数上限（防刷屏，0=不限制）
+  dailySinglePullLimit: 3    // 每日单抽次数上限（防刷屏，0=不限制）
 }
 
 /**
