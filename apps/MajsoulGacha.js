@@ -264,7 +264,7 @@ export class MajsoulGacha extends plugin {
                 const giftDust = giftCounts.blue * 5 + giftCounts.purple * 25;
                 lines.push(`礼物：${giftParts.join('、')}（已全部奉纳为星之粉尘x${giftDust}）`);
             }
-            lines.push(`信仰 +${times}（当前 ${newWallet.faith}）｜寻觅卷轴 ${newWallet.ticket}${ticketGain > 0 ? `（+${ticketGain}）` : ''}｜辉玉 ${newWallet.jade}`);
+            lines.push(`信仰 ${newWallet.faith}（+${times}）｜寻觅卷轴 ${newWallet.ticket}${ticketGain > 0 ? `（+${ticketGain}）` : ''}｜辉玉 ${newWallet.jade}`);
 
             const finalImage = await appendSummary(imageBase64, titleLine, lines);
             await e.reply(segment.image(finalImage), true);
