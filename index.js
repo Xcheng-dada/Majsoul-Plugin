@@ -457,6 +457,28 @@ export class majsoul extends plugin {
     }, 60 * 1000);
     scheduleManager.poolScheduleTimer = poolScheduleTimer;
 
+    // Redis 定时存盘：Yunzai 启动的 Redis 默认无持久化，关闭时也不存盘，
+    // 抽卡图鉴/货币等数据只存在内存里会随重启丢失。这里每 30 分钟请求一次 BGSAVE，
+    // 快照文件（dump.rdb）写入 Yunzai 根目录，下次启动 Redis 自动加载。
+    scheduleManager.redisSaveTimer = setInterval(async () => {
+      try {
+        await redis.sendCommand(['BGSAVE']);
+        logger?.mark?.('[Majsoul-Plugin] 已请求 Redis 存盘（BGSAVE）');
+      } catch (error) {
+        logger?.error?.('[Majsoul-Plugin] Redis 存盘失败:', error.message || error);
+      }
+    }, 30 * 60 * 1000);
+
+    // 启动 1 分钟后先立即存盘一次，避免刚积累的数据因突然关机丢失
+    setTimeout(async () => {
+      try {
+        await redis.sendCommand(['BGSAVE']);
+        logger?.mark?.('[Majsoul-Plugin] 启动初始 Redis 存盘完成');
+      } catch (error) {
+        logger?.error?.('[Majsoul-Plugin] Redis 初始存盘失败:', error.message || error);
+      }
+    }, 60 * 1000);
+
     // 启动后稍作延迟执行一次初始检查
     setTimeout(async () => {
       for (const { type } of SCHEDULES) await scheduleManager.performCheck(type);
@@ -481,6 +503,7 @@ export class majsoul extends plugin {
       clearInterval(scheduleManager.interval4p);
       clearInterval(scheduleManager.interval3p);
       clearInterval(scheduleManager.paipuCleanupTimer);
+      clearInterval(scheduleManager.redisSaveTimer);
       await scheduleManager.stop?.();
       scheduleManager = null;
     }

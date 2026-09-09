@@ -71,6 +71,11 @@ export class MajsoulEconomy extends plugin {
                     reg: `^#?设置(?:货币\\s*)?(${Object.keys(SET_NAME_TO_KEY).join('|')})\\s+(\\d+)\\s+(-?\\d+)$`,
                     fnc: 'setCurrency',
                     permission: 'master'
+                },
+                {
+                    reg: '^#?保存数据$',
+                    fnc: 'saveData',
+                    permission: 'master'
                 }
             ]
         });
@@ -328,6 +333,18 @@ export class MajsoulEconomy extends plugin {
             await e.reply(`已将用户 ${targetUserId} 的${CURRENCY_NAMES[key]}设置为 ${w[key]}`);
         } else {
             await e.reply('设置失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // #保存数据（master）：立即请求 Redis 存盘，防止关机/重启丢失数据
+    async saveData(e) {
+        try {
+            await redis.sendCommand(['BGSAVE']);
+            await e.reply('已请求 Redis 存盘，全部数据（图鉴、货币、绑定等）正在写入磁盘');
+        } catch (error) {
+            logger.error('[雀魂经济] 手动存盘失败:', error);
+            await e.reply('存盘失败，系统异常', true);
         }
         return true;
     }
