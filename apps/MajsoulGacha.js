@@ -370,10 +370,22 @@ export class MajsoulGacha extends plugin {
             } catch {}
             const parts = [];
             if (globalPool) {
-                parts.push(`全局池：${this.gachaCore.getPoolName(globalPool)}`);
+                parts.push(`全局池：${await this.gachaCore.getPoolDisplayTitle(globalPool)}`);
             }
             if (userPick) {
-                parts.push(`你当前使用：${this.gachaCore.getPoolName(userPick)}`);
+                parts.push(`你当前使用：${await this.gachaCore.getPoolDisplayTitle(userPick)}`);
+                // 自定义UP池：补充挂靠池与UP雀士，方便确认当前池内容
+                if (userPick.startsWith('custom:')) {
+                    const cname = userPick.slice('custom:'.length);
+                    const custom = await this.gachaCore.customPoolLoader();
+                    const info = custom?.[cname];
+                    if (info) {
+                        const base = info.base === 'male' ? '竹林' : '樱花';
+                        const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
+                        const ups = Array.isArray(info.characters) ? info.characters.join('、') : '';
+                        parts.push(`挂靠${base} · ${tag}雀士：${ups || '未设置'}`);
+                    }
+                }
             } else {
                 parts.push(globalPool ? '你当前使用：跟随全局池' : '你当前使用：樱花之路（默认池）');
             }
@@ -434,7 +446,11 @@ export class MajsoulGacha extends plugin {
         // 自定义UP池
         if (name && custom && custom[name]) {
             if (await this._setUserPool(e, `custom:${name}`)) {
-                await e.reply(`已切换到自定义UP池「${name}」，仅对你生效`);
+                const info = custom[name];
+                const base = info.base === 'male' ? '竹林' : '樱花';
+                const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
+                const ups = Array.isArray(info.characters) ? info.characters.join('、') : '';
+                await e.reply(`已切换到「${name}」（挂靠${base} · ${tag}雀士：${ups || '未设置'}），仅对你生效`);
             }
             return true;
         }
