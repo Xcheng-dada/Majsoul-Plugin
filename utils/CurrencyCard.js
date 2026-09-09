@@ -67,7 +67,13 @@ export async function renderCurrencyCard({ title, items, footer }) {
     rows.push(items.slice(i, i + PER_ROW));
   }
   const cols = Math.max(...rows.map(r => r.length));
-  const W = PAD * 2 + UNIT_W * cols;
+  let W = PAD * 2 + UNIT_W * cols;
+  // 标题过宽时扩宽卡片，避免文字被裁切（与 drawText 的字体保持一致以正确测量）
+  if (hasTitle) {
+    const measure = createCanvas(10, 10).getContext('2d');
+    measure.font = `bold 46px Microsoft YaHei, Segoe UI Emoji, sans-serif`;
+    W = Math.max(W, Math.ceil(measure.measureText(title).width) + PAD * 2);
+  }
   const H = (hasTitle ? TITLE_H : 20) + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + (hasFooter ? FOOTER_H : 0);
 
   const canvas = createCanvas(W, H);

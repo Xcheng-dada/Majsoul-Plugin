@@ -368,36 +368,43 @@ export class MajsoulGacha extends plugin {
             try {
                 globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
             } catch {}
-            const parts = [];
-            if (globalPool) {
-                parts.push(`全局池：${await this.gachaCore.getPoolDisplayTitle(globalPool)}`);
-            }
-            if (userPick) {
-                parts.push(`你当前使用：${await this.gachaCore.getPoolDisplayTitle(userPick)}`);
-                // 自定义UP池：补充挂靠池与UP雀士，方便确认当前池内容
-                if (userPick.startsWith('custom:')) {
-                    const cname = userPick.slice('custom:'.length);
-                    const custom = await this.gachaCore.customPoolLoader();
-                    const info = custom?.[cname];
-                    if (info) {
-                        const base = info.base === 'male' ? '竹林' : '樱花';
-                        const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
-                        const ups = Array.isArray(info.characters) ? info.characters.join('、') : '';
-                        parts.push(`挂靠${base} · ${tag}雀士：${ups || '未设置'}`);
-                    }
-                }
-            } else {
-                parts.push(globalPool ? '你当前使用：跟随全局池' : '你当前使用：樱花之路（默认池）');
-            }
-            // 当前可用池列表
-            const pools = await this.gachaCore.getAvailablePools();
-            parts.push(`当前可用池：${pools.map(p => p.name).join('、')}\n切换：#切换竹林 / #切换樱花 / #切换卡池 <池名> / #重置卡池`);
+            // 当前生效池：个人选择 > 全局池 > 默认樱花之路
+            const current = userPick || globalPool || 'female';
+            const parts = [`当前卡池：${await this.gachaCore.getPoolDisplayTitle(current)}`];
+            const ups = await this._getUpCharacters(current);
+            if (ups) parts.push(`UP雀士：${ups}`);
+            // 当前可用池（仅池名，去重）
+            const pools = (await this.gachaCore.getAvailablePools()).map(p => p.name.replace(/（[^）]*）/, ''));
+            parts.push(`当前可用池：${[...new Set(pools)].join('、')}`);
+            parts.push('切换命令：切换竹林 / 切换樱花 / 切换卡池 <池名> / 重置卡池');
             await e.reply(parts.join('\n'));
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
             await e.reply('查看卡池失败，可能是配置文件读取错误。');
         }
         return true;
+    }
+
+    // 获取池子的UP雀士名单（自定义UP池/联动池变体），无则返回 null
+    async _getUpCharacters(poolId) {
+        try {
+            if (typeof poolId === 'string' && poolId.startsWith('custom:')) {
+                const custom = await this.gachaCore.customPoolLoader();
+                const ups = Array.isArray(custom?.[poolId.slice('custom:'.length)]?.characters)
+                    ? custom[poolId.slice('custom:'.length)].characters : [];
+                return ups.length > 0 ? ups.join('、') : null;
+            }
+            if (typeof poolId === 'string' && poolId.includes('|')) {
+                poolId = poolId.split('|')[0];
+            }
+            if (typeof poolId === 'string' && poolId && poolId !== 'male' && poolId !== 'female'
+                && !poolId.startsWith('custom:')) {
+                const pool = await this.gachaCore.gachaLoader();
+                const ups = Array.isArray(pool[poolId]) ? pool[poolId] : [];
+                return ups.length > 0 ? ups.join('、') : null;
+            }
+        } catch {}
+        return null;
     }
 
     // 群员个人卡池选择（Redis：Yunzai:majsoul_gacha:userpool:{gid}:{uid}，仅对个人生效）
@@ -441,16 +448,18 @@ export class MajsoulGacha extends plugin {
         const match = e.msg.match(/^#?切换卡池\s+(.+)$/);
         const tokens = match?.[1]?.trim().split(/[\s,，、]+/).filter(Boolean) || [];
         const name = tokens[0];
-        const custom = await this.gachaCore.customPoolLoader();
+        let custom = null;
+        try {
+            custom = await this.gachaCore.customPoolLoader();
+        } catch (error) {
+            logger.error('[雀魂抽卡] 读取UP池配置失败:', error);
+        }
 
         // 自定义UP池
         if (name && custom && custom[name]) {
             if (await this._setUserPool(e, `custom:${name}`)) {
-                const info = custom[name];
-                const base = info.base === 'male' ? '竹林' : '樱花';
-                const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
-                const ups = Array.isArray(info.characters) ? info.characters.join('、') : '';
-                await e.reply(`已切换到「${name}」（挂靠${base} · ${tag}雀士：${ups || '未设置'}），仅对你生效`);
+                const ups = Array.isArray(custom[name].characters) ? custom[name].characters.join('、') : '';
+                await e.reply(`已切换到「${name}」${ups ? `，UP雀士：${ups}` : ''}，仅对你生效`);
             }
             return true;
         }
@@ -466,7 +475,8 @@ export class MajsoulGacha extends plugin {
                 const variant = tokens[1] === '樱花' ? 'female' : 'male';
                 if (await this._setUserPool(e, `${poolId}|${variant}`)) {
                     const title = await this.gachaCore.getPoolDisplayTitle(`${poolId}|${variant}`);
-                    await e.reply(`已切换到 ${title}，仅对你生效`);
+                    const ups = await this._getUpCharacters(`${poolId}|${variant}`);
+                    await e.reply(`已切换到 ${title}${ups ? `，UP雀士：${ups}` : ''}，仅对你生效`);
                 }
                 return true;
             }
