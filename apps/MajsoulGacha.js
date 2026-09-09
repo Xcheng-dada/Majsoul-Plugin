@@ -377,7 +377,7 @@ export class MajsoulGacha extends plugin {
             const pools = (await this.gachaCore.getAvailablePools()).map(p => p.name.replace(/（[^）]*）/, ''));
             parts.push(`当前可用池：${[...new Set(pools)].join('、')}`);
             parts.push('切换命令：切换竹林 / 切换樱花 / 切换卡池 <池名> / 重置卡池');
-            await e.reply(parts.join('\n'));
+            await e.reply(parts.join('\n'), true);
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
             await e.reply('查看卡池失败，可能是配置文件读取错误。');
@@ -426,7 +426,7 @@ export class MajsoulGacha extends plugin {
     // #切换竹林
     async selectMalePool(e) {
         if (await this._setUserPool(e, 'male')) {
-            await e.reply(`已切换到${this.gachaCore.getPoolName('male')}，仅对你生效`);
+            await e.reply(`已切换到${this.gachaCore.getPoolName('male')}`, true);
         }
         return true;
     }
@@ -434,7 +434,7 @@ export class MajsoulGacha extends plugin {
     // #切换樱花
     async selectFemalePool(e) {
         if (await this._setUserPool(e, 'female')) {
-            await e.reply(`已切换到${this.gachaCore.getPoolName('female')}，仅对你生效`);
+            await e.reply(`已切换到${this.gachaCore.getPoolName('female')}`, true);
         }
         return true;
     }
@@ -459,7 +459,7 @@ export class MajsoulGacha extends plugin {
         if (name && custom && custom[name]) {
             if (await this._setUserPool(e, `custom:${name}`)) {
                 const ups = Array.isArray(custom[name].characters) ? custom[name].characters.join('、') : '';
-                await e.reply(`已切换到「${name}」${ups ? `，UP雀士：${ups}` : ''}，仅对你生效`);
+                await e.reply(`已切换到「${name}」${ups ? `，UP雀士：${ups}` : ''}`, true);
             }
             return true;
         }
@@ -476,7 +476,7 @@ export class MajsoulGacha extends plugin {
                 if (await this._setUserPool(e, `${poolId}|${variant}`)) {
                     const title = await this.gachaCore.getPoolDisplayTitle(`${poolId}|${variant}`);
                     const ups = await this._getUpCharacters(`${poolId}|${variant}`);
-                    await e.reply(`已切换到 ${title}${ups ? `，UP雀士：${ups}` : ''}，仅对你生效`);
+                    await e.reply(`已切换到 ${title}${ups ? `，UP雀士：${ups}` : ''}`, true);
                 }
                 return true;
             }
@@ -504,7 +504,7 @@ export class MajsoulGacha extends plugin {
         }
         try {
             await redis.del(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
-            await e.reply('已重置，将跟随全局池（未设置全局池时为樱花之路）');
+            await e.reply('已重置，将跟随全局池（未设置全局池时为樱花之路）', true);
         } catch (error) {
             logger.error('[雀魂抽卡] 重置个人卡池失败:', error);
             await e.reply('重置失败，系统异常', true);

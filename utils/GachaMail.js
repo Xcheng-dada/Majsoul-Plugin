@@ -102,7 +102,7 @@ export default class GachaMail {
     const mails = await this.list(groupId);
     if (mails.length === 0) return { ok: false, reason: '当前没有邮件' };
 
-    if (String(target).toLowerCase() === 'all') {
+    if (String(target).trim().toLowerCase() === 'all' || String(target).trim() === '全部') {
       await redis.del(this._key(groupId));
       return { ok: true, removed: mails.length };
     }
