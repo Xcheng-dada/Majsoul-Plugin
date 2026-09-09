@@ -156,6 +156,11 @@ export class majsoul extends plugin {
           fnc: 'majsoulEconomy',
           permission: 'master'
         },
+        {
+          reg: '^#?设置全员辉玉\\s+(\\d+)$',
+          fnc: 'majsoulEconomy',
+          permission: 'master'
+        },
 
         // 用户管理相关指令
         {

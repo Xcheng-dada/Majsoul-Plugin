@@ -81,6 +81,11 @@ export class MajsoulEconomy extends plugin {
                     reg: '^#?保存数据$',
                     fnc: 'saveData',
                     permission: 'master'
+                },
+                {
+                    reg: '^#?设置全员辉玉\\s+(\\d+)$',
+                    fnc: 'setAllJade',
+                    permission: 'master'
                 }
             ]
         });
@@ -387,6 +392,20 @@ export class MajsoulEconomy extends plugin {
         } catch (error) {
             logger.error('[雀魂经济] 手动存盘失败:', error);
             await e.reply('存盘失败，系统异常', true);
+        }
+        return true;
+    }
+
+    // #设置全员辉玉 <数量>（master）：批量把所有有钱包记录的用户辉玉设为固定值（校正数据用）
+    async setAllJade(e) {
+        const match = e.msg.match(/^#?设置全员辉玉\s+(\d+)$/);
+        if (!match) return false;
+        const amount = parseInt(match[1]);
+        const count = await this.walletMgr.setAll('jade', amount);
+        if (count > 0) {
+            await e.reply(`已将 ${count} 位有钱包记录用户的辉玉统一设置为 ${amount}`);
+        } else {
+            await e.reply('没有找到任何钱包记录，无人可设置', true);
         }
         return true;
     }

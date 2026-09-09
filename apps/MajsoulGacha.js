@@ -238,12 +238,10 @@ export class MajsoulGacha extends plugin {
             const charShown = mergeShow(charCounts, charConv, '许愿石');
             const decorShown = mergeShow(decorCounts, decorConv, '星之石');
 
-            // 货币自动兑换提示（许愿石→粉尘→寻觅卷轴、星之石→粉尘）
-            const convertParts = [];
-            const { wallet: newWallet, converted } = await this.wallet.add(e.user_id, gains);
-            for (const line of converted) {
-                if (!convertParts.includes(line)) convertParts.push(line);
-            }
+            // 货币入账（自动兑换在后台静默完成，不外显转化过程，仅体现寻觅卷轴数量变化）
+            const ticketBefore = spendResult.wallet.ticket;
+            const { wallet: newWallet } = await this.wallet.add(e.user_id, gains);
+            const ticketGain = Math.max(0, newWallet.ticket - ticketBefore);
 
             // 纯图片输出：结果图 + 摘要条（拼接到结果图下方）
             const poolTitle = await this.gachaCore.getPoolDisplayTitle(poolName);
@@ -263,12 +261,10 @@ export class MajsoulGacha extends plugin {
                 const giftParts = [];
                 if (giftCounts.blue > 0) giftParts.push(`中级礼物x${giftCounts.blue}`);
                 if (giftCounts.purple > 0) giftParts.push(`高级礼物x${giftCounts.purple}`);
-                lines.push(`礼物：${giftParts.join('、')}`);
+                const giftDust = giftCounts.blue * 5 + giftCounts.purple * 25;
+                lines.push(`礼物：${giftParts.join('、')}（已全部奉纳为星之粉尘x${giftDust}）`);
             }
-            if (convertParts.length > 0) {
-                lines.push(`转化：${convertParts.join('；')}`);
-            }
-            lines.push(`信仰 +${times}（当前 ${newWallet.faith}）｜寻觅卷轴 ${newWallet.ticket}｜辉玉 ${newWallet.jade}`);
+            lines.push(`信仰 +${times}（当前 ${newWallet.faith}）｜寻觅卷轴 ${newWallet.ticket}${ticketGain > 0 ? `（+${ticketGain}）` : ''}｜辉玉 ${newWallet.jade}`);
 
             const finalImage = await appendSummary(imageBase64, titleLine, lines);
             await e.reply(segment.image(finalImage), true);

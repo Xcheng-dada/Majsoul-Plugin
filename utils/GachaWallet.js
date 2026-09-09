@@ -118,6 +118,35 @@ export default class GachaWallet {
     return true;
   }
 
+  /**
+   * 批量把所有已有钱包记录的用户的某一货币设为固定值（master 校正数据用）
+   * @param {string} key 货币 key（如 jade）
+   * @param {number} amount 目标数值
+   * @returns {Promise<number>} 成功设置的钱包数
+   */
+  async setAll(key, amount) {
+    if (!(key in ZERO_WALLET)) return 0;
+    const value = Math.max(0, Math.floor(Number(amount) || 0));
+    const keys = await redis.keys(`${REDIS_PREFIX}*`);
+    let count = 0;
+    for (const k of keys || []) {
+      try {
+        const raw = await redis.get(k);
+        const data = raw ? JSON.parse(raw) : {};
+        const wallet = { ...ZERO_WALLET };
+        for (const wk of Object.keys(ZERO_WALLET)) {
+          wallet[wk] = Math.max(0, Math.floor(Number(data[wk]) || 0));
+        }
+        wallet[key] = value;
+        await redis.set(k, JSON.stringify(wallet));
+        count++;
+      } catch (error) {
+        logger.error(`[GachaWallet] 批量设置钱包失败 key=${k}:`, error);
+      }
+    }
+    return count;
+  }
+
   // 原路退还（抽卡执行失败时）
   async refund(userId, costs) {
     await this.add(userId, costs);
