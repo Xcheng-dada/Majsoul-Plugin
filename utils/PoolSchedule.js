@@ -1,6 +1,6 @@
 // plugins/Majsoul-Plugin/utils/PoolSchedule.js
-// UP池定时关闭：到指定时间后，把所有处于限定池（xianding）/自定义UP池的群默认池退回樱花之路（女池）
-// 个人选择处于UP池的群友同步重置（回本群默认池）
+// UP池定时关闭：到指定时间后，全局池退回樱花之路
+// 个人选择处于UP池的群友同步重置（跟随全局池）
 // 持久化：data/pool_schedule.json = { endAt: "YYYY-MM-DD HH:mm" }（全局一份，新设置覆盖旧设置）
 import fs from 'fs/promises';
 import path from 'path';
@@ -9,9 +9,9 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '..', 'data', 'pool_schedule.json');
 
-const RETREAT_POOL = 'female'; // UP池关闭后的退回池：樱花之路（女池）
-// UP池判定：限定池（贵人）、自定义UP池、已开启的联动池（主题池）等临时池
-// （normal 为历史遗留默认值，male/female 为常驻性别池，均不算UP池）
+const RETREAT_POOL = 'female'; // UP池关闭后的退回池：樱花之路
+// UP池判定：自定义UP池、已开启的联动池（主题池）等临时池
+// （male/female 为常驻性别池，purple_gift 等非池键，均不算UP池）
 const isUpPool = (poolname) => {
   if (!poolname) return false;
   const p = String(poolname);
@@ -72,30 +72,15 @@ export default class PoolSchedule {
   }
 
   /**
-   * 每分钟检查：到达关闭时间则把处于UP池的群默认池退回樱花之路（女池）
-   * @returns {Promise<{ affected: number, gids: string[] }|null>} 触发时返回受影响群列表，未触发返回 null
+   * 每分钟检查：到达关闭时间则把全局池退回樱花之路
+   * @returns {Promise<{ affected: number, gids: string[] }|null>} 触发时返回受影响信息，未触发返回 null
    */
   async check() {
     const schedule = await this._load();
     if (!schedule) return null;
     if (Date.now() < new Date(schedule.endAt.replace('-', '/')).getTime()) return null;
 
-    const groupPool = await this.gachaCore.groupPoolLoader();
-    let changed = false;
-    const gids = [];
-    for (const item of groupPool) {
-      if (isUpPool(item.poolname)) {
-        item.poolname = RETREAT_POOL;
-        gids.push(String(item.gid));
-        changed = true;
-      }
-    }
-    if (changed) {
-      await this.gachaCore.saveGroupPool(groupPool);
-      logger.mark(`[PoolSchedule] UP池已关闭，${gids.length} 个群默认池退回樱花之路: ${gids.join(',')}`);
-    }
-
-    // 同步清理处于UP池的个人卡池选择（回本群默认池）
+    // 同步清理处于UP池的个人卡池选择（跟随全局池）
     let userAffected = 0;
     try {
       const keys = await redis.keys('Yunzai:majsoul_gacha:userpool:*');
@@ -114,11 +99,13 @@ export default class PoolSchedule {
     }
 
     // 全局池若为UP池（含联动池），退回樱花之路并清理挂靠配置
+    let globalRetreated = false;
     try {
       const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
       if (globalPool && isUpPool(globalPool)) {
         await redis.set('Yunzai:majsoul_gacha:globalpool', RETREAT_POOL);
         await redis.del('Yunzai:majsoul_gacha:globalbase');
+        globalRetreated = true;
         logger.mark(`[PoolSchedule] 全局池退回樱花之路`);
       }
     } catch (error) {
@@ -126,6 +113,6 @@ export default class PoolSchedule {
     }
 
     await this._remove();
-    return { affected: gids.length, gids };
+    return { affected: globalRetreated ? 1 : 0, gids: globalRetreated ? ['global'] : [] };
   }
 }

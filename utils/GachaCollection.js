@@ -11,6 +11,9 @@ const REDIS_PREFIX = 'Yunzai:majsoul_gacha:collection:';
 
 const SUPPORTED_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
+// 贵人名单（限定雀士）：不进常驻池，仅通过 #创建UP池 <池名> 樱花/竹林 贵人 发放
+const LIMITED_CHARACTERS = ['西园寺一羽', '东城玄音', '北原莉莉', '南枫花', '璃央', '赤麟'];
+
 // 网格渲染常量
 const COLS = 6;            // 每行格数
 const PER_PAGE = 48;       // 6列 × 8行 = 48格/页
@@ -82,14 +85,9 @@ export default class GachaCollection {
     return { isNew, count: coll[kind][name].count };
   }
 
-  // 判断是否为限定雀士（gacha.json 的 xianding 池）
+  // 判断是否为限定雀士（贵人：仅通过 #创建UP池 贵人 发放，重复转化 150 许愿石）
   async isLimitedCharacter(name) {
-    try {
-      const pool = await this.gachaCore.gachaLoader();
-      return Array.isArray(pool.xianding) && pool.xianding.includes(name);
-    } catch {
-      return false;
-    }
+    return LIMITED_CHARACTERS.includes(name);
   }
 
   // 全量物品列表（5 分钟缓存）：characters / decorations

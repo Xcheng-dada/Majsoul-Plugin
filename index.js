@@ -75,12 +75,12 @@ export class majsoul extends plugin {
           fnc: 'majsoulGacha'
         },
         {
-          reg: '^#?(切换|使用)(竹林|男池)(之路)?$',
+          reg: '^#?(切换|使用)竹林(之路)?$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
         {
-          reg: '^#?(切换|使用)(樱花|女池)(之路)?$',
+          reg: '^#?(切换|使用)樱花(之路)?$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
@@ -447,19 +447,10 @@ export class majsoul extends plugin {
     }, 24 * 60 * 60 * 1000);
     scheduleManager.paipuCleanupTimer = paipuCleanupTimer;
 
-    // UP池定时关闭检查：每分钟检查一次，到点把处于限定池/自定义UP池的群默认池退回樱花之路并通知
+    // UP池定时关闭检查：每分钟检查一次，到点把全局池退回樱花之路并重置相关个人选择（详见 PoolSchedule 日志）
     const poolScheduleTimer = setInterval(async () => {
       try {
-        const result = await this.modules?.gacha?.poolSchedule?.check();
-        if (!result || result.affected === 0) return;
-        const bot = scheduleManager.bot || global.Bot;
-        for (const gid of result.gids) {
-          try {
-            await bot.pickGroup(gid).sendMsg('雀魂UP池已关闭，本群卡池已自动退回樱花之路（女池）');
-          } catch (error) {
-            logger?.error?.(`[Majsoul-Plugin] UP池关闭通知群 ${gid} 失败:`, error);
-          }
-        }
+        await this.modules?.gacha?.poolSchedule?.check();
       } catch (error) {
         logger?.error?.('[Majsoul-Plugin] UP池定时关闭检查失败:', error);
       }

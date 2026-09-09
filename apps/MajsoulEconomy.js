@@ -166,35 +166,45 @@ export class MajsoulEconomy extends plugin {
         return true;
     }
 
-    // #雀魂兑换 雀士名：信仰直兑
+    // #雀魂兑换 雀士名：信仰直兑（仅限当前开放池：竹林/樱花、活跃自定义UP池、已开启的联动池）
     async exchange(e) {
         const match = e.msg.match(/^#?雀魂兑换\s+(.+)$/);
         if (!match) return false;
         const name = match[1].trim();
 
-        // 在 gacha.json 全部池中查找
-        let poolId = null;
+        // 收集当前开放池的雀士名单
+        let openNames = [];
         try {
             const pool = await this.gachaCore.gachaLoader();
-            for (const [p, arr] of Object.entries(pool)) {
-                if (p === 'purple_gift' || !Array.isArray(arr)) continue;
-                if (arr.includes(name)) {
-                    poolId = p;
-                    break;
+            // 常驻开放：竹林之路 + 樱花之路
+            openNames.push(...(pool.male || []), ...(pool.female || []));
+            // 活跃自定义UP池（贵人/限时UP）的UP雀士
+            const custom = await this.gachaCore.customPoolLoader();
+            if (custom) {
+                for (const info of Object.values(custom)) {
+                    if (Array.isArray(info?.characters)) openNames.push(...info.characters);
                 }
+            }
+            // 已开启的联动池（master 当前全局池为主题池时）
+            let globalPool = null;
+            try {
+                globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+            } catch {}
+            if (globalPool && Array.isArray(pool[globalPool])) {
+                openNames.push(...pool[globalPool]);
             }
         } catch (error) {
             logger.error('[雀魂经济] 读取卡池配置失败:', error);
             await e.reply('兑换失败，系统异常', true);
             return true;
         }
+        openNames = [...new Set(openNames)];
 
-        if (!poolId) {
-            await e.reply(`没有找到雀士"${name}"，请检查名字是否正确（可在卡池中查看）`, true);
+        if (!openNames.includes(name)) {
+            await e.reply(`「${name}」当前不在开放池中，无法兑换。\n当前可兑换：竹林之路 / 樱花之路 / 当前UP池与联动池雀士`, true);
             return true;
         }
-
-        const isLimited = poolId === 'xianding';
+        const isLimited = await this.collectionMgr.isLimitedCharacter(name);
         const cost = isLimited
             ? Math.max(1, Number(getFeatureConfigItem('faithLimitedCost')) || 300)
             : Math.max(1, Number(getFeatureConfigItem('faithNormalCost')) || 150);

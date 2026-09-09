@@ -54,13 +54,21 @@ export async function renderCurrencyCard({ title, items, footer }) {
   const ICON_TOP = 30;              // 图标距单元顶部
   const COUNT_GAP = 18;             // 图标与数量间距
   const EXTRA_GAP = 10;             // 数量与附加说明间距
+  const PER_ROW = 4;                // 每行最多货币单元数（超出自动换行，避免图片过长）
+  const ROW_GAP = 24;               // 行间距
 
   const hasTitle = !!title;
   const hasFooter = !!footer;
   const unitH = ICON_TOP + ICON_SIZE + COUNT_GAP + COUNT_SIZE + 10
     + (items.some(i => i.extra) ? EXTRA_GAP + EXTRA_SIZE : 0);
-  const W = PAD * 2 + UNIT_W * items.length;
-  const H = (hasTitle ? TITLE_H : 20) + unitH + PAD + (hasFooter ? FOOTER_H : 0);
+  // 按每行 PER_ROW 个拆行，每行在卡内水平居中
+  const rows = [];
+  for (let i = 0; i < items.length; i += PER_ROW) {
+    rows.push(items.slice(i, i + PER_ROW));
+  }
+  const cols = Math.max(...rows.map(r => r.length));
+  const W = PAD * 2 + UNIT_W * cols;
+  const H = (hasTitle ? TITLE_H : 20) + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + (hasFooter ? FOOTER_H : 0);
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -75,39 +83,44 @@ export async function renderCurrencyCard({ title, items, footer }) {
     drawText(ctx, title, W / 2, 34, 46, '#1F2937', 'center', 'bold');
   }
 
-  // 逐个渲染货币单元
+  // 按行渲染货币单元
   const top = (hasTitle ? TITLE_H : 20);
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const cx = PAD + UNIT_W * i + UNIT_W / 2;
+  for (let r = 0; r < rows.length; r++) {
+    const rowItems = rows[r];
+    const rowTop = top + r * (unitH + ROW_GAP);
+    for (let i = 0; i < rowItems.length; i++) {
+      const item = rowItems[i];
+      // 每行水平居中：最后一行不满时向中间收拢
+      const cx = W / 2 + (i - (rowItems.length - 1) / 2) * UNIT_W;
 
-    // 图标（Windows 下 loadImage 不支持本地路径，读 Buffer 后走 data URI）
-    // 统一缩至图标槽的 86% 居中绘制：部分素材（如信仰）内容贴边，避免视觉上被裁切
-    const iconFile = CURRENCY_ICONS[item.icon] || item.icon;
-    const iconPath = path.join(ECONOMY_DIR, `${iconFile}.png`);
-    const drawSize = Math.round(ICON_SIZE * 0.86);
-    const drawOffset = Math.round((ICON_SIZE - drawSize) / 2);
-    try {
-      const buf = fs.readFileSync(iconPath);
-      const icon = await loadImage(`data:image/png;base64,${buf.toString('base64')}`);
-      ctx.drawImage(icon, cx - drawSize / 2, top + ICON_TOP + drawOffset, drawSize, drawSize);
-    } catch (error) {
-      logger.warn(`[CurrencyCard] 图标加载失败: ${iconFile}.png（${error.message}）`);
-      // 占位圆形
-      ctx.fillStyle = '#F3F4F6';
-      ctx.beginPath();
-      ctx.arc(cx, top + ICON_TOP + ICON_SIZE / 2, ICON_SIZE / 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      // 图标（Windows 下 loadImage 不支持本地路径，读 Buffer 后走 data URI）
+      // 统一缩至图标槽的 86% 居中绘制：部分素材（如信仰）内容贴边，避免视觉上被裁切
+      const iconFile = CURRENCY_ICONS[item.icon] || item.icon;
+      const iconPath = path.join(ECONOMY_DIR, `${iconFile}.png`);
+      const drawSize = Math.round(ICON_SIZE * 0.86);
+      const drawOffset = Math.round((ICON_SIZE - drawSize) / 2);
+      try {
+        const buf = fs.readFileSync(iconPath);
+        const icon = await loadImage(`data:image/png;base64,${buf.toString('base64')}`);
+        ctx.drawImage(icon, cx - drawSize / 2, rowTop + ICON_TOP + drawOffset, drawSize, drawSize);
+      } catch (error) {
+        logger.warn(`[CurrencyCard] 图标加载失败: ${iconFile}.png（${error.message}）`);
+        // 占位圆形
+        ctx.fillStyle = '#F3F4F6';
+        ctx.beginPath();
+        ctx.arc(cx, rowTop + ICON_TOP + ICON_SIZE / 2, ICON_SIZE / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-    // 数量
-    drawText(ctx, String(item.count), cx, top + ICON_TOP + ICON_SIZE + COUNT_GAP,
-      COUNT_SIZE, '#111827', 'center', 'bold');
+      // 数量
+      drawText(ctx, String(item.count), cx, rowTop + ICON_TOP + ICON_SIZE + COUNT_GAP,
+        COUNT_SIZE, '#111827', 'center', 'bold');
 
-    // 附加说明（橙色）
-    if (item.extra) {
-      drawText(ctx, item.extra, cx, top + ICON_TOP + ICON_SIZE + COUNT_GAP + COUNT_SIZE + 10 + EXTRA_GAP,
-        EXTRA_SIZE, '#F97316', 'center', 'bold');
+      // 附加说明（橙色）
+      if (item.extra) {
+        drawText(ctx, item.extra, cx, rowTop + ICON_TOP + ICON_SIZE + COUNT_GAP + COUNT_SIZE + 10 + EXTRA_GAP,
+          EXTRA_SIZE, '#F97316', 'center', 'bold');
+      }
     }
   }
 

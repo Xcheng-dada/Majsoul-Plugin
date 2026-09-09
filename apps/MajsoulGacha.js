@@ -32,11 +32,11 @@ export class MajsoulGacha extends plugin {
                 },
                 // 群员个人卡池切换（仅对个人生效）
                 {
-                    reg: '^#?(切换|使用)(竹林|男池)(之路)?$',
+                    reg: '^#?(切换|使用)竹林(之路)?$',
                     fnc: 'selectMalePool'
                 },
                 {
-                    reg: '^#?(切换|使用)(樱花|女池)(之路)?$',
+                    reg: '^#?(切换|使用)樱花(之路)?$',
                     fnc: 'selectFemalePool'
                 },
                 {
@@ -50,12 +50,6 @@ export class MajsoulGacha extends plugin {
                 {
                     reg: '^#?我的卡池$',
                     fnc: 'myPool'
-                },
-                // 性别池名单由主人直接维护 data/gender_pool.json（不提供添加指令）
-                {
-                    reg: '^#?(查看性别池|性别池列表)$',
-                    fnc: 'viewGenderPool',
-                    permission: 'master'
                 },
                 // UP池定时关闭：到点自动退回樱花之路（主人）
                 {
@@ -361,19 +355,9 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看卡池（全局池 + 本群默认池 + 个人当前卡池 + 当前可用池列表）
+    // 查看卡池（全局池 + 个人当前卡池 + 当前可用池列表）
     async viewPool(e) {
         try {
-            let defaultPool = null;
-            if (e.group_id) {
-                const groupPool = await this.gachaCore.groupPoolLoader();
-                for (const item of groupPool) {
-                    if (item.gid === String(e.group_id)) {
-                        defaultPool = item.poolname;
-                        break;
-                    }
-                }
-            }
             let userPick = null;
             try {
                 if (e.group_id && e.user_id) {
@@ -388,17 +372,14 @@ export class MajsoulGacha extends plugin {
             if (globalPool) {
                 parts.push(`全局池：${this.gachaCore.getPoolName(globalPool)}`);
             }
-            if (defaultPool) {
-                parts.push(`本群默认池：${this.gachaCore.getPoolName(defaultPool)}`);
-            }
             if (userPick) {
                 parts.push(`你当前使用：${this.gachaCore.getPoolName(userPick)}`);
             } else {
-                parts.push(globalPool ? '你当前使用：跟随全局池' : '你当前使用：跟随本群默认池');
+                parts.push(globalPool ? '你当前使用：跟随全局池' : '你当前使用：樱花之路（默认池）');
             }
             // 当前可用池列表
             const pools = await this.gachaCore.getAvailablePools();
-            parts.push(`当前可用池：${pools.map(p => p.name).join('、')}\n切换：#切换竹林 / #切换樱花 / #切换卡池 <自定义池名> / #重置卡池`);
+            parts.push(`当前可用池：${pools.map(p => p.name).join('、')}\n切换：#切换竹林 / #切换樱花 / #切换卡池 <池名> / #重置卡池`);
             await e.reply(parts.join('\n'));
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
@@ -423,7 +404,7 @@ export class MajsoulGacha extends plugin {
         }
     }
 
-    // #切换竹林 / #切换男池
+    // #切换竹林
     async selectMalePool(e) {
         if (await this._setUserPool(e, 'male')) {
             await e.reply(`已切换到${this.gachaCore.getPoolName('male')}，仅对你生效`);
@@ -431,7 +412,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // #切换樱花 / #切换女池
+    // #切换樱花
     async selectFemalePool(e) {
         if (await this._setUserPool(e, 'female')) {
             await e.reply(`已切换到${this.gachaCore.getPoolName('female')}，仅对你生效`);
@@ -439,7 +420,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // #切换卡池 <自定义UP池名>（仅限自定义UP池）
+    // #切换卡池 <池名>（自定义UP池或已开启联动的樱花/竹林特别寻觅）
     async selectCustomPool(e) {
         if (!e.group_id) {
             await e.reply('此功能仅限群聊使用');
@@ -459,14 +440,14 @@ export class MajsoulGacha extends plugin {
         }
 
         // 联动池变体：#切换卡池 <联动池名> <樱花/竹林>（联动开启时可用）
-        if (name && tokens.length >= 2 && /^(樱花|女池|竹林|男池)$/.test(tokens[1])) {
+        if (name && tokens.length >= 2 && /^(樱花|竹林)$/.test(tokens[1])) {
             const poolId = this.gachaCore.getPoolId(name);
             let globalPool = null;
             try {
                 globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
             } catch {}
             if (poolId && poolId === globalPool && !poolId.startsWith('custom:')) {
-                const variant = /^(樱花|女池)$/.test(tokens[1]) ? 'female' : 'male';
+                const variant = tokens[1] === '樱花' ? 'female' : 'male';
                 if (await this._setUserPool(e, `${poolId}|${variant}`)) {
                     const title = await this.gachaCore.getPoolDisplayTitle(`${poolId}|${variant}`);
                     await e.reply(`已切换到 ${title}，仅对你生效`);
@@ -489,7 +470,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // #重置卡池（回本群默认池）
+    // #重置卡池（回全局池；未设全局池时为默认樱花之路）
     async resetUserPool(e) {
         if (!e.group_id) {
             await e.reply('此功能仅限群聊使用');
@@ -497,7 +478,7 @@ export class MajsoulGacha extends plugin {
         }
         try {
             await redis.del(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
-            await e.reply('已重置，将跟随本群默认池');
+            await e.reply('已重置，将跟随全局池（未设置全局池时为樱花之路）');
         } catch (error) {
             logger.error('[雀魂抽卡] 重置个人卡池失败:', error);
             await e.reply('重置失败，系统异常', true);
@@ -529,9 +510,9 @@ export class MajsoulGacha extends plugin {
         // 挂靠池：必须指定 樱花 或 竹林
         let base = null;
         let nameTokens = tokens.slice(1);
-        if (/^(樱花|女池)$/.test(nameTokens[0])) {
+        if (nameTokens[0] === '樱花') {
             base = 'female';
-        } else if (/^(竹林|男池)$/.test(nameTokens[0])) {
+        } else if (nameTokens[0] === '竹林') {
             base = 'male';
         } else {
             await e.reply('请指定挂靠池：樱花 或 竹林（联动池未命中UP时将从该池抽雀士/装扮）\n格式：#创建UP池 <池名> <樱花/竹林> [贵人] <雀士名>...', true);
@@ -596,7 +577,7 @@ export class MajsoulGacha extends plugin {
                 `挂靠：${baseText}（未命中UP时从${baseText}抽雀士，不与常驻混池）\n` +
                 `类型：${typeText}（UP雀士概率 ${upRate}%）\n` +
                 globalText + '\n' +
-                `可搭配 #设置UP池关闭 时间 到点自动退回樱花之路（女池）`,
+                `可搭配 #设置UP池关闭 时间 到点自动退回樱花之路`,
                 true
             );
         } catch (error) {
@@ -606,7 +587,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 解散自定义UP池：#解散UP池 <池名>，处于该池的群默认池退回樱花之路
+    // 解散自定义UP池：#解散UP池 <池名>，个人选择与全局池指向该池时退回樱花之路
     async destroyUpPool(e) {
         const match = e.msg.match(/^#?解散UP池(?:\s+(.+))?$/);
         const poolName = match?.[1]?.trim();
@@ -630,17 +611,8 @@ export class MajsoulGacha extends plugin {
             }
 
             const poolId = `custom:${poolName}`;
-            const groupPool = await this.gachaCore.groupPoolLoader();
-            let affected = 0;
-            for (const item of groupPool) {
-                if (item.poolname === poolId) {
-                    item.poolname = 'female';
-                    affected++;
-                }
-            }
-            await this.gachaCore.saveGroupPool(groupPool);
 
-            // 清理指向该池的用户个人选择（回本群默认池）
+            // 清理指向该池的用户个人选择（跟随全局池）
             let userAffected = 0;
             try {
                 const keys = await redis.keys('Yunzai:majsoul_gacha:userpool:*');
@@ -665,7 +637,6 @@ export class MajsoulGacha extends plugin {
             }
 
             const extra = [];
-            if (affected > 0) extra.push(`${affected} 个群默认池已退回樱花之路`);
             if (userAffected > 0) extra.push(`${userAffected} 位群友的个人选择已重置`);
             await e.reply(`自定义UP池「${poolName}」已解散${extra.length > 0 ? `，${extra.join('，')}` : ''}`, true);
         } catch (error) {
@@ -702,7 +673,7 @@ export class MajsoulGacha extends plugin {
 
         const input = match[1].trim().split(/[\s,，、]+/)[0];
         const poolId = this.gachaCore.getPoolId(input);
-        if (!poolId || ['male', 'female', 'normal', 'xianding'].includes(poolId) || poolId.startsWith('custom:')) {
+        if (!poolId || ['male', 'female', 'normal'].includes(poolId) || poolId.startsWith('custom:')) {
             await e.reply('没有找到该联动池，可用 #查看联动池 查看已配置的联动池\n格式：#开启联动 <联动池名>', true);
             return true;
         }
@@ -723,7 +694,7 @@ export class MajsoulGacha extends plugin {
             await e.reply(
                 `联动池「${name}」已开启并全局生效（樱花与竹林两池都开）：${poolInfo}\n` +
                 `UP雀士概率 59%，未命中UP时从对应性别池抽雀士（不与常驻混池）\n` +
-                `可搭配 #设置UP池关闭 时间 到点自动退回樱花之路（女池），或 #关闭联动 立即关闭`,
+                `可搭配 #设置UP池关闭 时间 到点自动退回樱花之路，或 #关闭联动 立即关闭`,
                 true
             );
         } catch (error) {
@@ -740,7 +711,7 @@ export class MajsoulGacha extends plugin {
             if (globalPool && globalPool !== 'female' && globalPool !== 'male') {
                 await redis.set('Yunzai:majsoul_gacha:globalpool', 'female');
                 await redis.del('Yunzai:majsoul_gacha:globalbase');
-                await e.reply(`联动池「${this.gachaCore.getPoolName(globalPool)}」已关闭，全局池退回樱花之路（女池）`, true);
+                await e.reply(`联动池「${this.gachaCore.getPoolName(globalPool)}」已关闭，全局池退回樱花之路`, true);
             } else {
                 await e.reply('当前没有开启的联动池', true);
             }
@@ -753,8 +724,8 @@ export class MajsoulGacha extends plugin {
 
     // 查看已配置的联动池（主题池）列表
     async viewCollab(e) {
-        const data = await this.gachaLoader();
-        const known = ['male', 'female', 'normal', 'xianding', 'purple_gift'];
+        const data = await this.gachaCore.gachaLoader();
+        const known = ['male', 'female', 'normal', 'purple_gift'];
         const names = Object.keys(data).filter(id => !known.includes(id) && !id.startsWith('custom:') && !id.startsWith('__'));
         if (names.length === 0) {
             await e.reply('没有已配置的联动池');
@@ -773,7 +744,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 设置UP池关闭时间（到点自动把处于UP池的群默认池退回樱花之路）
+    // 设置UP池关闭时间（到点自动把全局池退回樱花之路）
     async setUpPoolClose(e) {
         if (!e.group_id) {
             await e.reply('此功能仅限群聊使用');
@@ -787,7 +758,7 @@ export class MajsoulGacha extends plugin {
             await e.reply(result.reason, true);
             return true;
         }
-        await e.reply(`已设置：${result.endAt} 自动关闭UP池，届时处于限定池/自定义UP池的群将默认退回樱花之路（女池）`, true);
+        await e.reply(`已设置：${result.endAt} 自动关闭UP池，届时全局池将退回樱花之路，处于UP池的个人选择同步重置`, true);
         return true;
     }
 
@@ -802,26 +773,11 @@ export class MajsoulGacha extends plugin {
     async viewUpPoolClose(e) {
         const schedule = await this.poolSchedule.get();
         if (schedule) {
-            await e.reply(`当前UP池关闭时间：${schedule.endAt}（到点后处于限定池/自定义UP池的群默认退回樱花之路）`);
+            await e.reply(`当前UP池关闭时间：${schedule.endAt}（到点后全局池退回樱花之路，处于UP池的个人选择同步重置）`);
         } else {
             await e.reply('当前未设置UP池定时关闭');
         }
         return true;
     }
 
-    // 查看性别池名单（名单由主人直接维护 data/gender_pool.json，不提供添加指令）
-    async viewGenderPool(e) {
-        const data = (await this.gachaCore.genderPoolLoader()) || {
-            maleChars: [], femaleChars: []
-        };
-        const fmt = (list) => list.length > 0 ? list.join('、') : '（空，等同常驻池全部雀士）';
-        await e.reply(
-            '【竹林之路（男池）】\n' +
-            `雀士（${(data.maleChars || []).length}）：${fmt(data.maleChars || [])}\n` +
-            '【樱花之路（女池）】\n' +
-            `雀士（${(data.femaleChars || []).length}）：${fmt(data.femaleChars || [])}\n` +
-            '装扮与礼物不分卡池，所有池内容与概率一致'
-        );
-        return true;
-    }
 }
