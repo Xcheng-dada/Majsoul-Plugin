@@ -112,6 +112,15 @@ export default class PoolSchedule {
       logger.error('[PoolSchedule] 清理全局卡池失败:', error);
     }
 
+    // 限时UP池到点下架：清空自定义UP池（data/custom_up.json），
+    // 可用池列表不再显示，#切换卡池 <池名> 也不可再切入（需要时主人重新创建即可）
+    try {
+      await this.gachaCore.removeCustomPool();
+      logger.mark('[PoolSchedule] 限时UP池已下架（可用池已移除全部自定义UP池）');
+    } catch (error) {
+      logger.error('[PoolSchedule] 下架限时UP池失败:', error);
+    }
+
     await this._remove();
     return { affected: globalRetreated ? 1 : 0, gids: globalRetreated ? ['global'] : [] };
   }
