@@ -152,6 +152,21 @@ export class MajsoulGacha extends plugin {
             logger.error('[雀魂抽卡] 检查开关状态失败:', error);
         }
 
+        // 每日寻觅次数上限（防刷屏，余额充足也不放行；配置为 0 表示不限制）
+        const limitField = times === 1 ? 'dailySinglePullLimit' : 'dailyTenPullLimit';
+        const dailyLimit = Math.max(0, Math.floor(Number(getFeatureConfigItem(limitField)) || 0));
+        const cntKey = `Yunzai:majsoul_pullcnt:${times === 1 ? 'single' : 'ten'}:${e.user_id}:${new Date().toISOString().slice(0, 10)}`;
+        let usedToday = 0;
+        if (dailyLimit > 0) {
+            try {
+                usedToday = Number(await redis.get(cntKey)) || 0;
+            } catch {}
+            if (usedToday >= dailyLimit) {
+                await e.reply(`今日${times === 1 ? '单抽' : '十连'}次数已达上限（${dailyLimit} 次），明天再来吧~`, true);
+                return;
+            }
+        }
+
         const singleJade = Math.max(1, Number(getFeatureConfigItem('singleGachaJade')) || 200);
         const tenJade = Math.max(1, Number(getFeatureConfigItem('tenGachaJade')) || 1800);
 
