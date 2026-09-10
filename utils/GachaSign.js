@@ -59,7 +59,7 @@ export default class GachaSign {
     let jade = min + Math.floor(Math.random() * (max - min + 1));
     const critRate = Math.min(100, Math.max(0, Number(getFeatureConfigItem('signCritRate')) || 8));
     const crit = Math.random() * 100 < critRate;
-    if (crit) jade = max;
+    if (crit) jade *= 2;
 
     // 基础奖励：1 寻觅卷轴；连签第 7 天加 1 张十连寻觅卷轴
     let ticket = 1;

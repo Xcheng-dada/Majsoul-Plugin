@@ -17,7 +17,7 @@ export const FEATURE_CONFIG_DEFAULTS = {
   // 抽卡经济系统
   signJadeMin: 150,          // 签到随机辉玉下限
   signJadeMax: 250,          // 签到随机辉玉上限
-  signCritRate: 8,           // 签到暴击概率（%），暴击时当日辉玉取上限值
+  signCritRate: 8,           // 签到暴击概率（%），暴击时当日辉玉翻倍
   singleGachaJade: 200,      // 单抽辉玉价格
   tenGachaJade: 1800,        // 十连辉玉价格
   faithNormalCost: 150,      // 信仰兑换普通雀士所需

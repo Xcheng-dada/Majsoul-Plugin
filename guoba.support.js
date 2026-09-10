@@ -132,7 +132,7 @@ export function supportGuoba () {
         {
           field: 'signCritRate',
           label: '签到暴击概率（%）',
-          bottomHelpMessage: '签到辉玉触发暴击的概率，默认 8%',
+          bottomHelpMessage: '签到辉玉触发暴击的概率，暴击时当日辉玉翻倍，默认 8%',
           component: 'InputNumber',
           componentProps: {
             min: 0,
