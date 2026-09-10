@@ -152,17 +152,20 @@ export class MajsoulGacha extends plugin {
             logger.error('[雀魂抽卡] 检查开关状态失败:', error);
         }
 
-        // 每日寻觅次数上限（防刷屏，余额充足也不放行；配置为 0 表示不限制）
-        const limitField = times === 1 ? 'dailySinglePullLimit' : 'dailyTenPullLimit';
-        const dailyLimit = Math.max(0, Math.floor(Number(getFeatureConfigItem(limitField)) || 0));
-        const cntKey = `Yunzai:majsoul_pullcnt:${times === 1 ? 'single' : 'ten'}:${e.user_id}:${new Date().toISOString().slice(0, 10)}`;
-        let usedToday = 0;
-        if (dailyLimit > 0) {
+        // 每 30 分钟寻觅次数上限（防刷屏，余额充足也不放行；配置为 0 表示不限制）
+        const limitField = times === 1 ? 'halfHourSinglePullLimit' : 'halfHourTenPullLimit';
+        const halfHourLimit = Math.max(0, Math.floor(Number(getFeatureConfigItem(limitField)) || 0));
+        // 以自然半小时为窗口（整点/半点重置），slot 作 key 一部分，TTL 仅作垃圾回收
+        const slot = Math.floor(Date.now() / (30 * 60 * 1000));
+        const cntKey = `Yunzai:majsoul_pullcnt:${times === 1 ? 'single' : 'ten'}:${e.user_id}:${slot}`;
+        let usedInWindow = 0;
+        if (halfHourLimit > 0) {
             try {
-                usedToday = Number(await redis.get(cntKey)) || 0;
+                usedInWindow = Number(await redis.get(cntKey)) || 0;
             } catch {}
-            if (usedToday >= dailyLimit) {
-                await e.reply(`今日${times === 1 ? '单抽' : '十连'}次数已达上限（${dailyLimit} 次），明天再来吧~`, true);
+            if (usedInWindow >= halfHourLimit) {
+                const remainMin = Math.max(1, Math.ceil(((slot + 1) * 30 * 60 * 1000 - Date.now()) / 60000));
+                await e.reply(`寻觅太频繁啦，每 30 分钟限 ${halfHourLimit} 次，请 ${remainMin} 分钟后再试~`, true);
                 return;
             }
         }
@@ -206,10 +209,10 @@ export class MajsoulGacha extends plugin {
             return;
         }
 
-        // 扣费成功才计入当日次数（48 小时过期，跨天自动作废）
-        if (dailyLimit > 0) {
+        // 扣费成功才计入本半小时次数（1 小时过期，窗口切换自动作废）
+        if (halfHourLimit > 0) {
             try {
-                await redis.set(cntKey, usedToday + 1, { EX: 172800 });
+                await redis.set(cntKey, usedInWindow + 1, { EX: 3600 });
             } catch {}
         }
 

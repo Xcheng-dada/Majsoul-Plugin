@@ -161,9 +161,9 @@ export function supportGuoba () {
           }
         },
         {
-          field: 'dailySinglePullLimit',
-          label: '每日单抽上限（次）',
-          bottomHelpMessage: '每人每天最多单抽次数，防止刷屏；0 表示不限制，默认 3',
+          field: 'halfHourSinglePullLimit',
+          label: '单抽上限/30分钟（次）',
+          bottomHelpMessage: '每人每 30 分钟最多单抽次数，防止刷屏；0 表示不限制，默认 3',
           component: 'InputNumber',
           componentProps: {
             min: 0,
@@ -171,9 +171,9 @@ export function supportGuoba () {
           }
         },
         {
-          field: 'dailyTenPullLimit',
-          label: '每日十连上限（次）',
-          bottomHelpMessage: '每人每天最多十连次数，防止刷屏；0 表示不限制，默认 3',
+          field: 'halfHourTenPullLimit',
+          label: '十连上限/30分钟（次）',
+          bottomHelpMessage: '每人每 30 分钟最多十连次数，防止刷屏；0 表示不限制，默认 3',
           component: 'InputNumber',
           componentProps: {
             min: 0,
