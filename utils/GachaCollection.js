@@ -103,24 +103,17 @@ export default class GachaCollection {
     return this._allItemsCache[kind] || [];
   }
 
-  // 扫描全部角色：gacha.json 各池去重，经 characterFileMap 过滤
+  // 扫描全部角色：person 目录全量（"轻库娘"除外），文件名即雀士名
+  // 不依赖卡池配置：未开放池/下架池/贵人等全部计入图鉴
   async _scanCharacters() {
-    const pool = await this.gachaCore.gachaLoader();
     if (this.gachaCore.characterFileMap.size === 0) {
       await this.gachaCore._buildCharacterFileMap();
     }
-    const names = new Set();
-    for (const [poolName, arr] of Object.entries(pool)) {
-      if (poolName === 'purple_gift' || !Array.isArray(arr)) continue;
-      for (const n of arr) {
-        if (this.gachaCore.characterFileMap.has(n)) names.add(n);
-      }
-    }
     const personDir = path.join(this.resourcesRoot, 'person');
-    return [...names].map(name => ({
-      name,
-      path: path.join(personDir, this.gachaCore.characterFileMap.get(name))
-    }));
+    return [...this.gachaCore.characterFileMap.entries()]
+      .filter(([name]) => !name.includes('轻库娘'))
+      .map(([name, file]) => ({ name, path: path.join(personDir, file) }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
   }
 
   // 扫描全部装扮：decoration 根目录 + 子目录，按文件名去重

@@ -558,7 +558,8 @@ export default class GachaCore {
             'mofa': '魔法少女伊莉雅',
             'bluearchive': '蔚蓝档案',
             'ouxiang': '偶像大师闪耀色彩',
-            'daojian': '刀剑神域'
+            'daojian': '刀剑神域',
+            'guiren': '贵人限定'
         };
         return map[id] || '未知卡池';
     }
