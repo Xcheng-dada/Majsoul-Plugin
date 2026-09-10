@@ -188,12 +188,28 @@ export default class GachaCollection {
    * @returns {Promise<string>} base64:// 图片
    */
   async renderImage(userId, kind = 'characters', page = 1) {
-    const all = await this._getAllItems(kind);
+    // 克隆共享缓存，避免把"已拥有的下架雀士"合并进全局缓存
+    const all = [...await this._getAllItems(kind)];
     if (all.length === 0) {
       throw new Error('图鉴为空');
     }
     const coll = await this.get(userId);
     const collMap = coll[kind] || {};
+
+    // 已拥有但不在当前任何开放池的雀士（如限时UP池下架后）：数据仍在，需继续显示
+    if (kind === 'characters' && this.gachaCore.characterFileMap.size === 0) {
+      await this.gachaCore._buildCharacterFileMap();
+    }
+    if (kind === 'characters') {
+      const listed = new Set(all.map(i => i.name));
+      const personDir = path.join(this.resourcesRoot, 'person');
+      for (const name of Object.keys(collMap)) {
+        if (listed.has(name)) continue;
+        const file = this.gachaCore.characterFileMap.get(name);
+        if (!file) continue; // 无资源文件无法渲染，图鉴数据仍保留
+        all.push({ name, path: path.join(personDir, file) });
+      }
+    }
 
     // 已收集排前（获得时间倒序），未收集排后
     const collected = [];
