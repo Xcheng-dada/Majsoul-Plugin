@@ -173,11 +173,11 @@ export function supportGuoba () {
         {
           field: 'dailyTenPullLimit',
           label: '每日十连上限（次）',
-          bottomHelpMessage: '每人每天最多十连次数，防止刷屏；0 表示不限制，默认 30',
+          bottomHelpMessage: '每人每天最多十连次数，防止刷屏；0 表示不限制，默认 3',
           component: 'InputNumber',
           componentProps: {
             min: 0,
-            placeholder: '30'
+            placeholder: '3'
           }
         },
         {

@@ -10,6 +10,6 @@
   "tenGachaJade": 1800,
   "faithNormalCost": 150,
   "faithLimitedCost": 300,
-  "dailyTenPullLimit": 30,
+  "dailyTenPullLimit": 3,
   "dailySinglePullLimit": 3
 }
