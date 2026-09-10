@@ -256,7 +256,8 @@ export class MajsoulEconomy extends plugin {
             await e.reply(result.reason, true);
             return true;
         }
-        const image = await renderPacketCover(total, count);
+        // 封面显示实际发放总额（含公共池注入部分）
+        const image = await renderPacketCover(result.total, count);
         // 不引用回复发红包人
         await e.reply(segment.image(image));
         return true;
