@@ -65,7 +65,7 @@ export class MajsoulGacha extends plugin {
                     permission: 'master'
                 },
                 {
-                    reg: '^#?解散UP池$',
+                    reg: '^#?解散UP池(?:\\s+(.+))?$',
                     fnc: 'destroyUpPool',
                     permission: 'master'
                 },
