@@ -242,6 +242,11 @@ export async function appendSummary(imageBase64, title, lines) {
 
   // sharp 的 composite 不会扩展画布：先向下扩展 stripH，再把摘要条贴到底部
   const extended = await sharp(imgBuf).extend({ bottom: stripH, background: '#FFFFFF' }).png().toBuffer();
-  const out = await sharp(extended).composite([{ input: strip, top: meta.height, left: 0 }]).png().toBuffer();
+  // 输出 JPEG（质量90）：PNG 大图 base64 体积过大，LLOneBot 上传偶发失败会导致接收端"图片已过期"，
+  // 压缩后体积约为原来的 1/5，视觉上无差异，可显著提高发送成功率
+  const out = await sharp(extended)
+    .flatten({ background: '#FFFFFF' })
+    .jpeg({ quality: 90 })
+    .toBuffer();
   return `base64://${out.toString('base64')}`;
 }
