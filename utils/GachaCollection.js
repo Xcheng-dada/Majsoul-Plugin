@@ -178,9 +178,10 @@ export default class GachaCollection {
    * @param {string|number} userId
    * @param {'characters'|'decorations'} kind
    * @param {number} page 页码（从 1 开始）
+   * @param {string} [userName] 用户名（显示在标题里，如"xx的雀士图鉴"）
    * @returns {Promise<string>} base64:// 图片
    */
-  async renderImage(userId, kind = 'characters', page = 1) {
+  async renderImage(userId, kind = 'characters', page = 1, userName = '') {
     // 克隆共享缓存，避免把"已拥有的下架雀士"合并进全局缓存
     const all = [...await this._getAllItems(kind)];
     if (all.length === 0) {
@@ -232,7 +233,10 @@ export default class GachaCollection {
     const H = MARGIN + TITLE_H + rows * CELL + (rows - 1) * GAP + MARGIN;
 
     const kindLabel = kind === 'decorations' ? '装扮图鉴' : '雀士图鉴';
-    const titleText = `${kindLabel} ${got}/${total} (${percent}%) 第 ${page}/${maxPage} 页`;
+    // 用户名做 XML 转义，防止群名片里的特殊字符破坏 SVG
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const ownerPrefix = userName ? `${esc(userName.slice(0, 16))}的` : '';
+    const titleText = `${ownerPrefix}${kindLabel} ${got}/${total} (${percent}%) 第 ${page}/${maxPage} 页`;
 
     // 画布 + 标题
     const composites = [

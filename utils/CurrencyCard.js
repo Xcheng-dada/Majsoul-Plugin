@@ -36,9 +36,10 @@ export const CURRENCY_ICONS = {
  *   icon：货币中文名（辉玉/寻觅卷轴/十连寻觅卷轴/星之粉尘/星之石/许愿石/信仰）或直接图标文件名；
  *   extra：附加说明（如"暴击×2"），橙色小字
  * @param {string} [options.footer] 底部小字提示（灰色），可省略
+ * @param {string} [options.avatar] 头像图片 URL（显示在标题左侧圆形框内），可省略
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderCurrencyCard({ title, items, footer }) {
+export async function renderCurrencyCard({ title, items, footer, avatar }) {
   if (!items || items.length === 0) {
     throw new Error('CurrencyCard: items 不能为空');
   }
@@ -86,6 +87,42 @@ export async function renderCurrencyCard({ title, items, footer }) {
 
   // 标题
   if (hasTitle) {
+    // 头像：圆形裁切画在标题左侧（加载失败则静默跳过，不影响出图）
+    if (avatar) {
+      try {
+        let buf;
+        if (/^https?:\/\//.test(avatar)) {
+          const res = await fetch(avatar);
+          if (res.ok) buf = Buffer.from(await res.arrayBuffer());
+        } else {
+          buf = await fs.promises.readFile(avatar);
+        }
+        if (buf) {
+          const AV = 56;
+          const ax = 24;
+          const ay = (TITLE_H - AV) / 2;
+          const avImg = await loadImage(buf);
+          const avCanvas = createCanvas(AV, AV);
+          const avCtx = avCanvas.getContext('2d');
+          avCtx.save();
+          avCtx.beginPath();
+          avCtx.arc(AV / 2, AV / 2, AV / 2, 0, Math.PI * 2);
+          avCtx.clip();
+          // cover 模式：取头像中间正方形区域缩放填充
+          const side = Math.min(avImg.width, avImg.height);
+          avCtx.drawImage(avImg, (avImg.width - side) / 2, (avImg.height - side) / 2, side, side, 0, 0, AV, AV);
+          avCtx.restore();
+          avCtx.beginPath();
+          avCtx.arc(AV / 2, AV / 2, AV / 2 - 1, 0, Math.PI * 2);
+          avCtx.strokeStyle = '#E5E7EB';
+          avCtx.lineWidth = 2;
+          avCtx.stroke();
+          ctx.drawImage(avCanvas, ax, ay);
+        }
+      } catch (error) {
+        logger?.warn?.(`[CurrencyCard] 头像加载失败: ${error.message}`);
+      }
+    }
     drawText(ctx, title, W / 2, 34, 46, '#1F2937', 'center', 'bold');
   }
 
@@ -240,11 +277,12 @@ export async function appendSummary(imageBase64, title, lines) {
   }
   const strip = await canvas.encode('png');
 
-  // sharp 的 composite 不会扩展画布：先向下扩展 stripH，再把摘要条贴到底部
+  // sharp 的 composite 不会扩展画布：先向下扩展 stripH，把摘要条贴到底部，再输出 JPEG
+  // （JPEG 质量90：PNG 大图 base64 体积过大，LLOneBot 上传偶发失败会导致接收端"图片已过期"，
+  // 压缩后体积约为原来的 1/5，视觉上无差异，可显著提高发送成功率）
   const extended = await sharp(imgBuf).extend({ bottom: stripH, background: '#FFFFFF' }).png().toBuffer();
-  // 输出 JPEG（质量90）：PNG 大图 base64 体积过大，LLOneBot 上传偶发失败会导致接收端"图片已过期"，
-  // 压缩后体积约为原来的 1/5，视觉上无差异，可显著提高发送成功率
   const out = await sharp(extended)
+    .composite([{ input: strip, top: meta.height, left: 0 }])
     .flatten({ background: '#FFFFFF' })
     .jpeg({ quality: 90 })
     .toBuffer();

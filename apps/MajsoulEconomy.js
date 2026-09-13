@@ -111,11 +111,27 @@ export class MajsoulEconomy extends plugin {
         return false;
     }
 
-    // #雀魂签到：文字 + 奖励图片输出
+    // 群名片/昵称（截断 16 字），用于图片标题展示
+    _displayName(e) {
+        return (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
+            .toString().trim().slice(0, 16);
+    }
+
+    // QQ 头像 URL（非 QQ 适配器或加载失败时由渲染层自动跳过）
+    _avatarUrl(e) {
+        try {
+            const id = String(e.user_id).replace(/[^\d]/g, '');
+            return id ? `https://q1.qlogo.cn/g?b=qq&nk=${id}&s=640` : '';
+        } catch {
+            return '';
+        }
+    }
+
+    // #雀魂签到：奖励图片输出（含用户名/头像/连签信息，不附文字）
     async sign(e) {
         const result = await this.signer.sign(e.user_id);
         if (result.already) {
-            await e.reply(`今天已经签到过啦~ 已连续签到 ${result.streak} 天，明天再来吧`, true);
+            await e.reply(`今天已经签到过啦~ 已连续签到 ${result.streak} 天，明天再来吧`);
             return true;
         }
 
@@ -126,7 +142,7 @@ export class MajsoulEconomy extends plugin {
             ticket10: result.ticket10
         });
 
-        // 渲染奖励卡片
+        // 渲染奖励卡片：标题带用户名和头像，签到天数直接写在图里
         const items = [
             { icon: '辉玉', count: result.jade, extra: result.crit ? '暴击×2' : undefined },
             { icon: '寻觅卷轴', count: result.ticket, extra: result.welcome ? '欢迎礼包' : undefined }
@@ -134,13 +150,15 @@ export class MajsoulEconomy extends plugin {
         if (result.ticket10 > 0) {
             items.push({ icon: '十连寻觅卷轴', count: result.ticket10, extra: `连签${result.streak}天` });
         }
-        const image = await renderCurrencyCard({ title: '签到奖励', items });
-
-        let text = `签到成功，已连签 ${result.streak} 天（累计 ${result.totalDays} 天）`;
-        if (converted.length > 0) {
-            text += `\n自动兑换：${converted.join('；')}`;
-        }
-        await e.reply([text, segment.image(image)], true);
+        const footer = `已连续签到 ${result.streak} 天 · 累计签到 ${result.totalDays} 天`
+            + (converted.length > 0 ? ` · 自动兑换：${converted.join('；')}` : '');
+        const image = await renderCurrencyCard({
+            title: `${this._displayName(e)}的签到`,
+            avatar: this._avatarUrl(e),
+            items,
+            footer
+        });
+        await e.reply(segment.image(image));
         return true;
     }
 
@@ -151,10 +169,9 @@ export class MajsoulEconomy extends plugin {
             icon: CURRENCY_ICONS[key],
             count: w[key]
         }));
-        const name = (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
-            .toString().trim().slice(0, 16);
         const image = await renderCurrencyCard({
-            title: `${name}的钱包`,
+            title: `${this._displayName(e)}的钱包`,
+            avatar: this._avatarUrl(e),
             items,
             footer: '许愿石 1:1、星之石每10→5 星之粉尘、粉尘每50→1 寻觅卷轴，获得后自动兑换'
         });
@@ -162,7 +179,7 @@ export class MajsoulEconomy extends plugin {
         return true;
     }
 
-    // #雀魂图鉴 [角色/装扮] [页码]（可 @）
+    // #雀魂图鉴 [角色/装扮] [页码]（可 @）：标题显示被查用户的群名片，不引用回复
     async collection(e) {
         const match = e.msg.match(/^#?雀魂图鉴(?:\s+(角色|装扮))?(?:\s+(\d+))?\s*(?:\[@.*\])?$/);
         const kind = (match && match[1] === '装扮') ? 'decorations' : 'characters';
@@ -171,12 +188,22 @@ export class MajsoulEconomy extends plugin {
         let targetId = e.user_id;
         if (e.at) targetId = e.at;
 
+        // 标题用户名：默认查自己用本人群名片；@别人时尝试取对方的群名片
+        let name = this._displayName(e);
+        if (e.at && e.at !== e.user_id) {
+            try {
+                const member = await e.group?.pickMember?.(e.at);
+                const targetName = member?.card || member?.nickname;
+                if (targetName) name = targetName.toString().trim().slice(0, 16);
+            } catch { }
+        }
+
         try {
-            const image = await this.collectionMgr.renderImage(targetId, kind, page);
-            await e.reply(segment.image(image), true);
+            const image = await this.collectionMgr.renderImage(targetId, kind, page, name);
+            await e.reply(segment.image(image));
         } catch (error) {
             logger.error('[雀魂经济] 图鉴渲染失败:', error);
-            await e.reply('图鉴渲染失败，请联系维护者。', true);
+            await e.reply('图鉴渲染失败，请联系维护者。');
         }
         return true;
     }
