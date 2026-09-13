@@ -246,6 +246,16 @@ export class MajsoulEconomy extends plugin {
             await e.reply(`「${name}」当前不在开放池中，无法兑换。\n当前可兑换：竹林之路 / 樱花之路 / 当前UP池与联动池雀士`, true);
             return true;
         }
+
+        // 已拥有的角色不能兑换（图鉴里已有该雀士，含重复）
+        try {
+            const coll = await this.collectionMgr.get(e.user_id);
+            if (coll?.characters?.[name]) {
+                await e.reply(`「${name}」已经在你的图鉴里啦（x${coll.characters[name].count || 1}），无需兑换`, true);
+                return true;
+            }
+        } catch { }
+
         const isLimited = await this.collectionMgr.isLimitedCharacter(name);
         const cost = isLimited
             ? Math.max(1, Number(getFeatureConfigItem('faithLimitedCost')) || 300)
@@ -257,14 +267,10 @@ export class MajsoulEconomy extends plugin {
             return true;
         }
 
-        // 兑换的雀士入图鉴（可能已是重复）
-        const { isNew, count } = await this.collectionMgr.add(e.user_id, 'characters', name);
+        // 兑换的雀士入图鉴（必为新获得：已拥有在上面拦截）
+        await this.collectionMgr.add(e.user_id, 'characters', name);
         const limitedText = isLimited ? '限定雀士' : '雀士';
-        if (isNew) {
-            await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」NEW!`);
-        } else {
-            await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」（图鉴已有 x${count}，重复无额外转化）`);
-        }
+        await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」，快去图鉴看看吧`);
         return true;
     }
 

@@ -23,7 +23,7 @@ const GAP = 8;             // 格间距
 const MARGIN = 12;         // 画布边距
 const TITLE_H = 72;        // 标题栏高度
 
-const NEW_DAYS = 7;        // 获得后 7 天内显示 NEW 角标
+const NEW_DAYS = 1;        // 获得后 1 天内显示 NEW 角标
 
 function todayStr() {
   const d = new Date();
