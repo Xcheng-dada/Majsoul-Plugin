@@ -165,10 +165,10 @@ export default class GachaCollection {
     return Buffer.from(svg);
   }
 
-  // 标题栏 SVG buffer
+  // 标题栏 SVG buffer（长标题自动缩小字号避免溢出）
   _titleSvg(width, text) {
     const svg = `<svg width="${width}" height="${TITLE_H}" xmlns="http://www.w3.org/2000/svg">
-      <text x="${width / 2}" y="${TITLE_H / 2 + 13}" font-size="38" font-family="Microsoft YaHei, sans-serif" font-weight="bold" fill="#1F2937" text-anchor="middle">${text}</text>
+      <text x="${width / 2}" y="${TITLE_H / 2 + 13}" font-size="${text.length > 24 ? 32 : 38}" font-family="Microsoft YaHei, sans-serif" font-weight="bold" fill="#1F2937" text-anchor="middle">${text}</text>
     </svg>`;
     return Buffer.from(svg);
   }
