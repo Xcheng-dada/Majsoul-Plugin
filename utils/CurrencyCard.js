@@ -60,6 +60,10 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
 
   const hasTitle = !!title;
   const hasFooter = !!footer;
+  // 头像尺寸（参考 Daily-Attendance-plugin：120px 圆角矩形放左侧，昵称自适应缩放不重叠）
+  const AV = 120;
+  const AX = 24;
+  const titleH = hasTitle ? (avatar ? AV + 32 : TITLE_H) : 0;
   const unitH = ICON_TOP + ICON_SIZE + COUNT_GAP + COUNT_SIZE + 10
     + (items.some(i => i.extra) ? EXTRA_GAP + EXTRA_SIZE : 0);
   // 按每行 PER_ROW 个拆行，每行在卡内水平居中
@@ -73,9 +77,16 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
   if (hasTitle) {
     const measure = createCanvas(10, 10).getContext('2d');
     measure.font = `bold 46px Microsoft YaHei, Segoe UI Emoji, sans-serif`;
-    W = Math.max(W, Math.ceil(measure.measureText(title).width) + PAD * 2);
+    let need = Math.ceil(measure.measureText(title).width) + PAD * 2;
+    if (avatar) {
+      // 带头像：标题在头像右侧左对齐，保底按最小字号 26 测出所需宽度
+      const x = AX + AV + 20;
+      measure.font = `bold 26px Microsoft YaHei, Segoe UI Emoji, sans-serif`;
+      need = Math.max(need, x + Math.ceil(measure.measureText(title).width) + PAD);
+    }
+    W = Math.max(W, need);
   }
-  const H = (hasTitle ? TITLE_H : 20) + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + (hasFooter ? FOOTER_H : 0);
+  const H = titleH + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + (hasFooter ? FOOTER_H : 0);
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -98,36 +109,57 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
           buf = await fs.promises.readFile(avatar);
         }
         if (buf) {
-          const AV = 56;
-          const ax = 24;
-          const ay = (TITLE_H - AV) / 2;
+          const ay = (titleH - AV) / 2;
           const avImg = await loadImage(buf);
           const avCanvas = createCanvas(AV, AV);
           const avCtx = avCanvas.getContext('2d');
           avCtx.save();
           avCtx.beginPath();
-          avCtx.arc(AV / 2, AV / 2, AV / 2, 0, Math.PI * 2);
+          // 圆角矩形裁切（与 Daily-Attendance-plugin 一致）
+          if (typeof avCtx.roundRect === 'function') {
+            avCtx.roundRect(0, 0, AV, AV, 20);
+          } else {
+            avCtx.rect(0, 0, AV, AV);
+          }
           avCtx.clip();
           // cover 模式：取头像中间正方形区域缩放填充
           const side = Math.min(avImg.width, avImg.height);
           avCtx.drawImage(avImg, (avImg.width - side) / 2, (avImg.height - side) / 2, side, side, 0, 0, AV, AV);
           avCtx.restore();
+          // 描边
           avCtx.beginPath();
-          avCtx.arc(AV / 2, AV / 2, AV / 2 - 1, 0, Math.PI * 2);
+          if (typeof avCtx.roundRect === 'function') {
+            avCtx.roundRect(1, 1, AV - 2, AV - 2, 20);
+          } else {
+            avCtx.rect(1, 1, AV - 2, AV - 2);
+          }
           avCtx.strokeStyle = '#E5E7EB';
           avCtx.lineWidth = 2;
           avCtx.stroke();
-          ctx.drawImage(avCanvas, ax, ay);
+          ctx.drawImage(avCanvas, AX, ay);
         }
       } catch (error) {
         logger?.warn?.(`[CurrencyCard] 头像加载失败: ${error.message}`);
       }
     }
-    drawText(ctx, title, W / 2, 34, 46, '#1F2937', 'center', 'bold');
+    if (avatar) {
+      // 标题在头像右侧左对齐，超宽时自动缩小字号（26px 下限，宽度已在上面按 26px 保底扩宽）
+      const x = AX + AV + 20;
+      const maxW = W - x - PAD;
+      let titleSize = 46;
+      ctx.font = `bold ${titleSize}px Microsoft YaHei, Segoe UI Emoji, sans-serif`;
+      while (titleSize > 26 && ctx.measureText(title).width > maxW) {
+        titleSize -= 2;
+        ctx.font = `bold ${titleSize}px Microsoft YaHei, Segoe UI Emoji, sans-serif`;
+      }
+      drawText(ctx, title, x, titleH / 2, titleSize, '#1F2937', 'left', 'bold');
+    } else {
+      drawText(ctx, title, W / 2, titleH / 2, 46, '#1F2937', 'center', 'bold');
+    }
   }
 
   // 按行渲染货币单元
-  const top = (hasTitle ? TITLE_H : 20);
+  const top = (titleH || 20);
   for (let r = 0; r < rows.length; r++) {
     const rowItems = rows[r];
     const rowTop = top + r * (unitH + ROW_GAP);
