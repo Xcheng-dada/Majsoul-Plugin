@@ -184,16 +184,23 @@ export class MajsoulEconomy extends plugin {
         const match = e.msg.match(/^#?雀魂图鉴(?:\s+(角色|装扮))?(?:\s+(\d+))?\s*(?:\[@.*\])?$/);
         const kind = (match && match[1] === '装扮') ? 'decorations' : 'characters';
         const page = match && match[2] ? parseInt(match[2]) : 1;
-        // @某人 时渲染对方图鉴
+        // @某人 时渲染对方图鉴（@全体成员视为未@）
         let targetId = e.user_id;
-        if (e.at) targetId = e.at;
+        if (e.at && e.at !== 'all') targetId = e.at;
 
         // 标题用户名：默认查自己用本人群名片；@别人时尝试取对方的群名片
         let name = this._displayName(e);
-        if (e.at && e.at !== e.user_id) {
+        if (targetId !== e.user_id) {
             try {
-                const member = await e.group?.pickMember?.(e.at);
-                const targetName = member?.card || member?.nickname;
+                // 数字 QQ 号转 Number，避免字符串键与成员缓存 gml 的数字键不匹配取不到名片
+                const uid = /^\d+$/.test(String(targetId)) ? Number(targetId) : targetId;
+                const member = await e.group?.pickMember?.(uid);
+                let targetName = member?.card || member?.nickname;
+                // 缓存未命中时主动拉取成员信息
+                if (!targetName && member?.getInfo) {
+                    const info = await member.getInfo();
+                    targetName = info?.card || info?.nickname;
+                }
                 if (targetName) name = targetName.toString().trim().slice(0, 16);
             } catch { }
         }
