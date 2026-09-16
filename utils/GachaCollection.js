@@ -39,6 +39,8 @@ export default class GachaCollection {
     this.resourcesRoot = gachaCore.resourcesRoot;
     // 全量物品缓存 { expireAt, characters: [{name, path}], decorations: [{name, path}] }
     this._allItemsCache = null;
+    // 格子图缓存 Map<"路径|是否收集", { expireAt, buf }>：格子内容与用户无关，可复用
+    this._cellCache = new Map();
   }
 
   _key(userId) {
@@ -148,12 +150,28 @@ export default class GachaCollection {
   }
 
   // 单元格图片 buffer（未收集灰度压暗）
+  // 结果仅取决于 (图片路径, 是否收集)，与用户无关：缓存 5 分钟；WebP 比 PNG 编解码更快、体积更小且保留透明背景
   async _cellImage(item, collected) {
+    const key = `${item.path}|${collected ? 1 : 0}`;
+    const now = Date.now();
+    const cached = this._cellCache.get(key);
+    if (cached && cached.expireAt > now) {
+      return cached.buf;
+    }
     let pipe = sharp(item.path).resize(IMG, IMG, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } });
     if (!collected) {
       pipe = pipe.modulate({ saturation: 0 }).linear(0.45, 0);
     }
-    return pipe.png().toBuffer();
+    const buf = await pipe.webp({ quality: 85 }).toBuffer();
+    // 简单容量控制：超限先清过期项，仍超限则整体清空
+    if (this._cellCache.size >= 2000) {
+      for (const [k, v] of this._cellCache) {
+        if (v.expireAt <= now) this._cellCache.delete(k);
+      }
+      if (this._cellCache.size >= 2000) this._cellCache.clear();
+    }
+    this._cellCache.set(key, { expireAt: now + 5 * 60 * 1000, buf });
+    return buf;
   }
 
   // NEW 角标 SVG buffer
@@ -280,11 +298,13 @@ export default class GachaCollection {
       }
     }
 
+    // JPEG 质量90：PNG 大图 base64 体积过大，LLOneBot 上传偶发失败会导致接收端"图片已过期"（同 CurrencyCard）
     const outputBuffer = await sharp({
       create: { width: W, height: H, channels: 4, background: { r: 248, g: 249, b: 252, alpha: 1 } }
     })
       .composite(composites)
-      .png()
+      .flatten({ background: '#FFFFFF' })
+      .jpeg({ quality: 90 })
       .toBuffer();
     return `base64://${outputBuffer.toString('base64')}`;
   }
