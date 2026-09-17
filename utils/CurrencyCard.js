@@ -90,7 +90,15 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
     }
     W = Math.max(W, need);
   }
-  const H = titleH + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + (hasFooter ? FOOTER_H : 0);
+  // 底部提示按卡宽折行（优先在顿号/分号处断开），行数决定底部高度
+  let footerLines = [];
+  let footerH = 0;
+  if (hasFooter) {
+    const measure = createCanvas(10, 10).getContext('2d');
+    footerLines = _wrapSummaryLine(measure, footer, W - PAD * 2, `24px Microsoft YaHei, Segoe UI Emoji, sans-serif`);
+    footerH = Math.max(FOOTER_H, footerLines.length * 34 + 18);
+  }
+  const H = titleH + rows.length * unitH + (rows.length - 1) * ROW_GAP + PAD + footerH;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -203,9 +211,11 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
     }
   }
 
-  // 底部提示（灰色小字）
+  // 底部提示（灰色小字，超宽自动折行居中）
   if (hasFooter) {
-    drawText(ctx, footer, W / 2, H - FOOTER_H / 2 - 4, 24, '#6B7280', 'center', 'normal');
+    footerLines.forEach((line, i) => {
+      drawText(ctx, line, W / 2, H - footerH + 9 + 17 + i * 34, 24, '#6B7280', 'center', 'normal');
+    });
   }
 
   const outputBuffer = await canvas.encode('png');
