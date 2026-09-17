@@ -64,10 +64,16 @@ export async function renderCurrencyCard({ title, items, footer, avatar }) {
   const titleH = hasTitle ? (avatar ? AV + 32 : TITLE_H) : 0;
   const unitH = ICON_TOP + ICON_SIZE + COUNT_GAP + COUNT_SIZE + 10
     + (items.some(i => i.extra) ? EXTRA_GAP + EXTRA_SIZE : 0);
-  // 按每行 PER_ROW 个拆行，每行在卡内水平居中
+  // 按 PER_ROW 均衡拆行（如 6 个 → 3+3、7 个 → 4+3），大行在上，每行在卡内水平居中
+  const rowCount = Math.ceil(items.length / PER_ROW);
+  const base = Math.floor(items.length / rowCount);
+  const extra = items.length % rowCount;
   const rows = [];
-  for (let i = 0; i < items.length; i += PER_ROW) {
-    rows.push(items.slice(i, i + PER_ROW));
+  let offset = 0;
+  for (let r = 0; r < rowCount; r++) {
+    const size = base + (r < extra ? 1 : 0);
+    rows.push(items.slice(offset, offset + size));
+    offset += size;
   }
   const cols = Math.max(...rows.map(r => r.length));
   let W = PAD * 2 + UNIT_W * cols;
