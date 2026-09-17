@@ -147,7 +147,7 @@ export class majsoul extends plugin {
           permission: 'master'
         },
         {
-          reg: '^#?设置(十连寻觅卷轴|寻觅卷轴|十连寻觅券|寻觅券|辉玉|星之粉尘|星之石|许愿石|信仰)\\s+(\\d+)\\s+(-?\\d+)$',
+          reg: '^#?设置(十连寻觅卷轴|寻觅卷轴|辉玉|星之粉尘|星之石|许愿石|信仰)\\s+(\\d+)\\s+(-?\\d+)$',
           fnc: 'majsoulEconomy',
           permission: 'master'
         },

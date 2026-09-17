@@ -17,9 +17,6 @@ export const CURRENCY_NAMES = {
 export const NAME_TO_KEY = Object.fromEntries(
   Object.entries(CURRENCY_NAMES).map(([key, name]) => [name, key])
 );
-// 兼容旧叫法"券"（仅解析输入用，展示一律用"卷轴"）
-NAME_TO_KEY['寻觅券'] = 'ticket';
-NAME_TO_KEY['十连寻觅券'] = 'ticket10';
 
 // 转化比例（与用户确认的数值，写死为常量）
 export const CONVERSION = {

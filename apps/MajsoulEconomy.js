@@ -16,8 +16,6 @@ import { getFeatureConfigItem } from '../utils/Config.js';
 const SET_NAME_TO_KEY = {
   '十连寻觅卷轴': 'ticket10',
   '寻觅卷轴': 'ticket',
-  '十连寻觅券': 'ticket10',  // 兼容旧叫法
-  '寻觅券': 'ticket',        // 兼容旧叫法
   '辉玉': 'jade',
   '星之粉尘': 'dust',
   '星之石': 'stone',
@@ -165,7 +163,8 @@ export class MajsoulEconomy extends plugin {
     // #雀魂钱包：余额图片输出（标题显示群名片）
     async wallet(e) {
         const w = await this.walletMgr.get(e.user_id);
-        const items = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith'].map(key => ({
+        // 许愿石入账即 1:1 全额转粉尘，余额恒为 0，不展示（数据层与兑换链保留）
+        const items = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'faith'].map(key => ({
             icon: CURRENCY_ICONS[key],
             count: w[key]
         }));
