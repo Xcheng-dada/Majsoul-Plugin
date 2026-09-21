@@ -1,6 +1,7 @@
 // plugins/Majsoul-Plugin/utils/MajsoulDatabase.js
 // SQLite 数据库集中管理：钱包 / 签到 / 图鉴 / UID绑定 的唯一持久化数据源
-// 数据文件：plugins/Majsoul-Plugin/data/majsoul.db（data 目录不存在时自动创建）
+// 数据文件：plugins/Majsoul-Plugin/data/db/majsoul.db（目录不存在时自动创建；
+//          旧版 data/majsoul.db 会在启动时自动移动到新位置）
 // 全插件进程共享一个 better-sqlite3 连接，启动时初始化一次，禁止重复 new Database()
 
 import Database from 'better-sqlite3';
@@ -9,7 +10,28 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_DB_PATH = path.join(__dirname, '..', 'data', 'majsoul.db');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+
+// 旧位置单文件库自动迁移到 data/db/ 子目录（新位置已存在时不做任何事）
+// 迁移失败（如文件被占用）时返回旧路径兜底，避免误新建空库导致"数据丢失"
+function resolveDefaultDbPath() {
+  const dbDir = path.join(DATA_DIR, 'db');
+  const newFile = path.join(dbDir, 'majsoul.db');
+  const oldFile = path.join(DATA_DIR, 'majsoul.db');
+  if (!fs.existsSync(oldFile) || fs.existsSync(newFile)) return newFile;
+  try {
+    fs.mkdirSync(dbDir, { recursive: true });
+    for (const ext of ['', '-wal', '-shm']) {
+      const o = `${oldFile}${ext}`;
+      if (fs.existsSync(o)) fs.renameSync(o, `${newFile}${ext}`);
+    }
+    logger.mark('[MajsoulDatabase] 已将旧数据库文件迁移至 data/db/majsoul.db');
+    return newFile;
+  } catch (error) {
+    logger.error('[MajsoulDatabase] 迁移旧数据库文件失败，本次继续使用旧位置 data/majsoul.db，重启后重试:', error);
+    return oldFile;
+  }
+}
 
 let db = null;
 
@@ -152,7 +174,7 @@ CREATE TABLE IF NOT EXISTS majsoul_pool_schedules (
  */
 export function getDatabase(dbPath) {
   if (db) return db;
-  const file = dbPath || process.env.MAJSOUL_DB_PATH || DEFAULT_DB_PATH;
+  const file = dbPath || process.env.MAJSOUL_DB_PATH || resolveDefaultDbPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   db = new Database(file);
   db.pragma('journal_mode = WAL');

@@ -13,6 +13,18 @@ const pluginRoot = path.resolve(__dirname, '..')
 const avatarCacheRoot = path.join(pluginRoot, 'data', 'charactor')
 let avatarConfigCache = null
 
+// ---- 牌画皮肤：review_texture/pai/ 直读文件为默认；其子目录各为一套皮肤 ----
+// 每渲染一张回顾图随机选择一套，整图统一；无皮肤子目录时恒用默认
+function pickPaiBase() {
+  try {
+    const paiRoot = path.join(pluginRoot, 'resources', 'review_texture', 'pai')
+    const skins = fs.readdirSync(paiRoot, { withFileTypes: true })
+      .filter(d => d.isDirectory()).map(d => d.name)
+    if (skins.length === 0) return 'pai'
+    return `pai/${skins[Math.floor(Math.random() * skins.length)]}`
+  } catch (e) { return 'pai' }
+}
+
 function readJsonIfExists(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null
@@ -366,7 +378,7 @@ function kyokuToString(kyoku) {
   return `${rounds[wind]}${number}局`
 }
 
-async function drawEnBg(en, index, _actorId, entries) {
+async function drawEnBg(en, index, _actorId, entries, paiBase = 'pai') {
   const tehai = en.state.tehai || []
   const fuuros = en.state.fuuros || []
   const ai = en.expected
@@ -585,7 +597,7 @@ function getActionText(action) {
     }
     let y = 83
     let haiImg
-    try { haiImg = await loadResImage(`review_texture/pai/${hai}.png`) } catch(e) { continue }
+    try { haiImg = await loadResImage(`review_texture/${paiBase}/${hai}.png`) } catch(e) { continue }
     
     const key = `${hai}-${(highlightedCounts[hai] || 0)}`
     const actualCount = actualPaiCounts[hai] || 0
@@ -658,7 +670,7 @@ function getActionText(action) {
 
       let _fuuroPai = pais[pindex]
       let pimg
-      try { pimg = await loadResImage(`review_texture/pai/${_fuuroPai}.png`) } catch(e) { continue }
+      try { pimg = await loadResImage(`review_texture/${paiBase}/${_fuuroPai}.png`) } catch(e) { continue }
 
       const pc = createCanvas(57, 91)
       const pctx = pc.getContext('2d')
@@ -684,7 +696,7 @@ function getActionText(action) {
         // 加杠(kakan)：在“原碰横置牌”正上方再叠一张横置的加杠牌（同一 x，上移 34px）
         if (isKakan && pindex === claimedIdx && addedIdx >= 0) {
           let aImg
-          try { aImg = await loadResImage(`review_texture/pai/${pais[addedIdx]}.png`) } catch(e) { aImg = null }
+          try { aImg = await loadResImage(`review_texture/${paiBase}/${pais[addedIdx]}.png`) } catch(e) { aImg = null }
           if (aImg) {
             const ac = createCanvas(57, 91)
             const actx = ac.getContext('2d')
@@ -716,7 +728,7 @@ function getActionText(action) {
   // none 帧显示上家/对家/下家打出的牌（来源见上方 frameStr）。
   if (nowPai && (isSelfDraw || actualType === 'none' || ['pon', 'chi', 'kan', 'kakan', 'hora'].includes(actualType))) {
     try { 
-      nowHaiImg = await loadResImage(`review_texture/pai/${nowPai}.png`) 
+      nowHaiImg = await loadResImage(`review_texture/${paiBase}/${nowPai}.png`) 
       const frameImg = await loadResImage(`review_texture/${frameName}`)
       const ncanvas = createCanvas(nowHaiImg.width, nowHaiImg.height)
       const nctx = ncanvas.getContext('2d')
@@ -1704,6 +1716,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   const hNum = Math.floor((limit - 1) / 2) + 1
   
   const bg = await loadResImage('bg.jpg')
+  const paiBase = pickPaiBase() // 本张回顾图统一使用的牌画皮肤（随机）
   const title = await loadResImage('review_texture/title.png')
   const actorFile = await loadResImage('review_texture/actor_file.png')
   const spliter = await loadResImage('review_texture/spliter.png')
@@ -1869,7 +1882,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
 
     nowReviewed++
     
-    const { canvas: enBg, actorId: aId, isMatch } = await drawEnBg(en, index, actorId, kyokus.entries)
+    const { canvas: enBg, actorId: aId, isMatch } = await drawEnBg(en, index, actorId, kyokus.entries, paiBase)
     actorId = aId
 
     if (isMatch) nowMatches++
