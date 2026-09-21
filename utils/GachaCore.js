@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
+import { getSetting, setSetting } from './SettingsStore.js';
 
 // 物品类型常量定义 (提升到类级别，全局可用)
 export const ITEM_TYPE = {
@@ -47,7 +48,7 @@ export default class GachaCore {
     // 获取抽卡开关状态
     async getGachaStatus(groupId) {
         try {
-            const status = await redis.get(`Yunzai:majsoul_gacha:status:${groupId}`);
+            const status = getSetting(`gacha_status:${groupId}`);
             return status === null || status === 'true'; // 默认为开启状态
         } catch (error) {
             logger.error(`[GachaCore] 获取抽卡开关状态失败:`, error);
@@ -58,8 +59,7 @@ export default class GachaCore {
     // 设置抽卡开关状态
     async setGachaStatus(groupId, status) {
         try {
-            const key = `Yunzai:majsoul_gacha:status:${groupId}`;
-            await redis.set(key, status ? 'true' : 'false');
+            setSetting(`gacha_status:${groupId}`, status ? 'true' : 'false');
             logger.debug(`[GachaCore] 设置群 ${groupId} 抽卡状态为: ${status}`);
             return true;
         } catch (error) {
@@ -157,7 +157,7 @@ export default class GachaCore {
     async resolveUserPool(groupId, userId) {
         if (userId != null) {
             try {
-                const userPick = await redis.get(`Yunzai:majsoul_gacha:userpool:${groupId}:${userId}`);
+                const userPick = getSetting(`userpool:${groupId}:${userId}`);
                 if (userPick && await this.poolExists(userPick)) {
                     return userPick;
                 }
@@ -167,7 +167,7 @@ export default class GachaCore {
         }
         try {
             // master 设置的全局池（对所有群生效）；联动池（主题池）默认抽樱花变体
-            const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+            const globalPool = getSetting('globalpool');
             if (globalPool) {
                 if (globalPool === 'male' || globalPool === 'female') {
                     return globalPool;
@@ -612,7 +612,7 @@ export default class GachaCore {
         }
         // 已开启的联动池：池名含"樱花/竹林"只开对应单变体，否则樱花+竹林双变体
         try {
-            const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+            const globalPool = getSetting('globalpool');
             if (globalPool && !String(globalPool).startsWith('custom:') && !['male', 'female', 'normal'].includes(globalPool) && data[globalPool]) {
                 const name = this.getPoolName(globalPool);
                 if (/樱花/.test(name)) {

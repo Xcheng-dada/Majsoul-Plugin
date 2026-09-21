@@ -10,6 +10,7 @@ import GachaMail from '../utils/GachaMail.js';
 import GachaCore from '../utils/GachaCore.js';
 import { renderCurrencyCard, CURRENCY_ICONS } from '../utils/CurrencyCard.js';
 import { renderPacketCover, renderGrabCard } from '../utils/RedpacketCard.js';
+import { getSetting } from '../utils/SettingsStore.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 
 // 货币中文名 → key（设置货币命令用，长名优先）
@@ -236,7 +237,7 @@ export class MajsoulEconomy extends plugin {
             // 已开启的联动池（master 当前全局池为主题池时）
             let globalPool = null;
             try {
-                globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+                globalPool = getSetting('globalpool');
             } catch {}
             if (globalPool && Array.isArray(pool[globalPool])) {
                 openNames.push(...pool[globalPool]);
@@ -424,11 +425,11 @@ export class MajsoulEconomy extends plugin {
         return true;
     }
 
-    // #保存数据（master）：立即请求 Redis 存盘，防止关机/重启丢失数据
+    // #保存数据（master）：业务数据已实时落盘 SQLite，此命令仅对 Redis 临时数据做快照兜底
     async saveData(e) {
         try {
             await redis.sendCommand(['BGSAVE']);
-            await e.reply('已请求 Redis 存盘，全部数据（图鉴、货币、绑定等）正在写入磁盘');
+            await e.reply('已请求 Redis 存盘（临时数据快照）。钱包/图鉴/绑定等业务数据实时写入 SQLite，无需手动保存');
         } catch (error) {
             logger.error('[雀魂经济] 手动存盘失败:', error);
             await e.reply('存盘失败，系统异常', true);

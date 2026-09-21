@@ -5,6 +5,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getSetting, setSetting, delSetting, getSettingsByPrefix } from './SettingsStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '..', 'data', 'pool_schedule.json');
@@ -83,11 +84,9 @@ export default class PoolSchedule {
     // 同步清理处于UP池的个人卡池选择（跟随全局池）
     let userAffected = 0;
     try {
-      const keys = await redis.keys('Yunzai:majsoul_gacha:userpool:*');
-      for (const k of keys) {
-        const v = await redis.get(k);
-        if (isUpPool(v)) {
-          await redis.del(k);
+      for (const { key, value } of getSettingsByPrefix('userpool:')) {
+        if (isUpPool(value)) {
+          delSetting(key);
           userAffected++;
         }
       }
@@ -98,13 +97,12 @@ export default class PoolSchedule {
       logger.mark(`[PoolSchedule] UP池已关闭，${userAffected} 位群友的个人卡池选择已重置`);
     }
 
-    // 全局池若为UP池（含联动池），退回樱花之路并清理挂靠配置
+    // 全局池若为UP池（含联动池），退回樱花之路
     let globalRetreated = false;
     try {
-      const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+      const globalPool = getSetting('globalpool');
       if (globalPool && isUpPool(globalPool)) {
-        await redis.set('Yunzai:majsoul_gacha:globalpool', RETREAT_POOL);
-        await redis.del('Yunzai:majsoul_gacha:globalbase');
+        setSetting('globalpool', RETREAT_POOL);
         globalRetreated = true;
         logger.mark(`[PoolSchedule] 全局池退回樱花之路`);
       }

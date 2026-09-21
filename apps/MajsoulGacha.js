@@ -9,6 +9,7 @@ import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
 import { appendSummary } from '../utils/CurrencyCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
+import { getSetting, setSetting, delSetting, getSettingsByPrefix } from '../utils/SettingsStore.js';
 
 export class MajsoulGacha extends plugin {
     constructor() {
@@ -370,12 +371,12 @@ export class MajsoulGacha extends plugin {
             let userPick = null;
             try {
                 if (e.group_id && e.user_id) {
-                    userPick = await redis.get(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
+                    userPick = getSetting(`userpool:${e.group_id}:${e.user_id}`);
                 }
             } catch {}
             let globalPool = null;
             try {
-                globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+                globalPool = getSetting('globalpool');
             } catch {}
             // 当前生效池：个人选择 > 全局池 > 默认樱花之路
             const current = userPick || globalPool || 'female';
@@ -439,14 +440,14 @@ export class MajsoulGacha extends plugin {
         }
     }
 
-    // 群员个人卡池选择（Redis：Yunzai:majsoul_gacha:userpool:{gid}:{uid}，仅对个人生效）
+    // 群员个人卡池选择（SQLite 设置表：userpool:{gid}:{uid}，仅对个人生效）
     async _setUserPool(e, poolId) {
         if (!e.group_id) {
             await e.reply('此功能仅限群聊使用');
             return false;
         }
         try {
-            await redis.set(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`, poolId);
+            setSetting(`userpool:${e.group_id}:${e.user_id}`, poolId);
             return true;
         } catch (error) {
             logger.error('[雀魂抽卡] 保存个人卡池选择失败:', error);
@@ -501,7 +502,7 @@ export class MajsoulGacha extends plugin {
             const poolId = this.gachaCore.getPoolId(name);
             let globalPool = null;
             try {
-                globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+                globalPool = getSetting('globalpool');
             } catch {}
             if (poolId && poolId === globalPool && !poolId.startsWith('custom:')) {
                 const variant = tokens[1] === '樱花' ? 'female' : 'male';
@@ -535,7 +536,7 @@ export class MajsoulGacha extends plugin {
             return true;
         }
         try {
-            await redis.del(`Yunzai:majsoul_gacha:userpool:${e.group_id}:${e.user_id}`);
+            delSetting(`userpool:${e.group_id}:${e.user_id}`);
             await e.reply('已重置，将跟随全局池（未设置全局池时为樱花之路）', true);
         } catch (error) {
             logger.error('[雀魂抽卡] 重置个人卡池失败:', error);
@@ -613,7 +614,7 @@ export class MajsoulGacha extends plugin {
             // 全局默认池：仅在当前无活跃自定义UP池时自动设置（多池并存时新池不覆盖旧池）
             let currentGlobal = null;
             try {
-                currentGlobal = await redis.get('Yunzai:majsoul_gacha:globalpool');
+                currentGlobal = getSetting('globalpool');
             } catch {}
             let globalChanged = true;
             let activeGlobalName = null;
@@ -624,7 +625,7 @@ export class MajsoulGacha extends plugin {
                 }
             }
             if (globalChanged) {
-                await redis.set('Yunzai:majsoul_gacha:globalpool', poolId);
+                setSetting('globalpool', poolId);
             }
 
             const globalText = globalChanged
@@ -673,10 +674,9 @@ export class MajsoulGacha extends plugin {
             // 清理指向该池的用户个人选择（跟随全局池）
             let userAffected = 0;
             try {
-                const keys = await redis.keys('Yunzai:majsoul_gacha:userpool:*');
-                for (const k of keys) {
-                    if (await redis.get(k) === poolId) {
-                        await redis.del(k);
+                for (const { key, value } of getSettingsByPrefix('userpool:')) {
+                    if (value === poolId) {
+                        delSetting(key);
                         userAffected++;
                     }
                 }
@@ -684,11 +684,10 @@ export class MajsoulGacha extends plugin {
                 logger.error('[雀魂抽卡] 清理个人卡池选择失败:', error);
             }
 
-            // 全局池若指向该池，退回樱花之路并清理挂靠配置
+            // 全局池若指向该池，退回樱花之路
             try {
-                if (await redis.get('Yunzai:majsoul_gacha:globalpool') === poolId) {
-                    await redis.set('Yunzai:majsoul_gacha:globalpool', 'female');
-                    await redis.del('Yunzai:majsoul_gacha:globalbase');
+                if (getSetting('globalpool') === poolId) {
+                    setSetting('globalpool', 'female');
                 }
             } catch (error) {
                 logger.error('[雀魂抽卡] 清理全局卡池失败:', error);
@@ -724,8 +723,7 @@ export class MajsoulGacha extends plugin {
                 await e.reply('没有找到该联动池，可用 #查看联动池 查看已配置的联动池\n格式：#开启联动 <联动池名>', true);
                 return true;
             }
-            await redis.set('Yunzai:majsoul_gacha:globalpool', poolId);
-            await redis.del('Yunzai:majsoul_gacha:globalbase');
+            setSetting('globalpool', poolId);
             const name = this.gachaCore.getPoolName(poolId);
             const dual = !/樱花|竹林/.test(name);
             const poolInfo = dual
@@ -747,10 +745,9 @@ export class MajsoulGacha extends plugin {
     // 关闭联动池（主人）：全局池退回樱花之路
     async closeCollab(e) {
         try {
-            const globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+            const globalPool = getSetting('globalpool');
             if (globalPool && globalPool !== 'female' && globalPool !== 'male') {
-                await redis.set('Yunzai:majsoul_gacha:globalpool', 'female');
-                await redis.del('Yunzai:majsoul_gacha:globalbase');
+                setSetting('globalpool', 'female');
                 await e.reply(`联动池「${this.gachaCore.getPoolName(globalPool)}」已关闭，全局池退回樱花之路`, true);
             } else {
                 await e.reply('当前没有开启的联动池', true);
@@ -774,7 +771,7 @@ export class MajsoulGacha extends plugin {
         // 标注当前开启的联动
         let globalPool = null;
         try {
-            globalPool = await redis.get('Yunzai:majsoul_gacha:globalpool');
+            globalPool = getSetting('globalpool');
         } catch {}
         const lines = names.map(id => {
             const on = id === globalPool ? '【开启中】' : '';

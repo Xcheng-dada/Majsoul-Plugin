@@ -64,6 +64,76 @@ CREATE TABLE IF NOT EXISTS majsoul_collections (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (qq_id, kind, item_name)
 );
+
+-- 通用设置（key-value）：群抽卡开关 gacha_status:<gid>、个人卡池选择 userpool:<gid>:<uid>、全局卡池 globalpool
+CREATE TABLE IF NOT EXISTS majsoul_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+-- 奖励邮件（一群多封，30 天过期；rewards 拆为固定七货币列）
+CREATE TABLE IF NOT EXISTS majsoul_mails (
+  id         TEXT PRIMARY KEY,
+  chat_id    TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  jade       INTEGER NOT NULL DEFAULT 0,
+  ticket     INTEGER NOT NULL DEFAULT 0,
+  ticket10   INTEGER NOT NULL DEFAULT 0,
+  dust       INTEGER NOT NULL DEFAULT 0,
+  stone      INTEGER NOT NULL DEFAULT 0,
+  wish       INTEGER NOT NULL DEFAULT 0,
+  faith      INTEGER NOT NULL DEFAULT 0,
+  expire_at  INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mails_chat_created ON majsoul_mails (chat_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mails_expire ON majsoul_mails (expire_at);
+
+-- 邮件领取记录（一人一封只能领一次）
+CREATE TABLE IF NOT EXISTS majsoul_mail_claims (
+  mail_id    TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  PRIMARY KEY (mail_id, user_id),
+  FOREIGN KEY (mail_id) REFERENCES majsoul_mails(id) ON DELETE CASCADE
+);
+
+-- 辉玉红包（一群同时最多一个进行中的红包，新红包覆盖旧红包）
+CREATE TABLE IF NOT EXISTS majsoul_redpackets (
+  chat_id    TEXT PRIMARY KEY,
+  owner      TEXT NOT NULL,
+  total      INTEGER NOT NULL,
+  count      INTEGER NOT NULL,
+  expire_at  INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- 红包剩余份额（预拆分的每份金额，抢红包从最大 seq 取走一份）
+CREATE TABLE IF NOT EXISTS majsoul_redpacket_shares (
+  packet_id TEXT NOT NULL,
+  seq       INTEGER NOT NULL,
+  amount    INTEGER NOT NULL,
+  PRIMARY KEY (packet_id, seq),
+  FOREIGN KEY (packet_id) REFERENCES majsoul_redpackets(chat_id) ON DELETE CASCADE
+);
+
+-- 红包领取记录（一人一份，重复领取靠主键拒绝）
+CREATE TABLE IF NOT EXISTS majsoul_redpacket_claims (
+  packet_id  TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  amount     INTEGER NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  PRIMARY KEY (packet_id, user_id),
+  FOREIGN KEY (packet_id) REFERENCES majsoul_redpackets(chat_id) ON DELETE CASCADE
+);
+
+-- 公共红包池（过期/被覆盖红包未领完的辉玉，随下一次发红包注入）
+CREATE TABLE IF NOT EXISTS majsoul_redpools (
+  chat_id    TEXT PRIMARY KEY,
+  amount     INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /**

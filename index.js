@@ -479,9 +479,8 @@ export class majsoul extends plugin {
     }, 60 * 1000);
     scheduleManager.poolScheduleTimer = poolScheduleTimer;
 
-    // Redis 定时存盘：钱包/签到/图鉴/UID绑定已迁移至 SQLite（自带持久化），
-    // Redis 现仅存放临时数据（红包、30分钟抽卡限次、卡池选择等），
-    // 每 30 分钟请求一次 BGSAVE 把这些临时数据写入快照（dump.rdb），重启后自动加载。
+    // Redis 定时存盘：钱包/签到/图鉴/UID绑定/邮件/红包/卡池选择均已迁移至 SQLite（自带持久化），
+    // Redis 现仅存放临时数据（30 分钟抽卡限次），BGSAVE 仅作为其快照兜底。
     scheduleManager.redisSaveTimer = setInterval(async () => {
       try {
         await redis.sendCommand(['BGSAVE']);

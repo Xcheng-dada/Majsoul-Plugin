@@ -1,39 +1,68 @@
 // plugins/Majsoul-Plugin/utils/GachaMail.js
 // 奖励邮件：管理员向全群发放奖励邮件（任意奖励组合，仅当前群可领，30 天过期）
-// 数据结构 Yunzai:majsoul_gacha:mail:{groupId}（永久 key，条目自带 expireAt，读取时惰性清理）：
-// [{ id, title, rewards: {dust:5, ticket:1}, createdAt, expireAt, claimed: [userId] }]
+// 存储：SQLite majsoul_mails + majsoul_mail_claims（永久持久化，读取时惰性清理过期邮件）
+// 兼容结构：rewards 仍为 {货币key: 数量} 对象，claimed 为领取用户 id 数组
 
+import { getDatabase } from './MajsoulDatabase.js';
 import { NAME_TO_KEY } from './GachaWallet.js';
 
-const REDIS_PREFIX = 'Yunzai:majsoul_gacha:mail:';
 const MAIL_TTL_DAYS = 30;
 const MAX_MAILS = 50; // 每群最多保留邮件数（超出丢弃最旧）
 
+// rewards 对象与固定货币列的映射
+const CURRENCY_KEYS = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith'];
+
 export default class GachaMail {
-  _key(groupId) {
-    return `${REDIS_PREFIX}${groupId}`;
+  // 读取某群的全部邮件（新→旧）并惰性清理过期邮件，附带领取记录
+  _load(groupId) {
+    const db = getDatabase();
+    const now = Date.now();
+    db.prepare('DELETE FROM majsoul_mails WHERE chat_id = ? AND expire_at <= ?').run(String(groupId), now);
+    const rows = db.prepare(
+      'SELECT * FROM majsoul_mails WHERE chat_id = ? ORDER BY created_at DESC, rowid DESC'
+    ).all(String(groupId));
+    const claims = db.prepare(
+      'SELECT c.mail_id, c.user_id FROM majsoul_mail_claims c ' +
+      'JOIN majsoul_mails m ON m.id = c.mail_id WHERE m.chat_id = ?'
+    ).all(String(groupId));
+    const claimedMap = new Map();
+    for (const c of claims) {
+      if (!claimedMap.has(c.mail_id)) claimedMap.set(c.mail_id, []);
+      claimedMap.get(c.mail_id).push(String(c.user_id));
+    }
+    return rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      rewards: this._rewardsFromRow(r),
+      createdAt: r.created_at,
+      expireAt: r.expire_at,
+      claimed: claimedMap.get(r.id) || []
+    }));
+  }
+
+  // 数据行 → rewards 对象（只含非零货币）
+  _rewardsFromRow(row) {
+    const rewards = {};
+    for (const key of CURRENCY_KEYS) {
+      if (row[key] > 0) rewards[key] = row[key];
+    }
+    return rewards;
+  }
+
+  // rewards 对象 → 插入参数
+  _rewardParams(rewards) {
+    const r = rewards || {};
+    return CURRENCY_KEYS.map(key => Math.max(0, Math.floor(Number(r[key]) || 0)));
   }
 
   // 读取并惰性清理过期邮件
   async list(groupId) {
-    let mails = [];
     try {
-      const raw = await redis.get(this._key(groupId));
-      mails = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(mails)) mails = [];
+      return this._load(groupId);
     } catch (error) {
       logger.error(`[GachaMail] 读取邮件失败 groupId=${groupId}:`, error);
       return [];
     }
-
-    const now = Date.now();
-    const active = mails.filter(m => m && m.expireAt > now);
-    if (active.length !== mails.length) {
-      try {
-        await redis.set(this._key(groupId), JSON.stringify(active));
-      } catch { /* 清理失败不影响本次读取 */ }
-    }
-    return active;
   }
 
   /**
@@ -44,24 +73,30 @@ export default class GachaMail {
    * @returns {object} 创建的邮件条目
    */
   async send(groupId, rewards, title) {
-    const mails = await this.list(groupId);
     const now = Date.now();
     const mail = {
-      id: `${now.toString(36)}${Math.floor(Math.random() * 1000).toString(36)}`,
+      id: `${String(groupId)}:${now.toString(36)}${Math.floor(Math.random() * 1000).toString(36)}`,
       title: title || '奖励邮件',
       rewards,
       createdAt: now,
       expireAt: now + MAIL_TTL_DAYS * 86400 * 1000,
       claimed: []
     };
-    mails.unshift(mail);
-    if (mails.length > MAX_MAILS) mails.length = MAX_MAILS;
-    await redis.set(this._key(groupId), JSON.stringify(mails));
+    const db = getDatabase();
+    db.prepare(
+      'INSERT INTO majsoul_mails (id, chat_id, title, jade, ticket, ticket10, dust, stone, wish, faith, expire_at, created_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(mail.id, String(groupId), mail.title, ...this._rewardParams(rewards), mail.expireAt, mail.createdAt);
+    // 超出上限丢弃最旧（领取记录随外键级联删除）
+    db.prepare(
+      'DELETE FROM majsoul_mails WHERE chat_id = ? AND id NOT IN ' +
+      '(SELECT id FROM majsoul_mails WHERE chat_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)'
+    ).run(String(groupId), String(groupId), MAX_MAILS);
     return mail;
   }
 
   /**
-   * 领取全部未领邮件奖励
+   * 领取全部未领邮件奖励（事务内标记领取，防重复领取）
    * @param {string|number} groupId
    * @param {string|number} userId
    * @returns {{ mails: Array<{title, rewards}>, totals: object }} totals 为合计奖励
@@ -70,24 +105,24 @@ export default class GachaMail {
     const mails = await this.list(groupId);
     const mailsOut = [];
     const totals = {};
-    let changed = false;
-
-    for (const mail of mails) {
-      if (Array.isArray(mail.claimed) && mail.claimed.includes(String(userId))) continue;
-      (Array.isArray(mail.claimed) ? mail.claimed : (mail.claimed = [])).push(String(userId));
-      changed = true;
-      mailsOut.push({ title: mail.title, rewards: mail.rewards });
-      for (const [key, value] of Object.entries(mail.rewards || {})) {
-        totals[key] = (totals[key] || 0) + (Number(value) || 0);
-      }
-    }
-
-    if (changed) {
-      try {
-        await redis.set(this._key(groupId), JSON.stringify(mails));
-      } catch (error) {
-        logger.error(`[GachaMail] 保存领取状态失败 groupId=${groupId}:`, error);
-      }
+    try {
+      const db = getDatabase();
+      const hasClaim = db.prepare('SELECT 1 FROM majsoul_mail_claims WHERE mail_id = ? AND user_id = ?');
+      const markClaim = db.prepare('INSERT INTO majsoul_mail_claims (mail_id, user_id, claimed_at) VALUES (?, ?, ?)');
+      const uid = String(userId);
+      const tx = db.transaction(() => {
+        for (const mail of mails) {
+          if (hasClaim.get(mail.id, uid)) continue;
+          markClaim.run(mail.id, uid, Date.now());
+          mailsOut.push({ title: mail.title, rewards: mail.rewards });
+          for (const [key, value] of Object.entries(mail.rewards || {})) {
+            totals[key] = (totals[key] || 0) + (Number(value) || 0);
+          }
+        }
+      });
+      tx();
+    } catch (error) {
+      logger.error(`[GachaMail] 保存领取状态失败 groupId=${groupId}:`, error);
     }
     return { mails: mailsOut, totals };
   }
@@ -103,7 +138,7 @@ export default class GachaMail {
     if (mails.length === 0) return { ok: false, reason: '当前没有邮件' };
 
     if (String(target).trim().toLowerCase() === 'all' || String(target).trim() === '全部') {
-      await redis.del(this._key(groupId));
+      getDatabase().prepare('DELETE FROM majsoul_mails WHERE chat_id = ?').run(String(groupId));
       return { ok: true, removed: mails.length };
     }
 
@@ -112,7 +147,7 @@ export default class GachaMail {
       return { ok: false, reason: `序号无效，有效范围 1-${mails.length}` };
     }
     const [mail] = mails.splice(idx - 1, 1);
-    await redis.set(this._key(groupId), JSON.stringify(mails));
+    getDatabase().prepare('DELETE FROM majsoul_mails WHERE id = ?').run(mail.id);
     return { ok: true, removed: 1, mail };
   }
 
