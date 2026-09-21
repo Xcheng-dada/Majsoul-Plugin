@@ -387,26 +387,20 @@ export class MajsoulGacha extends plugin {
     // 查看卡池（全局池 + 个人当前卡池 + 当前可用池列表）
     async viewPool(e) {
         try {
-            let userPick = null;
+            // 当前实际生效池：个人选择 > 全局池 > 默认樱花之路（联动池解析为对应变体）
+            let current = 'female';
             try {
-                if (e.group_id && e.user_id) {
-                    userPick = getSetting(`userpool:${e.group_id}:${e.user_id}`);
-                }
+                current = await this.gachaCore.resolveUserPool(e.group_id, e.user_id);
             } catch {}
-            let globalPool = null;
-            try {
-                globalPool = getSetting('globalpool');
-            } catch {}
-            // 当前生效池：个人选择 > 全局池 > 默认樱花之路
-            const current = userPick || globalPool || 'female';
             const parts = [`当前卡池：${await this.gachaCore.getPoolDisplayTitle(current)}`];
             const ups = await this._getUpCharacters(current);
             if (ups) parts.push(`UP雀士：${ups}`);
             // 当前可用池（仅池名，去重；有排期的池带开启/关闭倒计时）
+            // 联动池保留樱花/竹林变体后缀，两池都显示
             const poolList = await this.gachaCore.getAvailablePools();
             const pools = [];
             for (const p of poolList) {
-                const name = p.name.replace(/（[^）]*）/, '');
+                const name = p.id.includes('|') ? p.name : p.name.replace(/（[^）]*）/, '');
                 const cd = (p.id !== 'male' && p.id !== 'female') ? await this._poolCountdownText(p.id) : '';
                 pools.push(cd ? `${name}（${cd}）` : name);
             }
@@ -443,9 +437,12 @@ export class MajsoulGacha extends plugin {
     }
 
     // 卡池倒计时文本（按池）：未到开启时间返回"X后开启"，已开启且设了结束时间返回"X后关闭"，无排期返回空串
+    // 联动池变体 id（theme|female/male）按主题 id 查排期
     async _poolCountdownText(poolId) {
         try {
-            const sched = await this.poolSchedule.get(poolId);
+            let key = String(poolId || '');
+            if (key.includes('|')) key = key.split('|')[0];
+            const sched = await this.poolSchedule.get(key);
             if (!sched) return '';
             const now = Date.now();
             if (sched.startAt != null && now < sched.startAt) {
