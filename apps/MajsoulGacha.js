@@ -48,6 +48,10 @@ export class MajsoulGacha extends plugin {
                     reg: '^#?查看卡池$',
                     fnc: 'viewPool'
                 },
+                {
+                    reg: '^#?设置全局池\\s+(.+)$',
+                    fnc: 'setGlobalPool'
+                },
                 // 卡池定时开关：每个卡池独立的开启/结束时间，到点自动执行（主人）
                 {
                     reg: '^#?设置卡池开启\\s+(.+)\\s+(\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2})$',
@@ -768,10 +772,19 @@ export class MajsoulGacha extends plugin {
             const poolInfo = dual
                 ? `默认抽 ${name}（樱花特别寻觅），群友可 #切换卡池 ${input} 竹林 切到 ${name}（竹林特别寻觅）`
                 : `默认抽 ${name}`;
+            // 已有未来开启排期时提醒：手动开启属于提前开，想等排期需关闭后重设
+            let schedWarn = '';
+            try {
+                const sched = await this.poolSchedule.get(poolId);
+                if (sched?.startAt != null && sched.startAt > Date.now()) {
+                    schedWarn = `\n⚠️ 该池已排期 ${this._fmtTime(sched.startAt)} 自动开启，本次属于提前手动开启；若只想等排期，请 #关闭联动 后重新设置排期（关闭会清除排期）`;
+                }
+            } catch {}
             await e.reply(
                 `联动池「${name}」已开启并全局生效（樱花与竹林两池都开）：${poolInfo}\n` +
                 `UP雀士概率 59%，未命中UP时从对应性别池抽雀士（不与常驻混池）\n` +
-                `可搭配 #设置卡池关闭 ${input} 时间 到点自动关闭，或 #关闭联动 立即关闭`,
+                `可搭配 #设置卡池关闭 ${input} 时间 到点自动关闭，或 #关闭联动 立即关闭` +
+                schedWarn,
                 true
             );
         } catch (error) {
@@ -858,9 +871,16 @@ export class MajsoulGacha extends plugin {
     }
 
     // #设置卡池开启 <池名> <时间>：到点自动加入可用池（全局池为常驻/空/调度器设置时接管为全局默认）
+    // 时间支持个位月/日/时/分（如 2026-9-25 0:00），回复统一回显规范化时间
     async setPoolOpen(e) {
-        const match = e.msg.match(/^#?设置卡池开启\s+(.+)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
-        if (!match) return false;
+        const match = e.msg.match(/^#?设置卡池开启\s+(.+)\s+(\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{1,2})$/);
+        if (!match) {
+            if (/^#?设置卡池开启\s+/.test(e.msg || '')) {
+                await e.reply('格式：#设置卡池开启 <池名> <YYYY-MM-DD HH:mm>\n如：#设置卡池开启 赤影骁歌 2026-09-25 10:00', true);
+                return true;
+            }
+            return false;
+        }
         const poolId = await this._resolveSchedulePoolId(match[1]);
         const result = await this.poolSchedule.set(poolId, { startAt: match[2] });
         if (!result.ok) {
@@ -874,12 +894,15 @@ export class MajsoulGacha extends plugin {
                 setSetting('globalpool:auto', '1');
             }
         } catch {}
+        const sched = await this.poolSchedule.get(poolId);
         const name = this.gachaCore.getPoolName(poolId);
-        const endText = (await this.poolSchedule.get(poolId))?.endAt;
+        const startText = this._fmtTime(sched.startAt);
+        const endText = sched?.endAt != null ? `\n关闭时间：${this._fmtTime(sched.endAt)}` : '';
+        const collabHint = poolId.startsWith('custom:') ? '' : '\n联动池无需手动 #开启联动，到点会自动开启并接管全局';
         await e.reply(
-            `已设置卡池「${name}」于 ${match[2]} 自动开启\n` +
+            `已设置卡池「${name}」于 ${startText} 自动开启\n` +
             `到点自动加入可用池；若届时全局默认池为常驻池或由排期设置，将自动接管为全局默认池` +
-            (endText ? `\n关闭时间：${this._fmtTime(endText)}` : '') +
+            endText + collabHint +
             `\n取消：#取消卡池开启 ${match[1].trim()}`,
             true
         );
@@ -888,17 +911,24 @@ export class MajsoulGacha extends plugin {
 
     // #设置卡池关闭 <池名> <时间>：到点自动下架（自定义池删除、联动池移除开放标记），全局池退回樱花之路
     async setPoolClose(e) {
-        const match = e.msg.match(/^#?设置卡池关闭\s+(.+)\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
-        if (!match) return false;
+        const match = e.msg.match(/^#?设置卡池关闭\s+(.+)\s+(\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{1,2})$/);
+        if (!match) {
+            if (/^#?设置卡池关闭\s+/.test(e.msg || '')) {
+                await e.reply('格式：#设置卡池关闭 <池名> <YYYY-MM-DD HH:mm>\n如：#设置卡池关闭 赤影骁歌 2026-10-01 22:00', true);
+                return true;
+            }
+            return false;
+        }
         const poolId = await this._resolveSchedulePoolId(match[1]);
         const result = await this.poolSchedule.set(poolId, { endAt: match[2] });
         if (!result.ok) {
             await e.reply(result.reason, true);
             return true;
         }
+        const sched = await this.poolSchedule.get(poolId);
         const name = this.gachaCore.getPoolName(poolId);
         await e.reply(
-            `已设置卡池「${name}」于 ${match[2]} 自动关闭\n` +
+            `已设置卡池「${name}」于 ${this._fmtTime(sched.endAt)} 自动关闭\n` +
             `到点自动下架，全局池若指向该池将退回樱花之路，处于该池的个人选择同步重置\n` +
             `取消：#取消卡池关闭 ${match[1].trim()}`,
             true
@@ -936,14 +966,66 @@ export class MajsoulGacha extends plugin {
         const now = Date.now();
         const lines = rows.map(r => {
             const name = this.gachaCore.getPoolName(r.poolId);
+            const endText = r.endAt != null ? `，${this._fmtTime(r.endAt)} 自动关闭` : '';
             if (r.startAt != null && now < r.startAt) {
-                const endText = r.endAt != null ? `，${this._fmtTime(r.endAt)} 自动关闭` : '';
-                return `「${name}」未开启：${this._fmtTime(r.startAt)} 自动开启${endText}`;
+                // 联动池可能已被手动提前开启（#开启联动 立即生效），排期状态需反映真实开放状态
+                let openedEarly = false;
+                try {
+                    openedEarly = getSetting(`collabopen:${r.poolId}`) === '1' || getSetting('globalpool') === r.poolId;
+                } catch {}
+                return openedEarly
+                    ? `「${name}」已提前开启（手动），${this._fmtTime(r.startAt)} 的定时开启将自动跳过${endText}`
+                    : `「${name}」未开启：${this._fmtTime(r.startAt)} 自动开启${endText}`;
             }
-            const endText = r.endAt != null ? `（${this._fmtTime(r.endAt)} 自动关闭）` : '（未设关闭时间）';
-            return `「${name}」开启中${endText}`;
+            const endTextRunning = r.endAt != null ? `（${this._fmtTime(r.endAt)} 自动关闭）` : '（未设关闭时间）';
+            return `「${name}」开启中${endTextRunning}`;
         });
         await e.reply(`卡池排期：\n${lines.join('\n')}`, true);
+        return true;
+    }
+
+    // #设置全局池 <池名>：master 手动指定全局默认池（无个人选择的群友默认抽该池）
+    // 手动设置会清除自动接管标记（globalpool:auto），到点的定时开启不会抢占手动指定的全局池
+    async setGlobalPool(e) {
+        const match = e.msg.match(/^#?设置全局池\s+(.+)$/);
+        if (!match) return false;
+        const input = match[1].trim();
+        // 常驻池别名（含简写）
+        let poolId;
+        if (/^樱花(之路)?$/.test(input)) poolId = 'female';
+        else if (/^竹林(之路)?$/.test(input)) poolId = 'male';
+        else poolId = await this._resolveSchedulePoolId(input);
+
+        // 池必须存在且当前可用（排期窗口外/未开放的联动池不允许直接设为全局）
+        if (poolId !== 'male' && poolId !== 'female' && !(await this.gachaCore.poolExists(poolId))) {
+            const sched = await this.poolSchedule.get(poolId);
+            if (sched?.startAt != null && sched.startAt > Date.now()) {
+                await e.reply(
+                    `卡池「${this.gachaCore.getPoolName(poolId)}」尚未到开启时间（${this._fmtTime(sched.startAt)} 自动开启）\n` +
+                    `到点会自动接管全局默认池，无需手动设置`,
+                    true
+                );
+            } else {
+                await e.reply(
+                    `没有找到可用卡池「${input}」\n` +
+                    `可用 #查看卡池 查看当前可用池列表；未开放的联动池需先 #开启联动，未到开启时间的UP池将按排期自动接管`,
+                    true
+                );
+            }
+            return true;
+        }
+
+        setSetting('globalpool', poolId);
+        delSetting('globalpool:auto'); // master 手动设置，清除自动接管标记
+        const name = this.gachaCore.getPoolName(poolId);
+        const isCollab = poolId !== 'male' && poolId !== 'female' && !poolId.startsWith('custom:');
+        await e.reply(
+            `全局默认池已设为「${name}」（无个人选择的群友默认抽该池）\n` +
+            `群员个人选择不受影响，可 #切换卡池 自行切换\n` +
+            (isCollab ? `联动池默认抽樱花特别寻觅，群员可 #切换卡池 ${input} 竹林 切换竹林变体\n` : '') +
+            `恢复默认：#设置全局池 樱花`,
+            true
+        );
         return true;
     }
 

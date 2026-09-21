@@ -37,9 +37,9 @@ function stmt(name) {
   return STMT[name];
 }
 
-// "YYYY-MM-DD HH:mm" → epoch ms（非法返回 null）
+// "YYYY-MM-DD HH:mm" → epoch ms（非法返回 null）；支持个位月/日/时/分（如 2026-9-25 0:00）
 function parseTime(str) {
-  const t = new Date(String(str).replace('-', '/')).getTime();
+  const t = new Date(String(str).trim().replace(/-/g, '/')).getTime();
   return isNaN(t) ? null : t;
 }
 

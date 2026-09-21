@@ -87,6 +87,11 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
+          reg: '^#?设置全局池\\s+(.+)$',
+          fnc: 'majsoulGacha',
+          permission: 'master'
+        },
+        {
           reg: '^#?(开启联动|关闭联动|查看联动池)',
           fnc: 'majsoulGacha',
           permission: 'master'
