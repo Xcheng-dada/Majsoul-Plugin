@@ -57,7 +57,7 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
-          reg: '^#?(设置UP池关闭|取消UP池关闭)',
+          reg: '^#?(设置卡池开启|设置卡池关闭|取消卡池开启|取消卡池关闭|查看卡池计划)',
           fnc: 'majsoulGacha',
           permission: 'master'
         },
@@ -82,7 +82,7 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         {
-          reg: '^#?(重置卡池|我的卡池)$',
+          reg: '^#?(重置卡池|查看卡池)$',
           fnc: 'majsoulGacha',
           permission: 'group'
         },
@@ -469,12 +469,12 @@ export class majsoul extends plugin {
     }, 24 * 60 * 60 * 1000);
     scheduleManager.paipuCleanupTimer = paipuCleanupTimer;
 
-    // UP池定时关闭检查：每分钟检查一次，到点把全局池退回樱花之路并重置相关个人选择（详见 PoolSchedule 日志）
+    // 卡池定时开关检查：每分钟检查一次，到点自动开启/关闭对应卡池（详见 PoolSchedule 日志）
     const poolScheduleTimer = setInterval(async () => {
       try {
         await this.modules?.gacha?.poolSchedule?.check();
       } catch (error) {
-        logger?.error?.('[Majsoul-Plugin] UP池定时关闭检查失败:', error);
+        logger?.error?.('[Majsoul-Plugin] 卡池定时开关检查失败:', error);
       }
     }, 60 * 1000);
     scheduleManager.poolScheduleTimer = poolScheduleTimer;

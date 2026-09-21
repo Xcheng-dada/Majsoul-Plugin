@@ -3,7 +3,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
-import { getSetting, setSetting } from './SettingsStore.js';
+import { getSetting, setSetting, getSettingsByPrefix } from './SettingsStore.js';
+import { getDatabase } from './MajsoulDatabase.js';
 
 // 物品类型常量定义 (提升到类级别，全局可用)
 export const ITEM_TYPE = {
@@ -139,15 +140,52 @@ export default class GachaCore {
         } catch {}
     }
 
+    // 读取卡池排期（majsoul_pool_schedules，无则返回 null）
+    _getSchedule(poolId) {
+        try {
+            return getDatabase().prepare('SELECT start_at, end_at FROM majsoul_pool_schedules WHERE pool_id = ?')
+                .get(String(poolId)) || null;
+        } catch {
+            return null;
+        }
+    }
+
+    // 排期窗口判定：无排期 = 始终可用；有排期 = 当前时间在窗口内才可用
+    _isScheduleOpen(row) {
+        if (!row) return true;
+        const now = Date.now();
+        if (row.start_at != null && now < row.start_at) return false; // 尚未到开启时间
+        if (row.end_at != null && now >= row.end_at) return false;    // 已过结束时间（兜底，正常由定时器先行关闭）
+        return true;
+    }
+
+    // 联动池（主题池）是否处于开放状态：collabopen 标记 或 当前全局池指向它（兼容旧数据）
+    _isCollabOpen(themeId) {
+        try {
+            if (getSetting(`collabopen:${themeId}`) === '1') return true;
+            return getSetting('globalpool') === themeId;
+        } catch {
+            return false;
+        }
+    }
+
     // 校验卡池是否存在（性别池始终视为存在：名单为空时等同全部雀士）
+    // 计划池门控：自定义UP池在排期窗口外、联动池未开放时视为不存在（个人残留选择会自动回退）
     async poolExists(poolId) {
         if (poolId === 'male' || poolId === 'female') return true;
         const data = await this.gachaLoader();
-        if (data[poolId]) return true;
+        if (typeof poolId === 'string' && poolId.startsWith('custom:')) {
+            if (!data[poolId]) return false;
+            return this._isScheduleOpen(this._getSchedule(poolId));
+        }
+        if (data[poolId]) {
+            return this._isCollabOpen(poolId);
+        }
         // 联动池变体：<主题池ID>|<female|male>（如 doupin|female）
         if (typeof poolId === 'string' && poolId.includes('|')) {
             const [themeId, gender] = poolId.split('|');
-            return (gender === 'female' || gender === 'male') && !!data[themeId];
+            if (!((gender === 'female' || gender === 'male') && data[themeId])) return false;
+            return this._isCollabOpen(themeId);
         }
         return false;
     }
@@ -593,38 +631,49 @@ export default class GachaCore {
         return this.getPoolName(poolId);
     }
 
-    // 获取当前可用池列表（群友可见）：性别池 + 活跃自定义UP池 + 已开启的联动池（樱花/竹林双变体）
+    // 获取当前可用池列表（群友可见）：性别池 + 窗口内的自定义UP池 + 已开放的联动池（樱花/竹林双变体）
     async getAvailablePools() {
         const data = await this.gachaLoader();
         const pools = [
             { id: 'male', name: '竹林之路' },
             { id: 'female', name: '樱花之路' }
         ];
-        // 活跃自定义UP池（贵人/限时UP，带挂靠标注）
+        // 自定义UP池（贵人/限时UP，带挂靠标注）：排期窗口外的（未到开启时间/已过期）不显示
         const custom = await this.customPoolLoader();
         if (custom) {
             for (const [name, info] of Object.entries(custom)) {
                 if (!Array.isArray(info?.characters) || info.characters.length === 0) continue;
+                const poolId = `custom:${name}`;
+                if (!this._isScheduleOpen(this._getSchedule(poolId))) continue;
                 const base = info.base === 'male' ? '竹林' : '樱花';
                 const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
-                pools.push({ id: `custom:${name}`, name: `${name}（${base}·${tag}）` });
+                pools.push({ id: poolId, name: `${name}（${base}·${tag}）` });
             }
         }
-        // 已开启的联动池：池名含"樱花/竹林"只开对应单变体，否则樱花+竹林双变体
+        // 已开放的联动池：collabopen 标记集合 ∪ 当前全局池指向的联动池（兼容），变体命名逻辑不变
+        const openThemes = new Set();
         try {
+            for (const { key } of getSettingsByPrefix('collabopen:')) {
+                openThemes.add(key.slice('collabopen:'.length));
+            }
             const globalPool = getSetting('globalpool');
-            if (globalPool && !String(globalPool).startsWith('custom:') && !['male', 'female', 'normal'].includes(globalPool) && data[globalPool]) {
-                const name = this.getPoolName(globalPool);
-                if (/樱花/.test(name)) {
-                    pools.push({ id: `${globalPool}|female`, name });
-                } else if (/竹林/.test(name)) {
-                    pools.push({ id: `${globalPool}|male`, name });
-                } else {
-                    pools.push({ id: `${globalPool}|female`, name: `${name}（樱花特别寻觅）` });
-                    pools.push({ id: `${globalPool}|male`, name: `${name}（竹林特别寻觅）` });
-                }
+            if (globalPool && !String(globalPool).startsWith('custom:')
+                && !['male', 'female', 'normal'].includes(globalPool) && data[globalPool]) {
+                openThemes.add(globalPool);
             }
         } catch {}
+        for (const themeId of openThemes) {
+            if (!data[themeId]) continue;
+            const name = this.getPoolName(themeId);
+            if (/樱花/.test(name)) {
+                pools.push({ id: `${themeId}|female`, name });
+            } else if (/竹林/.test(name)) {
+                pools.push({ id: `${themeId}|male`, name });
+            } else {
+                pools.push({ id: `${themeId}|female`, name: `${name}（樱花特别寻觅）` });
+                pools.push({ id: `${themeId}|male`, name: `${name}（竹林特别寻觅）` });
+            }
+        }
         return pools;
     }
 }

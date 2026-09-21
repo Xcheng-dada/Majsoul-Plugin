@@ -134,6 +134,15 @@ CREATE TABLE IF NOT EXISTS majsoul_redpools (
   amount     INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
+
+-- 卡池排期（每个卡池独立的自动开启/关闭时间；pool_id 为 custom:<池名> 或联动主题池ID，时间戳为 epoch ms，NULL=未设置）
+CREATE TABLE IF NOT EXISTS majsoul_pool_schedules (
+  pool_id    TEXT PRIMARY KEY,
+  start_at   INTEGER,
+  end_at     INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /**
