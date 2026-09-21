@@ -4,6 +4,7 @@ import { drawMajsInfoImg } from '../components/render.js';
 import { ROOM_FILTERS, matchRoomFilter } from './MajsoulRecords.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { getPlayerBrief, resolveFriendId } from '../utils/MajsoulProtocolClient.js';
+import { getMainUid as lookupMainUid } from '../utils/MajsoulBindings.js';
 
 const api = new MajsoulApi();
 
@@ -175,19 +176,6 @@ export class MajsoulInfo extends plugin {
     }
     
     async getMainUid(qid) {
-        try {
-            if (typeof redis === 'undefined') {
-                return null;
-            }
-            let mainUid = await redis.get(`majsoul:user:${qid}:main`);
-            if (mainUid) return mainUid;
-            const key = `majsoul:user:${qid}:bindings`;
-            const bindingsStr = await redis.get(key);
-            const bindings = bindingsStr ? JSON.parse(bindingsStr) : [];
-            if (bindings.length > 0) return bindings[0];
-            return null;
-        } catch (error) {
-            return null;
-        }
+        return lookupMainUid(qid);
     }
 }

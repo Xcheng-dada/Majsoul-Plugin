@@ -3,6 +3,14 @@ import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { getPlayerBrief, resolveFriendId } from '../utils/MajsoulProtocolClient.js';
 import { drawSearchResultImg } from '../components/render.js';
+import {
+  getUserBindings as lookupUserBindings,
+  addUserBinding as saveUserBinding,
+  removeUserBinding as deleteUserBinding,
+  clearUserBindings as wipeUserBindings,
+  setMainUid,
+  getMainUid as lookupMainUid
+} from '../utils/MajsoulBindings.js';
 
 export class MajsoulUser extends plugin {
     constructor() {
@@ -40,7 +48,6 @@ export class MajsoulUser extends plugin {
         });
         
         this.api = new MajsoulApi();
-        this.redisPrefix = 'majsoul:user:';
     }
 
     /**
@@ -284,7 +291,7 @@ export class MajsoulUser extends plugin {
             }
             
             // 设置为主UID
-            await redis.set(`${this.redisPrefix}${qid}:main`, uid);
+            await setMainUid(qid, uid);
             
             await e.reply(`✅ 已切换主UID为: ${uid}`);
             
@@ -370,27 +377,36 @@ export class MajsoulUser extends plugin {
         return true;
     }
     
+    // ========== 数据库操作方法（委托 utils/MajsoulBindings.js，SQLite 持久化） ==========
+
+    // 获取用户的所有绑定
+    async getUserBindings(qid) {
+        return lookupUserBindings(qid);
+    }
+
+    // 添加绑定
+    async addUserBinding(qid, uid, nickname = '') {
+        return saveUserBinding(qid, uid, nickname);
+    }
+
+    // 移除绑定
+    async removeUserBinding(qid, uid) {
+        return deleteUserBinding(qid, uid);
+    }
+
+    // 清除所有绑定
+    async clearUserBindings(qid) {
+        return wipeUserBindings(qid);
+    }
+
     // ========== 新增：获取主绑定 UID 方法 ==========
     /**
      * @description 获取用户的主绑定 UID，如果未设置主账号则返回第一个绑定
      * @param {string} qid QQ号
-     * @returns {string|null} 主UID 或 null
+     * @returns {Promise<string|null>} 主UID 或 null
      */
     async getMainUid(qid) {
-        try {
-            // 1. 尝试获取设置的主UID
-            let mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
-            
-            if (mainUid) return mainUid;
-            
-            // 2. 如果没有设置 main 键，尝试获取第一个绑定作为默认主账号
-            const bindings = await this.getUserBindings(qid);
-            return bindings.length > 0 ? bindings[0] : null;
-            
-        } catch (error) {
-            logger.error('[MajsoulUser] 获取主绑定 UID 失败:', error);
-            return null;
-        }
+        return lookupMainUid(qid);
     }
 
     // 设置牌谱屋 Bearer token（仅机器人主人 master 私聊可操作，写入 data/token.json，避免群聊泄露）
@@ -422,90 +438,5 @@ export class MajsoulUser extends plugin {
             await e.reply('设置 token 时出现错误');
         }
         return true;
-    }
-
-    // ========== 数据库操作方法 ==========
-    
-    // 获取用户的所有绑定
-    async getUserBindings(qid) {
-        try {
-            const key = `${this.redisPrefix}${qid}:bindings`;
-            const bindingsStr = await redis.get(key);
-            return bindingsStr ? JSON.parse(bindingsStr) : [];
-        } catch (error) {
-            logger.error('[MajsoulUser] 获取用户绑定失败:', error);
-            return [];
-        }
-    }
-    
-    // 添加绑定
-    async addUserBinding(qid, uid, nickname = '') {
-        try {
-            const key = `${this.redisPrefix}${qid}:bindings`;
-            const bindings = await this.getUserBindings(qid);
-            
-            // 检查是否已存在
-            if (!bindings.includes(uid)) {
-                bindings.push(uid);
-                await redis.set(key, JSON.stringify(bindings));
-                
-                // 如果是第一个绑定，设置为主账号
-                if (bindings.length === 1) {
-                    await redis.set(`${this.redisPrefix}${qid}:main`, uid);
-                }
-                
-                // 存储额外信息（可选）
-                await redis.set(`${this.redisPrefix}${qid}:${uid}:nickname`, nickname);
-            }
-            return true;
-        } catch (error) {
-            logger.error('[MajsoulUser] 添加绑定失败:', error);
-            return false;
-        }
-    }
-    
-    // 移除绑定
-    async removeUserBinding(qid, uid) {
-        try {
-            const key = `${this.redisPrefix}${qid}:bindings`;
-            const bindings = await this.getUserBindings(qid);
-            const newBindings = bindings.filter(id => id !== uid);
-            
-            await redis.set(key, JSON.stringify(newBindings));
-            
-            // 清理相关数据
-            await redis.del(`${this.redisPrefix}${qid}:${uid}:nickname`);
-            
-            // 如果删除的是主账号，重新设置主账号
-            const mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
-            if (mainUid === uid && newBindings.length > 0) {
-                await redis.set(`${this.redisPrefix}${qid}:main`, newBindings[0]);
-            }
-            
-            return true;
-        } catch (error) {
-            logger.error('[MajsoulUser] 移除绑定失败:', error);
-            return false;
-        }
-    }
-    
-    // 清除所有绑定
-    async clearUserBindings(qid) {
-        try {
-            const bindings = await this.getUserBindings(qid);
-            
-            // 删除所有相关键
-            for (const uid of bindings) {
-                await redis.del(`${this.redisPrefix}${qid}:${uid}:nickname`);
-            }
-            
-            await redis.del(`${this.redisPrefix}${qid}:bindings`);
-            await redis.del(`${this.redisPrefix}${qid}:main`);
-            
-            return true;
-        } catch (error) {
-            logger.error('[MajsoulUser] 清除绑定失败:', error);
-            return false;
-        }
     }
 }

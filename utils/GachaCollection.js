@@ -5,9 +5,25 @@ import path from 'path';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 import { ITEM_TYPE } from './GachaCore.js';
+import { getDatabase } from './MajsoulDatabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REDIS_PREFIX = 'Yunzai:majsoul_gacha:collection:';
+
+// 预编译语句按连接实例缓存（测试关闭重开后自动重建）
+const stmtCache = new WeakMap();
+
+function getStmts(db) {
+  let s = stmtCache.get(db);
+  if (s) return s;
+  s = {
+    selUser: db.prepare(`SELECT kind, item_name, count, first_date FROM majsoul_collections WHERE qq_id = ?`),
+    sel: db.prepare(`SELECT count FROM majsoul_collections WHERE qq_id = ? AND kind = ? AND item_name = ?`),
+    ins: db.prepare(`INSERT INTO majsoul_collections (qq_id, kind, item_name, count, first_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`),
+    upd: db.prepare(`UPDATE majsoul_collections SET count = ?, updated_at = ? WHERE qq_id = ? AND kind = ? AND item_name = ?`)
+  };
+  stmtCache.set(db, s);
+  return s;
+}
 
 const SUPPORTED_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -43,19 +59,16 @@ export default class GachaCollection {
     this._cellCache = new Map();
   }
 
-  _key(userId) {
-    return `${REDIS_PREFIX}${userId}`;
-  }
-
-  // 读取用户图鉴数据
+  // 读取用户图鉴数据（结构兼容旧版：{ characters: {名称: {count, first}}, decorations: {...} }）
   async get(userId) {
     try {
-      const raw = await redis.get(this._key(userId));
-      const data = raw ? JSON.parse(raw) : {};
-      return {
-        characters: data.characters || {},
-        decorations: data.decorations || {}
-      };
+      const rows = getStmts(getDatabase()).selUser.all(String(userId));
+      const coll = { characters: {}, decorations: {} };
+      for (const r of rows) {
+        if (!coll[r.kind]) continue; // CHECK 约束兜底，理论上不会出现
+        coll[r.kind][r.item_name] = { count: Math.max(1, Math.floor(Number(r.count) || 1)), first: r.first_date || null };
+      }
+      return coll;
     } catch (error) {
       logger.error(`[GachaCollection] 读取图鉴失败 userId=${userId}:`, error);
       return { characters: {}, decorations: {} };
@@ -63,28 +76,32 @@ export default class GachaCollection {
   }
 
   /**
-   * 记录获得
+   * 记录获得（事务内判断新旧，防止并发重复计数）
    * @param {string|number} userId
    * @param {'characters'|'decorations'} kind
    * @param {string} name 物品名（文件名去后缀）
    * @returns {{ isNew: boolean, count: number }}
    */
   async add(userId, kind, name) {
-    const coll = await this.get(userId);
-    if (!coll[kind]) coll[kind] = {};
-    let isNew = false;
-    if (coll[kind][name]) {
-      coll[kind][name].count += 1;
-    } else {
-      coll[kind][name] = { count: 1, first: todayStr() };
-      isNew = true;
+    if (kind !== 'characters' && kind !== 'decorations') {
+      logger.warn(`[GachaCollection] 未知的图鉴类型 kind=${kind}`);
+      return { isNew: false, count: 0 };
     }
-    try {
-      await redis.set(this._key(userId), JSON.stringify(coll));
-    } catch (error) {
-      logger.error(`[GachaCollection] 保存图鉴失败 userId=${userId}:`, error);
-    }
-    return { isNew, count: coll[kind][name].count };
+    const db = getDatabase();
+    const s = getStmts(db);
+    const qq = String(userId);
+    const item = String(name);
+    const now = Date.now();
+    return db.transaction(() => {
+      const existing = s.sel.get(qq, kind, item);
+      if (existing) {
+        const count = existing.count + 1;
+        s.upd.run(count, now, qq, kind, item);
+        return { isNew: false, count };
+      }
+      s.ins.run(qq, kind, item, 1, todayStr(), now, now);
+      return { isNew: true, count: 1 };
+    })();
   }
 
   // 判断是否为限定雀士（贵人：仅通过 #创建UP池 贵人 发放，重复转化 150 许愿石）

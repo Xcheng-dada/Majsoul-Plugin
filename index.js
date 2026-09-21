@@ -15,6 +15,7 @@ import { cleanupPaipu, cleanupAvatar, PAIPU_CLEANUP_DAYS } from './utils/PaipuCl
 import { updateLqc } from './utils/lqcUpdater.js';
 import { ensureApiRunning } from './utils/MajsoulProtocolClient.js';
 import { getFeatureConfig, getFeatureConfigItem } from './utils/Config.js';
+import { getDatabase } from './utils/MajsoulDatabase.js';
 
 // 加载 Yunzai 的 plugin 基类（兼容默认导出与具名导出）
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -404,6 +405,13 @@ export class majsoul extends plugin {
     // 插件加载时的初始化
   async init() {
     console.log('[Majsoul-Plugin] 雀魂插件初始化...');
+    // 初始化 SQLite 数据库（钱包/签到/图鉴/UID绑定的唯一持久化数据源，已存在数据不会被覆盖）
+    try {
+      getDatabase();
+      console.log('[Majsoul-Plugin] SQLite 数据库初始化完成');
+    } catch (error) {
+      console.error('[Majsoul-Plugin] SQLite 数据库初始化失败:', error);
+    }
     // Windows 下若启用 autoLaunch 且 API 未运行，则自动 spawn 拉起（非 Windows/未开启则跳过）
     ensureApiRunning().catch(e => console.error('[Majsoul-Plugin] 拉起 API 失败:', e));
     // 启动时尝试更新 lqc.json（角色/皮肤映射）；失败不影响使用，内部已捕获
@@ -471,9 +479,9 @@ export class majsoul extends plugin {
     }, 60 * 1000);
     scheduleManager.poolScheduleTimer = poolScheduleTimer;
 
-    // Redis 定时存盘：Yunzai 启动的 Redis 默认无持久化，关闭时也不存盘，
-    // 抽卡图鉴/货币等数据只存在内存里会随重启丢失。这里每 30 分钟请求一次 BGSAVE，
-    // 快照文件（dump.rdb）写入 Yunzai 根目录，下次启动 Redis 自动加载。
+    // Redis 定时存盘：钱包/签到/图鉴/UID绑定已迁移至 SQLite（自带持久化），
+    // Redis 现仅存放临时数据（红包、30分钟抽卡限次、卡池选择等），
+    // 每 30 分钟请求一次 BGSAVE 把这些临时数据写入快照（dump.rdb），重启后自动加载。
     scheduleManager.redisSaveTimer = setInterval(async () => {
       try {
         await redis.sendCommand(['BGSAVE']);

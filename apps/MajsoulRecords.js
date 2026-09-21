@@ -7,6 +7,7 @@ import { getRankImg } from '../components/render.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
+import { getMainUid as lookupMainUid } from '../utils/MajsoulBindings.js';
 
 // 段位房筛选：关键词 -> { name(显示名), ids: { 4:[四麻modeId], 3:[三麻modeId] }, aliases(模糊匹配词) }
 // modeId 取自 utils/PlayerLevel.js 的 ROOM_LEVEL_MAP
@@ -48,7 +49,6 @@ export class MajsoulRecords extends plugin {
         });
         
         this.api = new MajsoulApi();
-        this.redisPrefix = 'majsoul:user:';
     }
     
     /**
@@ -520,39 +520,11 @@ export class MajsoulRecords extends plugin {
     }
     
     /**
-     * 获取用户绑定的主UID（从Redis获取）
+     * 获取用户绑定的主UID（SQLite 持久化，委托 utils/MajsoulBindings.js）
      * @param {string} qid - 用户QQ号
      * @returns {Promise<string|null>} - 主UID或null
      */
     async getMainUid(qid) {
-        try {
-            // 确保 redis 对象可用（Yunzai 框架全局对象）
-            if (typeof redis === 'undefined') {
-                console.error('[MajsoulRecords] redis 对象未定义！');
-                return null;
-            }
-            
-            // 1. 尝试获取设置的主UID
-            let mainUid = await redis.get(`${this.redisPrefix}${qid}:main`);
-            
-            if (mainUid) {
-                return mainUid;
-            }
-            
-            // 2. 如果没有设置main键，尝试获取第一个绑定作为默认主账号
-            const key = `${this.redisPrefix}${qid}:bindings`;
-            const bindingsStr = await redis.get(key);
-            const bindings = bindingsStr ? JSON.parse(bindingsStr) : [];
-            
-            if (bindings.length > 0) {
-                return bindings[0];
-            }
-            
-            return null;
-            
-        } catch (error) {
-            console.error('[MajsoulRecords] 获取主绑定UID失败:', error);
-            return null;
-        }
+        return lookupMainUid(qid);
     }
 }
