@@ -1000,20 +1000,22 @@ async function fillModeFromLocal (data, extended, uid, mode, gc = 2) {
 }
 
 /**
- * 从本地 API 取段位场（gc=2，覆盖铜银金玉）的总场次数。
+ * 从本地 API 取段位场（gc=2，覆盖铜银金玉）的总场次数，按模式返回 { 4: count, 3: count }。
  * 牌谱屋只统计金之间以上，用于把卡片上的对局数覆盖为完整段位场次数；
  * sum(finalPositionCounts) 为全量顺位累计，不受 roundCount 封顶 100 限制。
  */
-async function getLocalRankedCount (uid, mode) {
+async function getLocalRankedCounts (uid) {
   try {
     const statRes = await getPlayerStatistics(uid)
     if (!statRes || !Array.isArray(statRes.entries)) return null
-    const mc = mode === 3 ? 2 : 1
-    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
-      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
-    if (!entry) return null
-    const count = (entry.finalPositionCounts || []).reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
-    return count > 0 ? count : null
+    const pick = (mc) => {
+      const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
+        || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+      if (!entry) return null
+      const count = (entry.finalPositionCounts || []).reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
+      return count > 0 ? count : null
+    }
+    return { 4: pick(1), 3: pick(2) }
   } catch (e) {
     console.warn(`[render.js] 本地API获取段位场总场次失败: ${e.message}`)
     return null
@@ -1267,12 +1269,15 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   if (record.retcode) record = []
 
-  // 牌谱屋仅统计金之间以上：段位场查询（非友人/比赛场、非房间过滤）且牌谱屋有数据时，
-  // 用本地 API 的段位场总场次（覆盖铜银金玉）覆盖卡片上的对局数。
-  // 主模式 404 的场景 fillModeFromLocal 已直接填好本地总场次，此处无需处理。
-  if (!scopeInfo && !roomFilter && (mode === '3' ? data3Valid : data4Valid)) {
-    const localCount = await getLocalRankedCount(uid, mainMode)
-    if (localCount != null) data.count = localCount
+  // 卡片同时绘制四麻与三麻两个段位图标（各带对局数），两者都用本地 API 段位场总场次
+  // 覆盖（牌谱屋仅统计金之间以上）；仅默认段位场查询生效，友人/比赛场、房间筛选保持牌谱屋原值。
+  // 主模式 404 的场景 fillModeFromLocal 已直接填好本地总场次，此处跳过该模式。
+  if (!scopeInfo && !roomFilter) {
+    const localCounts = await getLocalRankedCounts(uid)
+    if (localCounts) {
+      if (data4Valid && localCounts[4] != null) data4.count = localCounts[4]
+      if (data3Valid && localCounts[3] != null) data3.count = localCounts[3]
+    }
   }
 
   let level4Score = data4.level?.score + data4.level?.delta || 0
