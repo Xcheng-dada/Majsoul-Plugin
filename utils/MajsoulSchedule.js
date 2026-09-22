@@ -73,20 +73,21 @@ export default class MajsoulSchedule {
     // 执行检查（支持指定模式）
     async performCheck(mode = 4) {
         const modeName = mode === 4 ? '四麻' : '三麻';
-        const jobName = mode === 4 ? 'record_scheduled' : 'Trirecord_scheduled';
-        
+
+        // 无订阅时直接短路：不打日志、不请求 API
+        try {
+            if (!await this.core.hasSubscriptions(mode)) return;
+        } catch { /* 查询失败则按原流程继续 */ }
+
         if (this.checking) {
-            console.log(`[雀魂对局订阅] INFO: ${modeName}检查跳过，已有检查任务在运行中`);
-            this.logger.info(`[MajsoulSchedule] ${modeName}检查跳过，已有检查任务在运行中`);
+            this.logger.debug(`[MajsoulSchedule] ${modeName}检查跳过，已有检查任务在运行中`);
             return;
         }
         
         this.checking = true;
         
         try {
-            // 使用 console.log 确保控制台可见（模拟 Majsoul_bot 的输出格式）
-            console.log(`[雀魂对局订阅] INFO: Scheduled job ${jobName} start.`);
-            this.logger.info(`[MajsoulSchedule] 开始检查${modeName}订阅...`);
+            this.logger.debug(`[MajsoulSchedule] 开始检查${modeName}订阅...`);
             
             // 更新统计信息
             this.stats.totalChecks++;
@@ -95,8 +96,7 @@ export default class MajsoulSchedule {
             const updates = await this.core.checkSubscriptionsByMode(mode);
             
             if (updates.length === 0) {
-                console.log(`[雀魂对局订阅] INFO: Scheduled job ${jobName} completed.`);
-                this.logger.info(`[MajsoulSchedule] ${modeName}暂无新对局`);
+                this.logger.debug(`[MajsoulSchedule] ${modeName}暂无新对局`);
                 return;
             }
             
@@ -123,10 +123,7 @@ export default class MajsoulSchedule {
             
             console.log(`[雀魂对局订阅] INFO: ${modeName}完成播报，成功${sentCount}/${updates.length}条消息`);
             this.logger.info(`[MajsoulSchedule] ${modeName}完成播报，共${updates.length}条消息，成功${sentCount}条`);
-            
-            // 输出完成日志
-            console.log(`[雀魂对局订阅] INFO: Scheduled job ${jobName} completed.`);
-            
+
         } catch (error) {
             console.error(`[雀魂对局订阅] ERROR: 检查${modeName}更新失败: ${error.message}`);
             this.logger.error(`[MajsoulSchedule] 检查${modeName}更新失败: ${error.message}`);

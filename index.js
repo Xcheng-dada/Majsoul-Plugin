@@ -449,7 +449,6 @@ export class majsoul extends plugin {
         try {
           if (!scheduleManager.bot && typeof global.Bot !== 'undefined') scheduleManager.setBot(global.Bot);
           await scheduleManager.performCheck(type);
-          console.log(`[Majsoul-Plugin] ${label}定时检查完成`);
         } catch (error) {
           console.error(`[Majsoul-Plugin] ${label}定时检查失败:`, error);
         }

@@ -496,6 +496,12 @@ export default class MajsoulSubscribeCore {
         }
     }
     
+    // 该模式是否存在订阅（供定时任务快速短路：无订阅时不打日志、不请求 API）
+    async hasSubscriptions(mode = 4) {
+        const subscriptions = await this._loadSubscriptions(mode);
+        return subscriptions.length > 0;
+    }
+
     // 6. 定时任务：检查指定模式的订阅更新（单独检查四麻或三麻）
     async checkSubscriptionsByMode(mode = 4) {
         // 未配置牌谱屋 token 时静默跳过，避免定时任务反复刷日志/报错
@@ -509,11 +515,11 @@ export default class MajsoulSubscribeCore {
             const subscriptions = await this._loadSubscriptions(mode);
             
             if (subscriptions.length === 0) {
-                this._logger.info(`[MajsoulSubscribeCore] ${modeName}暂无订阅`);
+                this._logger.debug(`[MajsoulSubscribeCore] ${modeName}暂无订阅`);
                 return updates;
             }
             
-            this._logger.info(`[MajsoulSubscribeCore] 开始检查${modeName}订阅，共${subscriptions.length}个订阅`);
+            this._logger.debug(`[MajsoulSubscribeCore] 开始检查${modeName}订阅，共${subscriptions.length}个订阅`);
             
             // 筛选出需要检查的订阅
             const activeSubscriptions = subscriptions.filter(s => s.record_on);
@@ -522,12 +528,12 @@ export default class MajsoulSubscribeCore {
             for (const sub of activeSubscriptions) {
                 try {
                     // 获取该玩家最新的一场对局
-                    this._logger.info(`[MajsoulSubscribeCore] 正在检测更新${sub.nickname || sub.id}的${modeName}对局数据`);
+                    this._logger.debug(`[MajsoulSubscribeCore] 正在检测更新${sub.nickname || sub.id}的${modeName}对局数据`);
                     
                     const records = await this.api.getPlayerRecords(sub.id, mode, 5);
                     
                     if (!records || records.length === 0) {
-                        this._logger.info(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 无对局记录`);
+                        this._logger.debug(`[MajsoulSubscribeCore] 玩家 ${sub.nickname || sub.id} 无对局记录`);
                         successCount++;
                         continue;
                     }
@@ -577,7 +583,11 @@ export default class MajsoulSubscribeCore {
             this._logger.error(`[MajsoulSubscribeCore] 检查${modeName}订阅失败: ${error.message}`);
         }
         
-        this._logger.info(`[MajsoulSubscribeCore] ${modeName}检查完成，发现 ${updates.length} 个新对局 (成功: ${successCount}, 失败: ${failCount})`);
+        if (updates.length > 0) {
+            this._logger.info(`[MajsoulSubscribeCore] ${modeName}检查完成，发现 ${updates.length} 个新对局 (成功: ${successCount}, 失败: ${failCount})`);
+        } else {
+            this._logger.debug(`[MajsoulSubscribeCore] ${modeName}例行检查完成 (成功: ${successCount}, 失败: ${failCount})`);
+        }
         return updates;
     }
     
