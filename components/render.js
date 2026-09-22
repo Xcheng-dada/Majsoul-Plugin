@@ -1000,6 +1000,27 @@ async function fillModeFromLocal (data, extended, uid, mode, gc = 2) {
 }
 
 /**
+ * 从本地 API 取段位场（gc=2，覆盖铜银金玉）的总场次数。
+ * 牌谱屋只统计金之间以上，用于把卡片上的对局数覆盖为完整段位场次数；
+ * sum(finalPositionCounts) 为全量顺位累计，不受 roundCount 封顶 100 限制。
+ */
+async function getLocalRankedCount (uid, mode) {
+  try {
+    const statRes = await getPlayerStatistics(uid)
+    if (!statRes || !Array.isArray(statRes.entries)) return null
+    const mc = mode === 3 ? 2 : 1
+    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
+      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+    if (!entry) return null
+    const count = (entry.finalPositionCounts || []).reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
+    return count > 0 ? count : null
+  } catch (e) {
+    console.warn(`[render.js] 本地API获取段位场总场次失败: ${e.message}`)
+    return null
+  }
+}
+
+/**
  * 无牌谱屋数据时，用本地 recentGames（顺位序列）构造走势图所需 record。
  * 走势图按 旧→新 从左到右绘制，故 record 需为 新→旧（chart 内会 reverse）。
  */
@@ -1245,6 +1266,14 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   }
 
   if (record.retcode) record = []
+
+  // 牌谱屋仅统计金之间以上：段位场查询（非友人/比赛场、非房间过滤）且牌谱屋有数据时，
+  // 用本地 API 的段位场总场次（覆盖铜银金玉）覆盖卡片上的对局数。
+  // 主模式 404 的场景 fillModeFromLocal 已直接填好本地总场次，此处无需处理。
+  if (!scopeInfo && !roomFilter && (mode === '3' ? data3Valid : data4Valid)) {
+    const localCount = await getLocalRankedCount(uid, mainMode)
+    if (localCount != null) data.count = localCount
+  }
 
   let level4Score = data4.level?.score + data4.level?.delta || 0
   let level3Score = data3.level?.score + data3.level?.delta || 0
