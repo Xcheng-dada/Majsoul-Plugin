@@ -40,15 +40,28 @@ function loadAvatarConfig() {
     path.join(pluginRoot, 'data', 'lqc.json'), // 优先使用自动更新生成的（与 liqi 对称）
     path.join(pluginRoot, 'config', 'lqc.json') // 静态兜底
   ]
+  // 自定义条目（config/lqc.custom.json）：CDN 表未收录的皮肤（如仅客户端实装的 akagi_sp2 / 数字id装扮），
+  // 每次读取时叠加，避免 lqc.json 自动更新全量重写后丢失
+  const custom = readJsonIfExists(path.join(pluginRoot, 'config', 'lqc.custom.json')) || {}
   for (const lqcPath of lqcPaths) {
     const lqc = readJsonIfExists(lqcPath)
     if (!lqc) continue
     const extendRes = readJsonIfExists(path.join(path.dirname(lqcPath), 'extendRes.json')) || {}
-    avatarConfigCache = { lqc, extendRes }
+    avatarConfigCache = { lqc: { ...lqc, ...custom }, extendRes }
     return avatarConfigCache
   }
-  avatarConfigCache = { lqc: {}, extendRes: {} }
+  avatarConfigCache = { lqc: { ...custom }, extendRes: {} }
   return avatarConfigCache
+}
+
+// 本地素材查找：resources/charactor/<目录>/（git 分发的解包图，如 akagi_sp2/40011703）优先，
+// 其次 data/charactor/<目录>/（运行时 CDN 下载缓存）
+function findCachedAsset(charDirName, fileName) {
+  const candidates = [
+    path.join(pluginRoot, 'resources', 'charactor', charDirName, fileName),
+    path.join(avatarCacheRoot, charDirName, fileName)
+  ]
+  return candidates.find(p => fs.existsSync(p)) || null
 }
 
 function isSupportedImageBuffer(buffer) {
@@ -168,8 +181,8 @@ async function loadAvatarImage(avatarId) {
   if (!info?.path) return null
 
   const charDirName = path.basename(info.path)
-  const localPath = path.join(avatarCacheRoot, charDirName, 'bighead.png')
-  if (fs.existsSync(localPath)) {
+  const localPath = findCachedAsset(charDirName, 'bighead.png')
+  if (localPath) {
     try {
       return await loadImageFromCache(localPath)
     } catch (err) {
@@ -226,24 +239,23 @@ async function processPortraitImage(buffer, targetW = 300, targetH = 650) {
   const cw = right - left + 1
   const ch = bottom - top + 1
 
-  // 第二步：按 targetW:targetH 比例补透明画布（内容不缩放）
+  // 第二步：300:650 构图。与游戏内准备界面一致：
+  // - 瘦高立绘：从顶部裁半身窗口（头→大腿，人物放大占满卡片）
+  // - 偏宽横版（SP 卡面/坐姿带场景）：以水平中心裁竖窗，垂直完整保留
   const ratio = targetW / targetH
-  let newW, newH, ox = 0, oy = 0
-  if (cw / ch > ratio) {
-    // 偏宽：上下补透明条
-    newH = Math.round(cw / ratio)
-    newW = cw
-    oy = Math.round((newH - ch) / 2)
-  } else {
-    // 偏瘦高：左右补透明条
-    newW = Math.round(ch * ratio)
-    newH = ch
-    ox = Math.round((newW - cw) / 2)
+  let out, octx
+  if (cw / ch <= ratio) {
+    const winH = Math.round(cw / ratio)
+    out = createCanvas(cw, winH)
+    octx = out.getContext('2d')
+    octx.drawImage(img, left, top, cw, winH, 0, 0, cw, winH)
+    return out.toBuffer('image/png')
   }
-
-  const out = createCanvas(newW, newH)
-  const octx = out.getContext('2d')
-  octx.drawImage(img, left, top, cw, ch, ox, oy, cw, ch)
+  const winW = Math.round(ch * ratio)
+  const ox = Math.round((cw - winW) / 2)
+  out = createCanvas(winW, ch)
+  octx = out.getContext('2d')
+  octx.drawImage(img, left + ox, top, winW, ch, 0, 0, winW, ch)
   return out.toBuffer('image/png')
 }
 
@@ -257,8 +269,8 @@ async function loadPortraitImage(avatarId) {
   if (!info?.path) return null
 
   const charDirName = path.basename(info.path)
-  const localPath = path.join(avatarCacheRoot, charDirName, 'full.png')
-  if (fs.existsSync(localPath)) {
+  const localPath = findCachedAsset(charDirName, 'full.png')
+  if (localPath) {
     try {
       return await loadImageFromCache(localPath)
     } catch (err) {
