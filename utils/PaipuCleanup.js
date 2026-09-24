@@ -56,6 +56,16 @@ export function cleanupAvatar(days = PAIPU_CLEANUP_DAYS) {
       try { stat = fs.statSync(dirPath) } catch { continue }
       // 仅处理角色子目录，跳过非目录项
       if (!stat.isDirectory()) continue
+      // 已空目录直接移除（历史残留），不等待过期
+      try {
+        if (fs.readdirSync(dirPath).length === 0) {
+          fs.rmdirSync(dirPath)
+          continue
+        }
+      } catch (err) {
+        logger?.error?.(`[PaipuCleanup] 清理空目录失败 ${charDir}: ${err.message}`)
+        continue
+      }
       // 目录整体超过过期时间则清空其下头像文件
       if (now - stat.mtimeMs <= maxAge) continue
       try {

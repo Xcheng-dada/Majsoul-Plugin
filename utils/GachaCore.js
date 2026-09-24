@@ -603,8 +603,9 @@ export default class GachaCore {
     }
 
     // 获取抽卡结果标题用的池名
-    // 自定义UP池/联动池变体：池名本身含"樱花/竹林"时直接显示池名（如：樱花烂漫Ⅰ），
-    // 否则追加挂靠后缀（如：赤影骁歌（樱花特别寻觅）、斗牌传说（竹林特别寻觅））
+    // 联动池变体/贵人池：池名本身含"樱花/竹林"时直接显示池名（如：樱花烂漫Ⅰ），
+    // 否则追加挂靠后缀（如：斗牌传说（竹林特别寻觅）、赤影骁歌（樱花特别寻觅））；
+    // 普通UP池不加后缀，直接显示池名
     async getPoolDisplayTitle(poolId) {
         if (typeof poolId === 'string' && poolId.startsWith('custom:')) {
             const name = poolId.slice('custom:'.length);
@@ -613,8 +614,11 @@ export default class GachaCore {
             }
             try {
                 const custom = await this.customPoolLoader();
-                const base = custom?.[name]?.base;
-                return base === 'male' ? `${name}（竹林特别寻觅）` : `${name}（樱花特别寻觅）`;
+                const info = custom?.[name];
+                if (info && Number(info.upRate) === 20) { // 贵人池
+                    return info.base === 'male' ? `${name}（竹林特别寻觅）` : `${name}（樱花特别寻觅）`;
+                }
+                return name;
             } catch {
                 return name;
             }

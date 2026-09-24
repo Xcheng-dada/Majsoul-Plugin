@@ -6,10 +6,12 @@ import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { createRequire } from 'module'
 
 // ---- 头像渲染：avatar_id → lqc.json 路径 → CDN 下载 bighead.png ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const pluginRoot = path.resolve(__dirname, '..')
+const pluginVersion = createRequire(import.meta.url)('../package.json').version // help 横幅版本徽章，与 package.json 同步
 const avatarCacheRoot = path.join(pluginRoot, 'data', 'charactor')
 let avatarConfigCache = null
 
@@ -239,23 +241,25 @@ async function processPortraitImage(buffer, targetW = 300, targetH = 650) {
   const cw = right - left + 1
   const ch = bottom - top + 1
 
-  // 第二步：300:650 构图。与游戏内准备界面一致：
-  // - 瘦高立绘：从顶部裁半身窗口（头→大腿，人物放大占满卡片）
-  // - 偏宽横版（SP 卡面/坐姿带场景）：以水平中心裁竖窗，垂直完整保留
+  // 第二步：按 300:650 补透明画布（内容绝不拉伸、绝不裁剪，与 person_full 预处理规则一致）
   const ratio = targetW / targetH
-  let out, octx
-  if (cw / ch <= ratio) {
-    const winH = Math.round(cw / ratio)
-    out = createCanvas(cw, winH)
-    octx = out.getContext('2d')
-    octx.drawImage(img, left, top, cw, winH, 0, 0, cw, winH)
-    return out.toBuffer('image/png')
+  let newW, newH, ox, oy
+  if (cw / ch > ratio) {
+    // 偏宽：上下补透明条
+    newW = cw
+    newH = Math.round(cw / ratio)
+    ox = 0
+    oy = Math.floor((newH - ch) / 2)
+  } else {
+    // 瘦高：左右补透明条
+    newH = ch
+    newW = Math.round(ch * ratio)
+    ox = Math.floor((newW - cw) / 2)
+    oy = 0
   }
-  const winW = Math.round(ch * ratio)
-  const ox = Math.round((cw - winW) / 2)
-  out = createCanvas(winW, ch)
-  octx = out.getContext('2d')
-  octx.drawImage(img, left + ox, top, winW, ch, 0, 0, winW, ch)
+  const out = createCanvas(newW, newH)
+  const octx = out.getContext('2d')
+  octx.drawImage(img, left, top, cw, ch, ox, oy, cw, ch)
   return out.toBuffer('image/png')
 }
 
@@ -2131,7 +2135,7 @@ export async function drawHelp() {
   drawText(ctx, subTitle, subTitleX, subTitleY + 15, Math.round(30 * bscale), '#CECECE', 'left', 'bold', 'Microsoft YaHei')
 
   // 版本徽章（红色圆角标签，与标题文字同高）
-  const versionText = 'v6.2.6'
+  const versionText = `v${pluginVersion}`
   const badgeX = titleX + measureTextWidth(ctx, titleText, Math.round(50 * bscale), 'bold', 'Microsoft YaHei') + Math.round(10 * bscale)
   const badgeY = titleDrawY
   const badgeW = measureTextWidth(ctx, versionText, Math.round(28 * bscale), 'bold', 'Microsoft YaHei') + Math.round(16 * bscale)

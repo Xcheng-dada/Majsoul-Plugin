@@ -10,7 +10,7 @@
 </div>
 <h4 align = "center"></h4>
 <div align="center">
-  <img src="https://img.shields.io/badge/version-6.2.6-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-6.2.7-blue" alt="version">
 </div>
 <div align="center">
   <a href="https://nodejs.org/">
