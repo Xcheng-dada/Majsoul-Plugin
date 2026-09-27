@@ -85,6 +85,36 @@ const SOUTH_ROOMS_BY_MODE = {
 }
 
 /**
+ * 魂天 rating（魂珠）制的单局变化表 —— **与房间 PT 表无关**，只由顺位决定。
+ *
+ * 规则（用户提供）：
+ *   四麻  东风战 1/2/3/4 位 → +0.3/+0.1/−0.1/−0.3；半庄（南场）→ +0.5/+0.2/−0.2/−0.5
+ *   三麻  东风战 1/2/3   位 → +0.3/ 0.0/−0.3   ；半庄（南场）→ +0.5/ 0.0/−0.5
+ * 各表之和为 0（零和），与魂珠总量守恒一致。
+ */
+const KONTEN_RATING_DELTA = {
+  4: {
+    east: [0.3, 0.1, -0.1, -0.3],
+    south: [0.5, 0.2, -0.2, -0.5]
+  },
+  3: {
+    east: [0.3, 0, -0.3],
+    south: [0.5, 0, -0.5]
+  }
+}
+
+/**
+ * 魂天魂珠刻度（用户提供）：
+ *   进入魂天时 10 魂珠，攒到 20 魂珠升段（下一级重新从 10 起）。
+ *   魂花 3 朵，阈值 5 / 10 / 15 珠 —— 跌到阈值以下即掉一朵花
+ *   （如 15 珠有 3 朵花，掉到 14.9 即掉第 3 朵）。
+ *   魂天1 跌破 0 珠 → 掉回雀圣3（与 PlayerLevel._adjustRankAndScore 一致）。
+ */
+const KONTEN_START_BEADS = 10
+const KONTEN_PROMOTE_BEADS = 20
+const KONTEN_FLOWER_BEADS = [15, 10, 5]   // 由高到低，用于找「下一个掉花点」
+
+/**
  * 该模式「南场」候选房间，按房间等级从高到低（王座 → 玉 → 金）。
  *
  * ⚠️ 必须配合 `stableRankEligibleRooms` 使用：仅按等级排序会导致
@@ -252,7 +282,7 @@ export function formatStableRank (value, mode = 4) {
  * 本函数是按同一套 PT 期望模型自行推导的：
  *
  *   需要 PT = 目标段位 end_point − 当前 score（升段）
- *             或 当前段位 init_point − 当前 score（掉段，此时为负需求）
+ *             或 当前 score − 0（掉段，掉段线为 0 分；init_point 是起始分而非掉段线）
  *   预计战数 = ceil(需要 PT / E[PT])，E[PT] 用**当前段位**的 4 位罚分计算
  *
  * 推导依据（已用参考样本交叉验证）：
@@ -266,9 +296,10 @@ export function formatStableRank (value, mode = 4) {
  *
  * @param {object} stats 牌谱屋 player_stats（需 rank_rates / rank_avg_score / level）
  * @param {number|string} roomId 房间 id
- * @param {number} currentScore 当前段位分（score，非 rating）
- * @returns {{promote:number|null, demote:number|null, ept:number}|null}
- *          promote/demote 为预计战数，不适用时为 null
+ * @param {number} currentScore 当前段位分（PT 制为 score；魂天为 rating×100 的内部 pt）
+ * @returns {{promote:number|null, demote:number|null, flower?:number|null, ept:number}|null}
+ *          promote/demote/flower 为预计战数，不适用时为 null；
+ *          flower 仅魂天有值（掉下一朵魂花所需战数）
  */
 export function estimateGamesToRankChange (stats, roomId, currentScore) {
   const rid = Number(roomId)
@@ -291,8 +322,50 @@ export function estimateGamesToRankChange (stats, roomId, currentScore) {
   const minor = realId % 100
   if (major === 7) major = 6
   if (major < 1 || major > 6) return null
-  // 魂天用 rating 制，与 PT 制不同，不做升掉段预测
-  if (major >= 6) return null
+  // 魂天：rating（魂珠）制，与 PT 制完全不同，需单独处理。
+  // 单局 rating 变化**只由顺位决定**（与平均点数、房间 PT 表无关）：
+  //   四麻  东风 1/2/3/4 位 → +0.3/+0.1/−0.1/−0.3；半庄 → +0.5/+0.2/−0.2/−0.5
+  //   三麻  东风 1/2/3   位 → +0.3/ 0.0/−0.3   ；半庄 → +0.5/ 0.0/−0.5
+  //
+  // 刻度（与 PlayerLevel._adjustRankAndScore 一致）：每级魂珠区间 [0, 20)，
+  // 进入时 10 珠、攒到 20 珠升段并重置为 10 珠（代码：>=20 时 minor++ 且 score-=10）；
+  // 跌破 0 珠则降级（代码：<0 时 minor-- 且 score+=10；魂天1 跌破 0 掉回雀圣3）。
+  // 魂花 3 朵（阈值 15/10/5 珠），跌到阈值以下掉一朵 —— 魂天玩家关心的是掉花，
+  // 故掉花预测单列 flower 字段（掉回上一级才是 demote）。
+  if (major >= 6) {
+    const table = KONTEN_RATING_DELTA[n]
+    if (!table) return null
+    const isEast = room.mode === 1 || room.mode === 11
+    const deltas = table[isEast ? 'east' : 'south']
+    const beads = currentScore / 100    // 传入为 pt(0~2000)，显示值 = pt/100
+    const lv = Math.max(1, Math.min(20, minor))
+    let eDelta = 0
+    for (let i = 0; i < n; i++) eDelta += deltas[i] * rates[i]
+    const out = { promote: null, demote: null, flower: null, ept: eDelta }
+
+    if (eDelta > 0.001) {
+      // 升段：攒到 20 珠（魂天20 已封顶）
+      if (lv < 20) {
+        const need = KONTEN_PROMOTE_BEADS - beads
+        if (need > 0) out.promote = Math.ceil(need / eDelta)
+      }
+    } else if (eDelta < -0.001) {
+      const loss = Math.abs(eDelta)
+      // 掉花：取「当前仍持有的最高阈值」，跌破它即掉一朵。
+      // 例：16 珠持有 3 朵（阈值 15），需跌到 <15 → 差 1 珠。
+      const held = KONTEN_FLOWER_BEADS.find(t => beads >= t)
+      if (held != null) {
+        const need = beads - held
+        // need 恰为 0 时（如正好 15 珠）仍需再输一局才会跌破，故下限 1 局
+        out.flower = need > 0 ? Math.ceil(need / loss) : 1
+      } else {
+        // 已无花可掉（<5 珠）→ 退化为预测掉回上一级
+        const need = beads
+        if (need > 0) out.demote = Math.ceil(need / loss)
+      }
+    }
+    return out
+  }
 
   const curLv = { major, minor: Math.max(1, Math.min(3, minor)) }
   // 段位表按模式分前缀（四麻 1xxxx / 三麻 2xxxx），不能硬编码 10000
@@ -313,9 +386,20 @@ export function estimateGamesToRankChange (stats, roomId, currentScore) {
     }
   }
 
-  // 掉段：跌到本段位 init_point 以下；初心/魂天不降
+  // 掉段：段位分跌到 0 即掉段（掉回上一段位）。
+  // ⚠️ 掉段线是 0，不是 curDef.init_point —— init_point 是「进入本段位时的起始分」，
+  // 不是掉段线。依据：所有段位 end_point 恒等于 2 × init_point，即
+  // 「起始分 + 净赚一份起始分 = 升段」，对称地「起始分 − 净亏一份起始分(=0) = 掉段」。
+  // 实例：雀杰3 起始分 1000，玩家刚升上来时正好是 1000/2000；
+  //       雀杰2 起始分 700，玩家 602 已低于起始分却仍在雀杰2 —— 若 700 是掉段线早已掉段。
+  //
+  // 注意：此处只处理 major ≤ 5（雀圣及以下）。**魂天同样会掉段** ——
+  // PlayerLevel._adjustRankAndScore 中「魂天1 且分数 < 0 → 雀圣3 (4500 分)」，
+  // 但魂天用 rating（魂珠）制：内部 pt 为 0~2000、显示值 = pt/100（0.0~20.0），
+  // 与段位表的 PT 制不同，故本函数在上方 `major >= 6` 处直接返回 null，
+  // 不对魂天做升/掉段战数预测（不是「魂天不降」）。
   if (ept < -0.01 && curDef.can_degrade) {
-    const need = currentScore - curDef.init_point   // 距离掉段线还有多少分
+    const need = currentScore   // 距离掉段线(0 分)还有多少分
     if (need > 0) out.demote = Math.ceil(need / Math.abs(ept))
   }
 

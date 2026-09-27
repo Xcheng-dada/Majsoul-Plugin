@@ -1491,7 +1491,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         let promo = ''
         if (typeof curScore === 'number') {
           const rc = estimateGamesToRankChange(estStats, best.room, curScore)
+          // 魂天的「掉魂花」在游戏内同样显示为掉段，故文案统一用「掉段」，
+          // 不出现「掉花」字样；flower 仅用于判断阈值（魂花 15/10/5）。
           if (rc?.promote) promo = `约${rc.promote}战升段`
+          else if (rc?.flower) promo = `约${rc.flower}战掉段`
           else if (rc?.demote) promo = `约${rc.demote}战掉段`
         }
         stableByMode[m] = { text: best.sr.text, promo, room: best.room, count: best.count }
