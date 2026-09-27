@@ -1452,28 +1452,33 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   if (!scopeInfo && !roomFilter) {
     for (const m of [4, 3]) {
       const rtKey = m === 3 ? 'threePlayer' : 'fourPlayer'
-      // 该模式在牌谱屋无有效数据时跳过（避免无谓请求）
-      if (m === 4 ? !data4Valid : !data3Valid) continue
+      const modeValid = m === 4 ? data4Valid : data3Valid
 
       // 当前段位优先取本地 API 的实时值，其次牌谱屋
       const modeData = m === 4 ? data4 : data3
       const curLevelId = realtimePT?.[rtKey]?.levelId ?? modeData.level?.id
       const candidates = stableRankEligibleRooms(m, curLevelId)
 
-      // 1) 牌谱屋：依次尝试，取**第一个有有效数据**的房间（准入范围内最高者）
+      // 1) 牌谱屋：依次尝试，取**第一个有有效数据**的房间（准入范围内最高者）。
+      // 牌谱屋该模式 404（如三麻未打过金之间）时不再逐个试房间，直接跳过以省请求。
       let best = null
-      for (const srRoom of candidates) {
-        try {
-          const southStats = await api.getPlayerStats(uid, m, String(srRoom))
-          if (!southStats || southStats.retcode || !southStats.count) continue
-          const sr = computeStableRank(southStats, srRoom, m)
-          if (!sr) continue
-          best = { room: srRoom, stats: southStats, sr, count: southStats.count }
-          break
-        } catch (e) { /* 无该南场数据（404）：继续尝试更低房间 */ }
+      if (modeValid) {
+        for (const srRoom of candidates) {
+          try {
+            const southStats = await api.getPlayerStats(uid, m, String(srRoom))
+            if (!southStats || southStats.retcode || !southStats.count) continue
+            const sr = computeStableRank(southStats, srRoom, m)
+            if (!sr) continue
+            best = { room: srRoom, stats: southStats, sr, count: southStats.count }
+            break
+          } catch (e) { /* 无该南场数据（404）：继续尝试更低房间 */ }
+        }
       }
 
-      // 2) 牌谱屋无数据 → 本地 API 兜底（铜/银等低段位玩家）
+      // 2) 牌谱屋无数据 → 本地 API 兜底。
+      // 本地段位场数据覆盖全部段位（finalPositionCounts 全量），牌谱屋不覆盖的低段位
+      // 与「该模式牌谱屋 404」两种情况都靠这里出结果 —— 此前用 continue 提前跳过整个
+      // 分支，导致三麻 404 时连本地兜底也走不到，安定段只能显示「—」（实测 UID 14367043）。
       if (!best) {
         const local = await stableRankFromLocal(uid, m, curLevelId)
         if (local) best = local
@@ -1607,16 +1612,19 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     // 友人场/比赛场（scopeInfo）数据来自本地 API 且仅有 和牌率/自摸率/放铳率，
     // 牌风维度不全，且场次性质与段位场不可比，故不出标签。
     // 注：安定段位与升/掉段已移到两张段位卡内显示（四麻卡显示四麻、三麻卡显示三麻），
-    // 此处只保留牌风与规则 tag。
+    // 此处只保留牌风标签。
+    // 牌风标签有两类来源（THsBot 亦将两者统称「牌风」）：
+    //   1) PCA 聚类牌风（PlayStyle.js）—— 需 10 个特征，牌谱屋缺失时算不出；
+    //   2) 规则牌风（PlayerTags.js）—— 只需 和牌率/放铳率/顺位率，本地 API 亦可得。
     if (!scopeInfo) {
-      // 牌风（PCA 聚类结果）排在规则 tag 之前，用独立配色区分来源
+      // 聚类牌风排在规则牌风之前，用独立配色区分来源
       const ps = computePlayStyle(extended, mode, data.count)
       if (ps) playerTags.push({ text: ps.name, type: 'playstyle' })
 
       const r = buildPlayerTags(data, extended, mode)
       if (r.reliable) {
-        // 牌风已给出打法取向时，规则 tag 里的「倾向」类与之语义重复
-        // （如牌风「均衡型」与倾向「均衡」、「门清防守型」与「门清防守」），
+        // 聚类牌风已给出打法取向时，规则牌风里的「倾向」类与之语义重复
+        // （如聚类「均衡型」与倾向「均衡」、「门清防守型」与「门清防守」），
         // 只保留强度/特征类，避免同一件事占两个标签位。
         const rest = ps ? r.tags.filter(t => t.type !== 'style') : r.tags
         playerTags.push(...rest)
