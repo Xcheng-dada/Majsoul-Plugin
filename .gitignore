@@ -20,6 +20,7 @@ logs/
 .vscode/
 .idea/
 .trae/
+.codebuddy/
 *.swp
 
 # 系统文件

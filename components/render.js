@@ -2,6 +2,9 @@ import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { loadResImage, drawText, drawRoundRect, applyMask } from './canvas.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
+import { buildPlayerTags, drawTags } from '../utils/PlayerTags.js'
+import { computePlayStyle } from '../utils/PlayStyle.js'
+import { computeStableRank, estimateGamesToRankChange, stableRankEligibleRooms } from '../utils/StableRank.js'
 import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
@@ -48,7 +51,14 @@ function loadAvatarConfig() {
   for (const lqcPath of lqcPaths) {
     const lqc = readJsonIfExists(lqcPath)
     if (!lqc) continue
-    const extendRes = readJsonIfExists(path.join(path.dirname(lqcPath), 'extendRes.json')) || {}
+    // extendRes.json 与 lqc.json 不一定同目录：data/ 下通常只有自动更新的 lqc.json，
+    // 而 extendRes.json 是随包分发的静态表（在 config/）。此前只找 lqc 同目录，
+    // 命中 data/lqc.json 时 extendRes 恒为空 {}，导致所有服饰资源 key 解析失败、
+    // 官方 CDN 404，立绘只能靠兜底镜像或干脆缺失。故两处都找。
+    const extendRes = readJsonIfExists(path.join(path.dirname(lqcPath), 'extendRes.json'))
+      || readJsonIfExists(path.join(pluginRoot, 'data', 'extendRes.json'))
+      || readJsonIfExists(path.join(pluginRoot, 'config', 'extendRes.json'))
+      || {}
     avatarConfigCache = { lqc: { ...lqc, ...custom }, extendRes }
     return avatarConfigCache
   }
@@ -183,10 +193,13 @@ async function loadAvatarImage(avatarId) {
   if (!info?.path) return null
 
   const charDirName = path.basename(info.path)
-  const localPath = findCachedAsset(charDirName, 'bighead.png')
-  if (localPath) {
+  // 同 loadPortraitImage：缓存不存在时给出目标路径，避免 fetchImageToFile(url, null)
+  // 在 mkdirSync(path.dirname(null)) 处抛 TypeError，导致头像永远下载不下来。
+  const cached = findCachedAsset(charDirName, 'bighead.png')
+  const localPath = cached || path.join(avatarCacheRoot, charDirName, 'bighead.png')
+  if (cached) {
     try {
-      return await loadImageFromCache(localPath)
+      return await loadImageFromCache(cached)
     } catch (err) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 本地头像缓存不可用 ${avatarId}: ${err.message}`)
     }
@@ -273,10 +286,14 @@ async function loadPortraitImage(avatarId) {
   if (!info?.path) return null
 
   const charDirName = path.basename(info.path)
-  const localPath = findCachedAsset(charDirName, 'full.png')
-  if (localPath) {
+  // 本地已有缓存则直接用；否则把下载结果落到 data/charactor/<角色>/full.png。
+  // 注意：localPath 为 null 时不能直接 mkdirSync(path.dirname(null))（会抛 TypeError），
+  // 此前因此导致「下载成功但保存失败、两条路径都报错」，立绘永远出不来。
+  const cached = findCachedAsset(charDirName, 'full.png')
+  const localPath = cached || path.join(avatarCacheRoot, charDirName, 'full.png')
+  if (cached) {
     try {
-      return await loadImageFromCache(localPath)
+      return await loadImageFromCache(cached)
     } catch (err) {
       if (typeof logger !== 'undefined') logger.warn(`[render.js] 本地服饰缓存不可用 ${avatarId}: ${err.message}`)
     }
@@ -764,7 +781,9 @@ function getActionText(action) {
 const api = new MajsoulApi()
 
 function getRandomPersonFull() {
-  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person_full')
+  // 用 pluginRoot 而非 process.cwd()：后者只有在 TRSS-Yunzai 根目录启动时才指向正确位置，
+  // 从插件目录直接运行（测试/脚本）会拼成 plugins/Majsoul-Plugin/plugins/Majsoul-Plugin/... 而 ENOENT。
+  const dirPath = path.join(pluginRoot, 'resources', 'person_full')
   try {
     const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
     if (files.length === 0) return null
@@ -778,7 +797,7 @@ function getRandomPersonFull() {
 
 // 从 resources/person（角色头像图）随机取一张，用于表外皮肤的头像兜底
 function getRandomPerson() {
-  const dirPath = path.join(process.cwd(), 'plugins', 'Majsoul-Plugin', 'resources', 'person')
+  const dirPath = path.join(pluginRoot, 'resources', 'person')
   try {
     const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.png'))
     if (files.length === 0) return null
@@ -925,30 +944,87 @@ export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, s
   return canvas
 }
 
-async function getRankIcon(level, stats, extended, mode = '4') {
-  const rankbg = await loadResImage('info_texture/rank_bg.png')
+/**
+ * 段位卡。
+ *
+ * 素材有两版，坐标不同，需按实际加载到的版本调整：
+ *   rank_bg2.png（新）：保持 600x320，把「场次/均顺位」上移 16px，
+ *                       在下方预留「安定段」标签（文字块中心 y≈170, x 232~294）
+ *   rank_bg.png（旧）：场次/均顺位在 y≈146，无安定段位
+ * 缺失新素材时回落到旧素材与原坐标，保证兼容。
+ *
+ * @param {object|null} stableInfo { text, promo } 该模式的安定段位与升/掉段预计
+ */
+async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null) {
+  // 初心段位无安定段位（数学上无定义），沿用旧素材 rank_bg.png 渲染，
+  // 不预留「安定段」标签位；其余段位用新素材 rank_bg2.png（带安定段位槽）。
+  // level.major_rank 是字符串段位名，level._majorRank 是数字 1~6。
+  const isBeginner = level && level._majorRank === 1
+  let rankbg, hasStableSlot = false
+  if (!isBeginner) {
+    try {
+      rankbg = await loadResImage('info_texture/rank_bg2.png')
+      hasStableSlot = true
+    } catch (e) {
+      rankbg = await loadResImage('info_texture/rank_bg.png')
+    }
+  } else {
+    rankbg = await loadResImage('info_texture/rank_bg.png')
+  }
   const canvas = createCanvas(rankbg.width, rankbg.height)
   const ctx = canvas.getContext('2d')
   ctx.drawImage(rankbg, 0, 0)
-  
+
   const rankIcon = await getRankImg(level.major_rank, level.minor_rank, mode, 156, level._adjustedScore)
   ctx.drawImage(rankIcon, 51, 28)
-  
+
   const avgRank = stats.avg_rank ? stats.avg_rank.toFixed(2) : "0.00"
   const firstRate = getRate(stats.rank_rates[0])
   const rongRate = getRate(extended["和牌率"])
   const chongRate = getRate(extended["放铳率"])
-  
-  drawText(ctx, level.full_tag, 296, 78, 44, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, level.real_display_score, 460, 78, 28, '#C1C1C1', 'center')
-  
-  drawText(ctx, String(stats.count), 282, 146, 32, '#FFFFFF', 'left', 'bold')
-  drawText(ctx, avgRank, 458, 146, 32, '#FFFFFF', 'left', 'bold')
-  
+
+  // 段位名与分数：新素材（rank_bg2）方框中心 y=62，旧素材（rank_bg）中心 y=78。
+  // 旧素材无安定段位槽，沿用原坐标。
+  const nameY = hasStableSlot ? 62 : 78
+  drawText(ctx, level.full_tag, 296, nameY, 44, '#FFFFFF', 'center', 'bold')
+  drawText(ctx, level.real_display_score, 461, nameY, 28, '#C1C1C1', 'center')
+
+  // 场次/均顺位：新素材标签中心 y=121，旧素材 y=146。
+  const rowY = hasStableSlot ? 121 : 146
+  drawText(ctx, String(stats.count), 282, rowY, 32, '#FFFFFF', 'left', 'bold')
+  drawText(ctx, avgRank, 458, rowY, 32, '#FFFFFF', 'left', 'bold')
+
+  // 安定段：素材自带「安定段」标签（中心 y=163，x 232~294），数值紧随其后。
+  // 只显示安定段位与预计战数，**不显示期望值**（E[PT] 对玩家无意义）。
+  // 可用横向区间仅 x 300~548（248px），内容过长时自动缩字号，避免与预计战数重叠。
+  // 该模式无南场数据时在数值位写「—」，避免看似渲染缺失。
+  if (hasStableSlot) {
+    const LEFT_X = 300, RIGHT_X = 548, AVAIL = RIGHT_X - LEFT_X
+    const ROW_Y = 163
+    if (stableInfo && stableInfo.text) {
+      const promo = stableInfo.promo || ''
+      // 从大到小试字号，取第一个能放下的组合
+      const steps = [[26, 21], [24, 19], [22, 18], [20, 16], [18, 15]]
+      let chosen = steps[steps.length - 1]
+      for (const [s1, s2] of steps) {
+        ctx.font = `bold ${s1}px "Microsoft YaHei", sans-serif`
+        const w1 = ctx.measureText(stableInfo.text).width
+        ctx.font = `bold ${s2}px "Microsoft YaHei", sans-serif`
+        const w2 = promo ? ctx.measureText(promo).width : 0
+        if (w1 + (promo ? 16 + w2 : 0) <= AVAIL) { chosen = [s1, s2]; break }
+      }
+      const [s1, s2] = chosen
+      drawText(ctx, stableInfo.text, LEFT_X, ROW_Y, s1, '#FFFFFF', 'left', 'bold')
+      if (promo) drawText(ctx, promo, RIGHT_X, ROW_Y, s2, '#FFFFFF', 'right', 'bold')
+    } else {
+      drawText(ctx, '—', LEFT_X, 170, 26, '#5A6272', 'left', 'bold')
+    }
+  }
+
   drawText(ctx, firstRate, 155, 239, 32, '#FFFFFF', 'center', 'bold')
   drawText(ctx, rongRate, 300, 239, 32, '#FFFFFF', 'center', 'bold')
   drawText(ctx, chongRate, 445, 239, 32, '#FFFFFF', 'center', 'bold')
-  
+
   return canvas
 }
 
@@ -1058,6 +1134,67 @@ function buildLocalRecord (entry, nickname, mode) {
 // 本地数据卡片（details_bg_3/4.png）下方对局走势区：
 // 以 record_bg_3/4.png 为背景（在原生 1000x400 坐标系绘制，再整体缩放到卡片趋势区），
 // 按旧→新画最近16场顺位点线，顶部写「最近16场对局记录走势」标题。
+/**
+ * 牌谱屋查不到时（铜/银等金之间以下段位），用本地 API 的段位场数据算安定段位。
+ *
+ * 本地 API 的 statistics 按 mahjongCategory × gameCategory 给出「段位场」整体数据，
+ * **不区分房间** —— 这正适合按段位判断的用法（用户确认：按段位判断，用混合数据算）。
+ *
+ * 数据构成（实测本地 API）：
+ *   finalPositionCounts  各顺位次数，**全量**（含铜银金玉，如 1456 场）
+ *   recentGames[{rank,finalPoint}]  最近若干场（**上限 50 场**），用于聚合各顺位平均点数
+ *
+ * 因此：顺位率用全量 fpc（可靠），各顺位平均点数用 recentGames 聚合（样本较小，
+ * 是精度的主要瓶颈）。对低段位玩家而言这是唯一可用的途径 —— 牌谱屋完全不覆盖他们。
+ *
+ * @returns {{room:number, stats:object, sr:object, count:number}|null}
+ */
+async function stableRankFromLocal (uid, mode, curLevelId) {
+  try {
+    const m = String(mode) === '3' ? 3 : 4
+    const n = m === 3 ? 3 : 4
+    const mc = m === 3 ? 2 : 1
+    const statRes = await getPlayerStatistics(uid)
+    if (!statRes || !Array.isArray(statRes.entries)) return null
+    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
+      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+    if (!entry) return null
+
+    const fpc = entry.finalPositionCounts || []
+    const total = fpc.slice(0, n).reduce((a, b) => a + (b || 0), 0)
+    if (!total) return null
+
+    // recentGames → 各顺位平均点数
+    const cnt = new Array(n).fill(0), sum = new Array(n).fill(0)
+    for (const g of (entry.recentGames || [])) {
+      const r = g?.rank
+      if (!(r >= 1 && r <= n)) continue
+      cnt[r - 1]++; sum[r - 1] += (g.finalPoint || 0)
+    }
+    let aggTotal = cnt.reduce((a, b) => a + b, 0)
+    if (!aggTotal) return null
+    const rankAvgScore = sum.map((s, i) => cnt[i] ? s / cnt[i] : 0)
+
+    // 取准入范围内最高房间作为计算基准
+    const rooms = stableRankEligibleRooms(m, curLevelId)
+    if (!rooms.length) return null
+
+    const stats = {
+      count: total,
+      rank_rates: fpc.slice(0, n).map(c => (c || 0) / total),
+      rank_avg_score: rankAvgScore,
+      level: { id: curLevelId }
+    }
+    for (const room of rooms) {
+      const sr = computeStableRank(stats, room, m)
+      if (sr) return { room, stats, sr, count: total, local: true }
+    }
+    return null
+  } catch (e) {
+    return null
+  }
+}
+
 async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null) {
   const recordBg = await loadResImage(mode === '3' ? 'info_texture/record_bg_3.png' : 'info_texture/record_bg_4.png')
   // 走势图放大到填满卡片趋势区（y=140 至卡片底部），水平居中，贴近牌谱屋原生大小
@@ -1299,6 +1436,70 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   let level4Score = data4.level?.score + data4.level?.delta || 0
   let level3Score = data3.level?.score + data3.level?.delta || 0
 
+  // 安定段位：四麻/三麻各自独立计算（卡片有两张段位卡，各显示各的）。
+  // 仅在「无房间筛选」时计算（有筛选时房间已指定，语义交给房间筛选本身）。
+  // 必须用**单一南场**数据：东场与南场的 PT 表完全不同（玉东 55/30/−80，玉南 110/55/−165），
+  // 东+南混合会引入偏差（实测可达 0.39 星）。
+  //
+  // 房间选择：**先按当前段位过滤准入房间**，再取其中最高者（王座 > 玉 > 金 > 银 > 铜）。
+  // 不能只按等级排序：雀豪玩家的王南数据是过去雀圣时期打的，用那段算会产出
+  // 「雀杰3.99」这类与当前水平无关的结果（实测 UID 16644588）。
+  //
+  // 数据来源：优先牌谱屋（精度高）；牌谱屋查不到时（铜/银等金之间以下段位，
+  // 实测恒为 404）用本地 API 兜底 —— 本地 API 的段位场数据覆盖**全部段位**，
+  // 且 finalPositionCounts 是全量顺位率（不区分房间，正适合按段位判断的用法）。
+  const stableByMode = { 4: null, 3: null }
+  if (!scopeInfo && !roomFilter) {
+    for (const m of [4, 3]) {
+      const rtKey = m === 3 ? 'threePlayer' : 'fourPlayer'
+      // 该模式在牌谱屋无有效数据时跳过（避免无谓请求）
+      if (m === 4 ? !data4Valid : !data3Valid) continue
+
+      // 当前段位优先取本地 API 的实时值，其次牌谱屋
+      const modeData = m === 4 ? data4 : data3
+      const curLevelId = realtimePT?.[rtKey]?.levelId ?? modeData.level?.id
+      const candidates = stableRankEligibleRooms(m, curLevelId)
+
+      // 1) 牌谱屋：依次尝试，取**第一个有有效数据**的房间（准入范围内最高者）
+      let best = null
+      for (const srRoom of candidates) {
+        try {
+          const southStats = await api.getPlayerStats(uid, m, String(srRoom))
+          if (!southStats || southStats.retcode || !southStats.count) continue
+          const sr = computeStableRank(southStats, srRoom, m)
+          if (!sr) continue
+          best = { room: srRoom, stats: southStats, sr, count: southStats.count }
+          break
+        } catch (e) { /* 无该南场数据（404）：继续尝试更低房间 */ }
+      }
+
+      // 2) 牌谱屋无数据 → 本地 API 兜底（铜/银等低段位玩家）
+      if (!best) {
+        const local = await stableRankFromLocal(uid, m, curLevelId)
+        if (local) best = local
+      }
+
+      if (best) {
+        // 升/掉段预计战数：当前段位与分数优先取本地 API 的实时值
+        // （牌谱屋的 level.score 有延迟，实时值才能算准「还差多少分」）。
+        const liveId = realtimePT?.[rtKey]?.levelId
+        const liveScore = realtimePT?.[rtKey]?.score
+        const estStats = (liveId != null)
+          ? { ...best.stats, level: { ...best.stats.level, id: liveId } }
+          : best.stats
+        const curScore = (liveScore != null) ? liveScore : best.stats.level?.score
+        let promo = ''
+        if (typeof curScore === 'number') {
+          const rc = estimateGamesToRankChange(estStats, best.room, curScore)
+          if (rc?.promote) promo = `约${rc.promote}战升段`
+          else if (rc?.demote) promo = `约${rc.demote}战掉段`
+        }
+        stableByMode[m] = { text: best.sr.text, promo, room: best.room, count: best.count }
+      }
+    }
+  }
+  const stableRank = stableByMode[mainMode]
+
   if (realtimePT) {
     if (realtimePT.fourPlayer) {
       // 优先用本地 API 直给的 levelId（已包含模式位 1/2），跳过 parseRankFromText
@@ -1373,6 +1574,16 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const mid = await loadResImage('info_texture/mid.png')
   const title = await loadResImage('info_texture/title.png')
 
+  // 取 bg 底边像素色，供画布向下延伸（牌风标签行）时填充，避免出现黑色断层
+  let _bgBottomColor = '#0d1017'
+  try {
+    const probe = createCanvas(1, 1)
+    const pctx = probe.getContext('2d')
+    pctx.drawImage(bg, 0, bg.height - 1, 1, 1, 0, 0, 1, 1)
+    const d = pctx.getImageData(0, 0, 1, 1).data
+    _bgBottomColor = `rgb(${d[0]},${d[1]},${d[2]})`
+  } catch (e) { /* 取色失败时用兜底色 */ }
+
   // 主模式牌谱屋无数据（本地兜底）时，详情区使用本地数据专用卡片（无柱状图，卡片更短）；
   // 友人场/比赛场始终出本地卡
   const useLocalDetail = scopeInfo ? true : (mainMode === 3 ? !data3Valid : !data4Valid)
@@ -1383,11 +1594,69 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   // 本地卡片不含柱状图区域：画布高度裁到「卡片底部 + 页脚」，不保留原 2200 高度
   const detailBottom = 1188 + detailCanvas.height
-  const canvasHeight = useLocalDetail ? detailBottom + 63 : bg.height
+
+  // 牌风标签：先算出来，据此决定是否需要为标签行加高画布。
+  // 详情卡底部到页脚之间只有约 24px（标准卡 2138~2162），塞不下可读的标签行，
+  // 因此有标签时画布向下延伸 TAG_ROW_H + TAG_GAP，页脚同步下移。
+  // 样本不足（< MIN_GAMES_FOR_TAGS 场）时不出标签，避免统计噪声误导。
+  let playerTags = []
+  try {
+    // 友人场/比赛场（scopeInfo）数据来自本地 API 且仅有 和牌率/自摸率/放铳率，
+    // 牌风维度不全，且场次性质与段位场不可比，故不出标签。
+    // 注：安定段位与升/掉段已移到两张段位卡内显示（四麻卡显示四麻、三麻卡显示三麻），
+    // 此处只保留牌风与规则 tag。
+    if (!scopeInfo) {
+      // 牌风（PCA 聚类结果）排在规则 tag 之前，用独立配色区分来源
+      const ps = computePlayStyle(extended, mode, data.count)
+      if (ps) playerTags.push({ text: ps.name, type: 'playstyle' })
+
+      const r = buildPlayerTags(data, extended, mode)
+      if (r.reliable) {
+        // 牌风已给出打法取向时，规则 tag 里的「倾向」类与之语义重复
+        // （如牌风「均衡型」与倾向「均衡」、「门清防守型」与「门清防守」），
+        // 只保留强度/特征类，避免同一件事占两个标签位。
+        const rest = ps ? r.tags.filter(t => t.type !== 'style') : r.tags
+        playerTags.push(...rest)
+      }
+    }
+  } catch (e) {
+    console.warn(`[render.js] 牌风标签计算失败: ${e.message}`)
+  }
+  // 标签行高度与字号：卡片宽 1000px，字号过小（原 15px）在手机上难以辨认，放大到 20px。
+  // 标签放不下时先自动缩字号（最低 14px），仍放不下才折叠为 +N。
+  //
+  // 标准（牌谱屋）卡：牌风标签放进详情卡内、背景图「牌风」标题右侧的专用带。
+  // detail_bg 实测：数据分隔线 y200~203，「牌风」标题 x113~154 / y227~247，
+  // 带下线 y272~275 → 可用带 y204~271（68px）。
+  // 纵向：2 行（行高 28 + 间距 8 = 64px）上下各留 2px，均匀分布。
+  // 横向：**左对齐**紧贴标题（标题右边界 x154 + 14px 间距 = x168），
+  // 右边界收到 x921（卡体 x72~927 内）；居中排布会让首行左侧空出 30px+，显得离标题过远。
+  const TAG_DETAIL_ROW_H = 28
+  const TAG_DETAIL_GAP = 8
+  const TAG_DETAIL_Y0 = 204   // 带顶（y204~271）；实际起点由 centerInHeight 垂直居中决定
+  const TAG_DETAIL_X = 168
+  const TAG_DETAIL_W = 753
+  const TAG_DETAIL_MAXLINES = 2
+  const TAG_DETAIL_FONT = 24
+  const TAG_DETAIL_PADX = 14
+  const TAG_DETAIL_BAND_H = 68   // y204~271，用于垂直居中
+  // 本地兜底卡（details_bg_3/4）暂无牌风存放带，仍画在主卡昵称与段位卡之间的空白带（y 512~548）。
+  const TAG_ROW_H = 34
+  const TAG_GAP = 11
+  const TAG_Y = 512
+  const tagExtra = 0
+
+  const baseHeight = useLocalDetail ? detailBottom + 63 : bg.height
+  const canvasHeight = baseHeight + tagExtra
   const canvas = createCanvas(bg.width, canvasHeight)
   const ctx = canvas.getContext('2d')
 
   ctx.drawImage(bg, 0, 0)
+  // 画布向下延伸时，延伸区用 bg 底边色填充，避免出现纯黑断层
+  if (tagExtra > 0 && canvasHeight > bg.height) {
+    ctx.fillStyle = _bgBottomColor || '#0d1017'
+    ctx.fillRect(0, bg.height, bg.width, canvasHeight - bg.height)
+  }
   ctx.drawImage(title, 0, 0)
 
   const subTitle = roomFilter ? roomFilter.name : `UID ${uid}`
@@ -1431,9 +1700,15 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const lzChong = await getLzBar("chong", lzFRate, flFRate, allChong > 0 ? Math.max(0, 1 - lzFRate - flFRate) : 0)
   const lzChongz = await getLzBar("chong_to", lzCRate, flCRate, mtCRate)
 
-  detailCtx.drawImage(lzRong, 0, 238)
-  detailCtx.drawImage(lzChong, 0, 328)
-  detailCtx.drawImage(lzChongz, 0, 418)
+  // 三组柱状图落点：原 238/328/418，为牌风带让位并避免压住走势区蓝线。
+  // 关键：lz_*.png 源图内容在局部 y14~38（组标题/图例），而 getLzBar 程序绘制的
+  // 彩色条+百分比在局部 y51~81 —— 决定纵向占位的是后者。
+  // 约束：柱1 彩条顶 (y+51) ≥ 272（牌风带下线 y268~271 之下）；
+  //       柱3 彩条底 (y+81) ≤ 551（走势区线 y551~554 之上）。
+  // 取 272/362/452 → 彩条 323~353 / 413~443 / 503~533，两组约束均满足。
+  detailCtx.drawImage(lzRong, 0, 272)
+  detailCtx.drawImage(lzChong, 0, 362)
+  detailCtx.drawImage(lzChongz, 0, 452)
   
   // 生成最近对局记录
   const recordBgPath = mode === "3" ? 'info_texture/record_bg_3.png' : 'info_texture/record_bg_4.png'
@@ -1508,20 +1783,48 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     await drawLocalTrend(detailCtx, localEntry?.recentGames || [], mode, scopeLabel)
   }
 
+  // 牌风标签：标准（牌谱屋）卡画进详情卡内部、新分隔线上方的空白带（detailCtx 坐标 y224~296）；
+  // 本地兜底卡暂无该存放带，退回主卡昵称与段位卡之间（ctx 坐标 y512）。
+  if (playerTags.length > 0) {
+    const intoDetail = !useLocalDetail
+    const tagCtx = intoDetail ? detailCtx : ctx
+    try {
+      drawTags(tagCtx, playerTags, {
+        x: intoDetail ? TAG_DETAIL_X : 12,
+        y: intoDetail ? TAG_DETAIL_Y0 : TAG_Y,
+        maxWidth: intoDetail ? TAG_DETAIL_W : 976,
+        height: intoDetail ? TAG_DETAIL_ROW_H : TAG_ROW_H,
+        fontSize: intoDetail ? TAG_DETAIL_FONT : 20,
+        minFontSize: 14,
+        shrinkSteps: 3,
+        gap: intoDetail ? TAG_DETAIL_GAP : TAG_GAP,
+        padX: intoDetail ? TAG_DETAIL_PADX : 18,
+        // 详情卡左对齐紧贴「牌风」标题；主卡保持居中
+        align: intoDetail ? 'left' : 'center',
+        // 详情卡：在 68px 带内垂直居中（1 行居中、2 行上下均匀）；主卡保持原顶部对齐
+        centerInHeight: intoDetail ? TAG_DETAIL_BAND_H : null,
+        maxLines: intoDetail ? TAG_DETAIL_MAXLINES : 3
+      })
+    } catch (e) {
+      console.warn(`[render.js] 牌风标签绘制失败: ${e.message}`)
+    }
+  }
+
   // 拼接整体画面
   ctx.drawImage(detailCanvas, useLocalDetail ? Math.floor((bg.width - detailCanvas.width) / 2) : 0, 1188)
   ctx.drawImage(mid, 0, 1161)
   drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
   // 页脚：本地卡片较短，页脚上移到卡片下方（距卡片底部 43px），标准卡保持原位置
   // 本地卡为原生 JS 实现（数据来自本地 API/雀魂官方），无 Python→JS 移植署名；标准卡保留移植署名
-  const footerY = useLocalDetail ? detailBottom + 43 : 2151 + 30
+  const footerY = (useLocalDetail ? detailBottom + 43 : 2151 + 30) + tagExtra
   const footerText = useLocalDetail
     ? 'Majsoul-Plugin by 小橙c | Data: 雀魂官方'
     : 'Majsoul-Plugin by 小橙c | Data: 牌谱屋 + 雀魂官方 | Python-to-JS移植: QingFeng'
+
   drawText(ctx, footerText, 500, footerY, 24, '#FFFFFF', 'center', 'bold')
 
-  const rank4Icon = await getRankIcon(level4, data4, extended4, "4")
-  const rank3Icon = await getRankIcon(level3, data3, extended3, "3")
+  const rank4Icon = await getRankIcon(level4, data4, extended4, "4", stableByMode[4])
+  const rank3Icon = await getRankIcon(level3, data3, extended3, "3", stableByMode[3])
 
   const charBg = await loadResImage('info_texture/char_bg.png')
   const charFg = await loadResImage('info_texture/char_fg.png')
