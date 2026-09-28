@@ -1,4 +1,4 @@
-import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas'
+import { createCanvas, loadImage } from '@napi-rs/canvas'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'

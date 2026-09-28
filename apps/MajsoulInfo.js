@@ -1,7 +1,7 @@
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { drawMajsInfoImg } from '../components/render.js';
-import { ROOM_FILTERS, matchRoomFilter } from './MajsoulRecords.js';
+import { matchRoomFilter } from './MajsoulRecords.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { getPlayerBrief, resolveFriendId } from '../utils/MajsoulProtocolClient.js';
 import { getMainUid as lookupMainUid } from '../utils/MajsoulBindings.js';

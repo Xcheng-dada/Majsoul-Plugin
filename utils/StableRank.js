@@ -30,9 +30,6 @@ function loadCfg () {
   return _cfg
 }
 
-const RANK_NAMES = ['初心', '雀士', '雀杰', '雀豪', '雀圣', '魂天']
-const LEVEL_MAX_POINTS = [20, 80, 200, 600, 800, 1000, 1200, 1400, 2000, 2800, 3200, 3600, 4000, 6000, 9000]
-
 // 闭式解适用房间：仅四麻/三麻的「玉南 / 王南」。
 // 金之间不在牌谱屋 estimateStableLevel2 的白名单里（其判定为房间 ∈ {玉, 王座}），
 // 走通用逐级试探 estimateStableLevel —— 同样能得出安定段位，只是格式带 +/- 后缀。
@@ -170,17 +167,6 @@ export function stableRankEligibleRooms (mode, levelId) {
 const isKonten = lv => lv.major >= 6
 const sameLevel = (a, b) => a.major === b.major && a.minor === b.minor
 
-function tagOf (lv) {
-  if (isKonten(lv)) return RANK_NAMES[5]
-  return RANK_NAMES[lv.major - 1] + lv.minor
-}
-function maxPoint (lv) {
-  if (isKonten(lv)) return lv.minor === 20 ? 0 : 2000
-  return LEVEL_MAX_POINTS[3 * (lv.major - 1) + lv.minor - 1] || 0
-}
-function startingPoint (lv) {
-  return lv.major === 1 ? 0 : maxPoint(lv) / 2
-}
 function nextLevel (lv) {
   let major = lv.major, minor = lv.minor + 1
   if (minor > 3 && !isKonten(lv)) { major++; minor = 1 }
@@ -458,8 +444,10 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
       if (below) return fmt(below, E(below))
       break
     }
-    // 魂天用 rating 制，与 PT 制不同，不做换算
-    if (isKonten(lv)) return { text: `${tagOf(lv)}+${e.toFixed(2)}`, approximate: true }
+    // 魂天：E[PT] 仍为正说明稳定段位已达魂天（如雀圣3 强顺位率确实会升魂天）。
+    // 魂天用 rating（魂珠）制，PT 制模型在此失效，故只报段位名、不带 E[PT] 数值
+    // —— 此前输出「魂天+63.65」，那个 +63.65 是 PT 量纲的期望值，对魂天无意义。
+    if (isKonten(lv)) return { text: '魂天', approximate: true }
     below = lv
     const nx = nextLevel(lv)
     if (!allowed(nx, roomId) || sameLevel(nx, below)) {

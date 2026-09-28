@@ -2,7 +2,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import MajsoulApi from './MajsoulApi.js';
 import { getRoomName, isThreePlayerMode, PlayerLevel } from './PlayerLevel.js';
 import { getRankImg } from '../components/render.js';
