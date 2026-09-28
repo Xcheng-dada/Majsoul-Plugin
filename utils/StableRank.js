@@ -528,6 +528,26 @@ export function computeStableRank (stats, roomId, mode) {
   if (major < 1 || major > 6) return null
   const startLevel = { major, minor: major >= 6 ? Math.max(1, Math.min(20, minor)) : Math.max(1, Math.min(3, minor)) }
 
+  // 魂天：rating（魂珠）制，PT 制的安定段位模型不适用。
+  // 单局魂珠变化只由顺位决定（与打点、房间 PT 表无关），故不能用 expectedPT 外推；
+  // 此前 walkStableRank 会把 E[PT]（PT 量纲，十几~几十）直接拼成「魂天+54.55」，
+  // 而魂天真实变化量是 ±0.3/±0.5 魂珠，两者无换算关系（÷100 只是数值巧合）。
+  // 这里改为输出 rating 制的有意义结果：按顺位率算出的**期望魂珠变化/局**。
+  if (isKonten(startLevel)) {
+    const table = KONTEN_RATING_DELTA[n]
+    if (!table) return null
+    const isEast = room.mode === 1 || room.mode === 11
+    const deltas = table[isEast ? 'east' : 'south']
+    let e = 0
+    for (let i = 0; i < n; i++) e += deltas[i] * rates[i]
+    // 显示形如「+0.12 珠/局」；符号明确给出涨跌方向。
+    // 浮点误差会让零和顺位率算出 −1.4e−17，取整到 2 位后按 0 处理，避免出现「−0.00」。
+    const rounded = Math.round(e * 100) / 100
+    const sign = rounded > 0 ? '+' : (rounded < 0 ? '−' : '±')
+    const text = `${sign}${Math.abs(rounded).toFixed(2)} 珠/局`
+    return { text, value: rounded, expBeads: rounded, konten: true, approximate: true }
+  }
+
   // 闭式解（仅南场房间）。三麻同样适用：末位率取 rank_rates[2]。
   if (CLOSED_FORM_ROOMS.has(rid) && !isKonten(startLevel)) {
     const expPT = expectedPT(stats, room, startLevel, false)
