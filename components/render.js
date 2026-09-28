@@ -1195,15 +1195,33 @@ async function stableRankFromLocal (uid, mode, curLevelId) {
   }
 }
 
-async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null) {
+/**
+ * 本地兜底卡（details_bg_3/4，870x646）的牌风带与走势图布局。
+ *
+ * bg 已自带「牌风」标题（x45~86, y179~199）与牌风下线（y224~227），
+ * 牌风带净空 y156~223（68px，容 2 行 28+8+28=64px），走势区自 y228 起。
+ * 走势图按 **1:1 原尺寸**贴入（不缩放）—— record_bg 1000x400，
+ * 卡片宽 870 故水平居中后左右各裁 65px（内容实际在 x116~880，不受影响）。
+ */
+const LOCAL_TAG_X = 112         // 标签起点（「牌风」标题右边界 x86 + 26px 间距）
+const LOCAL_TAG_W = 709         // 到数据蓝线右端 x821
+const LOCAL_TAG_Y0 = 156        // 牌风带顶（数据蓝线 y152~155 之下）
+const LOCAL_TAG_BAND_H = 68     // 牌风带高（y156~223）
+const LOCAL_TAG_ROW_H = 28
+const LOCAL_TAG_GAP = 8
+const LOCAL_TAG_FONT = 24
+const LOCAL_TAG_PADX = 14
+const LOCAL_TREND_TOP = 228     // 走势图起点（牌风下线 y224~227 之后）
+
+async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null, top = LOCAL_TREND_TOP) {
   const recordBg = await loadResImage(mode === '3' ? 'info_texture/record_bg_3.png' : 'info_texture/record_bg_4.png')
-  // 走势图放大到填满卡片趋势区（y=140 至卡片底部），水平居中，贴近牌谱屋原生大小
+  // **1:1 原尺寸**贴入（不缩放），水平居中。record_bg 为 1000x400 而卡片宽 870，
+  // 居中后左右各溢出 65px —— 溢出部分落在卡外且为透明边（内容实际在 x116~880），
+  // 故不影响观感；这样走势图保持原生大小，不会被压缩变形。
   const cw = ctx.canvas.width
-  const ch = ctx.canvas.height
-  const top = 140
-  const scale = (ch - top) / recordBg.height
-  const newW = Math.round(recordBg.width * scale)
-  const newH = Math.round(recordBg.height * scale)
+  const scale = 1
+  const newW = recordBg.width
+  const newH = recordBg.height
   const drawX = Math.round((cw - newW) / 2)
   const rc = createCanvas(recordBg.width, recordBg.height)
   const rctx = rc.getContext('2d')
@@ -1603,20 +1621,20 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 本地卡片不含柱状图区域：画布高度裁到「卡片底部 + 页脚」，不保留原 2200 高度
   const detailBottom = 1188 + detailCanvas.height
 
-  // 牌风标签：先算出来，据此决定是否需要为标签行加高画布。
-  // 详情卡底部到页脚之间只有约 24px（标准卡 2138~2162），塞不下可读的标签行，
-  // 因此有标签时画布向下延伸 TAG_ROW_H + TAG_GAP，页脚同步下移。
+  // 牌风标签：两类卡都画在详情卡内的「牌风」带里，标题与分隔线均由各自的
+  // bg 自带（标准卡 detail_bg.png、本地卡 details_bg_3/4.png），因此不需要为标签加高画布。
   // 样本不足（< MIN_GAMES_FOR_TAGS 场）时不出标签，避免统计噪声误导。
   let playerTags = []
   try {
-    // 友人场/比赛场（scopeInfo）数据来自本地 API 且仅有 和牌率/自摸率/放铳率，
-    // 牌风维度不全，且场次性质与段位场不可比，故不出标签。
-    // 注：安定段位与升/掉段已移到两张段位卡内显示（四麻卡显示四麻、三麻卡显示三麻），
-    // 此处只保留牌风标签。
     // 牌风标签有两类来源（THsBot 亦将两者统称「牌风」）：
     //   1) PCA 聚类牌风（PlayStyle.js）—— 需 10 个特征，牌谱屋缺失时算不出；
     //   2) 规则牌风（PlayerTags.js）—— 只需 和牌率/放铳率/顺位率，本地 API 亦可得。
-    if (!scopeInfo) {
+    //
+    // 友人场/比赛场同样计算：fillModeFromLocal 填充的字段与 gc 无关，
+    // 顺位率（finalPositionCounts）+ 和牌率 + 放铳率 均取自本地 API 真实数据，
+    // 足以判定规则牌风（实测友人场可出「防守大师 / 绝好调」）。
+    // 聚类牌风因缺 副露率/立直率 等 7 个特征，在这些场景自然为 null，无需特殊处理。
+    {
       // 聚类牌风排在规则牌风之前，用独立配色区分来源
       const ps = computePlayStyle(extended, mode, data.count)
       if (ps) playerTags.push({ text: ps.name, type: 'playstyle' })
@@ -1633,10 +1651,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   } catch (e) {
     console.warn(`[render.js] 牌风标签计算失败: ${e.message}`)
   }
-  // 标签行高度与字号：卡片宽 1000px，字号过小（原 15px）在手机上难以辨认，放大到 20px。
-  // 标签放不下时先自动缩字号（最低 14px），仍放不下才折叠为 +N。
+  // 标签行高度与字号：两类卡都用 24px（原 20px，再早 15px；手机上过小难辨认）。
+  // 标签放不下时先自动缩字号（最低 14px），仍缩不下才折叠为 +N。
   //
-  // 标准（牌谱屋）卡：牌风标签放进详情卡内、背景图「牌风」标题右侧的专用带。
+  // 标准（牌谱屋）卡：标签放进详情卡内、背景图「牌风」标题右侧的专用带。
   // detail_bg 实测：数据分隔线 y200~203，「牌风」标题 x113~154 / y227~247，
   // 带下线 y272~275 → 可用带 y204~271（68px）。
   // 纵向：2 行（行高 28 + 间距 8 = 64px）上下各留 2px，均匀分布。
@@ -1647,14 +1665,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const TAG_DETAIL_Y0 = 204   // 带顶（y204~271）；实际起点由 centerInHeight 垂直居中决定
   const TAG_DETAIL_X = 168
   const TAG_DETAIL_W = 753
-  const TAG_DETAIL_MAXLINES = 2
   const TAG_DETAIL_FONT = 24
   const TAG_DETAIL_PADX = 14
   const TAG_DETAIL_BAND_H = 68   // y204~271，用于垂直居中
-  // 本地兜底卡（details_bg_3/4）暂无牌风存放带，仍画在主卡昵称与段位卡之间的空白带（y 512~548）。
-  const TAG_ROW_H = 34
-  const TAG_GAP = 11
-  const TAG_Y = 512
+  // 本地兜底卡（details_bg_3/4）的牌风带参数见文件顶部 LOCAL_TAG_* 常量。
   const tagExtra = 0
 
   const baseHeight = useLocalDetail ? detailBottom + 63 : bg.height
@@ -1771,15 +1785,16 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const recordTitle = roomFilter ? `${roomFilter.name}最近16场对局记录走势` : '最近16场对局记录走势'
   drawText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', 'bold')
   } else {
-    // 本地数据卡片（details_bg_3/4.png）：顶部数据（画在标签上方）+ 下方对局走势区（record_bg + 标题）
-    // 标签：三麻「自摸率|荣和率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」，
-    // 四个标签中心 x = 153/293/569/706，文字带 y≈86-107，数值画在上方中心 y≈60
+    // 本地数据卡片（details_bg_3/4.png）：顶部数据（画在标签上方）+ 牌风带 + 下方对局走势区
+    // 标签：三麻「自摸率|荣和率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」。
+    // 新 bg（870x646）把标签文字带下移到 y110~130（中心 120），故数值画在 y86
+    // （与旧版一致的 34px 间距）；四个标签中心 x 取自实测 152/291/566/705。
     // 三麻第二槽位为荣和率（ronRate），与背景图标签「荣和率」对应；和牌率在段位卡已显示
     const localEntry = mainMode === 3 ? localEntry3 : localEntry4
     const fpc = localEntry?.finalPositionCounts || []
     const fpcTotal = fpc.reduce((a, b) => a + b, 0) || 1
-    const slotX = [153, 293, 569, 706]
-    const valueY = 60
+    const slotX = [152, 291, 566, 705]
+    const valueY = 86
     if (mode === '3') {
       drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
       drawText(detailCtx, getRate(localEntry?.ronRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
@@ -1791,30 +1806,31 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
       drawText(detailCtx, getRate((fpc[3] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
     }
+    // 牌风标题与牌风下线由 details_bg_3/4 自带（x45~86 / y179~199 与 y224~227），
+    // 无需代码补画；标签直接画在牌风带 y156~223 内即可。
     await drawLocalTrend(detailCtx, localEntry?.recentGames || [], mode, scopeLabel)
   }
 
-  // 牌风标签：标准（牌谱屋）卡画进详情卡内部、新分隔线上方的空白带（detailCtx 坐标 y224~296）；
-  // 本地兜底卡暂无该存放带，退回主卡昵称与段位卡之间（ctx 坐标 y512）。
+  // 牌风标签：两类详情卡都画在卡内的「牌风」带里（视觉统一）。
+  //   标准卡：detail_bg.png 自带「牌风」标题，带 y204~271，标签紧贴标题右侧左对齐；
+  //   本地卡：details_bg_3/4 无该标题，由上方代码补画，带 y138~206。
   if (playerTags.length > 0) {
-    const intoDetail = !useLocalDetail
-    const tagCtx = intoDetail ? detailCtx : ctx
     try {
-      drawTags(tagCtx, playerTags, {
-        x: intoDetail ? TAG_DETAIL_X : 12,
-        y: intoDetail ? TAG_DETAIL_Y0 : TAG_Y,
-        maxWidth: intoDetail ? TAG_DETAIL_W : 976,
-        height: intoDetail ? TAG_DETAIL_ROW_H : TAG_ROW_H,
-        fontSize: intoDetail ? TAG_DETAIL_FONT : 20,
+      drawTags(detailCtx, playerTags, {
+        x: useLocalDetail ? LOCAL_TAG_X : TAG_DETAIL_X,
+        y: useLocalDetail ? LOCAL_TAG_Y0 : TAG_DETAIL_Y0,
+        maxWidth: useLocalDetail ? LOCAL_TAG_W : TAG_DETAIL_W,
+        height: useLocalDetail ? LOCAL_TAG_ROW_H : TAG_DETAIL_ROW_H,
+        fontSize: useLocalDetail ? LOCAL_TAG_FONT : TAG_DETAIL_FONT,
         minFontSize: 14,
         shrinkSteps: 3,
-        gap: intoDetail ? TAG_DETAIL_GAP : TAG_GAP,
-        padX: intoDetail ? TAG_DETAIL_PADX : 18,
-        // 详情卡左对齐紧贴「牌风」标题；主卡保持居中
-        align: intoDetail ? 'left' : 'center',
-        // 详情卡：在 68px 带内垂直居中（1 行居中、2 行上下均匀）；主卡保持原顶部对齐
-        centerInHeight: intoDetail ? TAG_DETAIL_BAND_H : null,
-        maxLines: intoDetail ? TAG_DETAIL_MAXLINES : 3
+        gap: useLocalDetail ? LOCAL_TAG_GAP : TAG_DETAIL_GAP,
+        padX: useLocalDetail ? LOCAL_TAG_PADX : TAG_DETAIL_PADX,
+        // 左对齐紧贴「牌风」标题（两类卡一致）
+        align: 'left',
+        // 在带内垂直居中（1 行居中、2 行上下均匀）
+        centerInHeight: useLocalDetail ? LOCAL_TAG_BAND_H : TAG_DETAIL_BAND_H,
+        maxLines: 2
       })
     } catch (e) {
       console.warn(`[render.js] 牌风标签绘制失败: ${e.message}`)
