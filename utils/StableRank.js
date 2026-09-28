@@ -215,6 +215,48 @@ function expectedPT (stats, room, lv, applyPenalty) {
 }
 
 /**
+ * 期望魂珠变化/局（rating 制）。
+ *
+ * 魂天单局魂珠变化**只由顺位决定**（与打点、房间 PT 表无关），故用顺位率直接加权：
+ *   e = Σ KONTEN_RATING_DELTA[n][east|south][i] × rank_rates[i]
+ * 各表之和为 0（零和），因此 e 的符号即「稳定涨/跌」方向。
+ *
+ * @param {object} stats 牌谱屋 player_stats（需 rank_rates）
+ * @param {object} room matchmode 条目（需 mode 判定东/南场）
+ * @param {number} n 玩家数（4 或 3）
+ * @returns {number|null}
+ */
+function kontenBeadsRate (stats, room, n) {
+  const table = KONTEN_RATING_DELTA[n]
+  if (!table) return null
+  const isEast = room.mode === 1 || room.mode === 11
+  const deltas = table[isEast ? 'east' : 'south']
+  const rates = stats.rank_rates
+  if (!Array.isArray(rates) || rates.length < n) return null
+  let e = 0
+  for (let i = 0; i < n; i++) {
+    if (typeof rates[i] !== 'number' || !isFinite(rates[i])) return null
+    e += deltas[i] * rates[i]
+  }
+  // 零和顺位率的浮点误差会算出 −1.4e−17，取整到 2 位后再判符号，
+  // 避免出现「−0.00」这种既无信息又难看的值。
+  return Math.round(e * 100) / 100
+}
+
+/**
+ * 期望魂珠变化 → 展示文本，形如「+0.35珠」（±0.00 时为「±0.00珠」）。
+ *
+ * 省略「/局」：该文本要挤进仅 248px 宽的安定段位格（还需容下右侧的「约N战升段」），
+ * 而安定段位本身就是「每局期望」量，省略单位不损失信息。
+ *
+ * @param {number} e 期望魂珠变化/局
+ */
+function formatBeadsRate (e) {
+  const sign = e > 0 ? '+' : (e < 0 ? '−' : '±')
+  return `${sign}${Math.abs(e).toFixed(2)}珠`
+}
+
+/**
  * 把连续 value 格式化为段位文字。
  *
  * 各段位的 value 基准（= |rankpt2|/15 − 10，取自段位表）：
@@ -319,14 +361,10 @@ export function estimateGamesToRankChange (stats, roomId, currentScore) {
   // 魂花 3 朵（阈值 15/10/5 珠），跌到阈值以下掉一朵 —— 魂天玩家关心的是掉花，
   // 故掉花预测单列 flower 字段（掉回上一级才是 demote）。
   if (major >= 6) {
-    const table = KONTEN_RATING_DELTA[n]
-    if (!table) return null
-    const isEast = room.mode === 1 || room.mode === 11
-    const deltas = table[isEast ? 'east' : 'south']
+    const eDelta = kontenBeadsRate(stats, room, n)
+    if (eDelta == null) return null
     const beads = currentScore / 100    // 传入为 pt(0~2000)，显示值 = pt/100
     const lv = Math.max(1, Math.min(20, minor))
-    let eDelta = 0
-    for (let i = 0; i < n; i++) eDelta += deltas[i] * rates[i]
     const out = { promote: null, demote: null, flower: null, ept: eDelta }
 
     if (eDelta > 0.001) {
@@ -438,16 +476,34 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
   let lv = { ...startLevel }
 
   for (let guard = 0; guard < 60; guard++) {
+    // 魂天必须**最先**判定：PT 制模型对魂天不成立（penaltyOf 对魂天恒为 0，
+    // E[PT] 被抬高，其正负与数值都无意义），故不能先看 E[PT] 再决定。
+    // 走到这里说明上一级（雀圣3）的 E[PT] ≥ 0 —— 即稳定段位已达魂天（强顺位率的
+    // 雀圣3 确实会升魂天），此时改用 rating 制给出同口径结果：期望魂珠变化/局。
+    // （此前输出「魂天+63.65」，那个 +63.65 是 PT 量纲的期望值，对魂天无意义。）
+    //
+    // ⚠️ 两种模型的符号可能不一致：PT 制在雀圣3 用 rankpt=-240 判「够格升魂天」，
+    // 而 rating 制在魂天算出的漂移仍可能为负（穷举 22100 组顺位率×6 组均点，王南
+    // 四麻有 1519 组如此，最差 −0.19 珠）。这不是 bug：两式量纲不同（PT vs 魂珠），
+    // 且魂天无 4 位罚分、rating 只由顺位决定。此时以 rating 为准 —— 前缀「魂天」给出
+    // 稳定段位，后缀负号给出「虽在魂天但正在掉珠」，两个信息都是对的、都该展示。
+    if (isKonten(lv)) {
+      const beads = kontenBeadsRate(stats, room, n)
+      if (beads == null) return { text: '魂天', approximate: true }
+      return {
+        text: `魂天${formatBeadsRate(beads)}`,
+        value: beads,
+        expBeads: beads,
+        konten: true,
+        approximate: true
+      }
+    }
     const e = E(lv)
     if (Math.abs(e) < 0.001) return fmt(lv, 0)
     if (!(e >= 0)) {
       if (below) return fmt(below, E(below))
       break
     }
-    // 魂天：E[PT] 仍为正说明稳定段位已达魂天（如雀圣3 强顺位率确实会升魂天）。
-    // 魂天用 rating（魂珠）制，PT 制模型在此失效，故只报段位名、不带 E[PT] 数值
-    // —— 此前输出「魂天+63.65」，那个 +63.65 是 PT 量纲的期望值，对魂天无意义。
-    if (isKonten(lv)) return { text: '魂天', approximate: true }
     below = lv
     const nx = nextLevel(lv)
     if (!allowed(nx, roomId) || sameLevel(nx, below)) {
@@ -520,20 +576,14 @@ export function computeStableRank (stats, roomId, mode) {
   // 单局魂珠变化只由顺位决定（与打点、房间 PT 表无关），故不能用 expectedPT 外推；
   // 此前 walkStableRank 会把 E[PT]（PT 量纲，十几~几十）直接拼成「魂天+54.55」，
   // 而魂天真实变化量是 ±0.3/±0.5 魂珠，两者无换算关系（÷100 只是数值巧合）。
-  // 这里改为输出 rating 制的有意义结果：按顺位率算出的**期望魂珠变化/局**。
+  //
+  // 文案统一带「魂天」前缀（与逐级试探路径一致）：安定段位回答的是「会稳定在哪个
+  // 段位」，前缀给出段位名，后缀给出该段位下的魂珠漂移方向与速率。
   if (isKonten(startLevel)) {
-    const table = KONTEN_RATING_DELTA[n]
-    if (!table) return null
-    const isEast = room.mode === 1 || room.mode === 11
-    const deltas = table[isEast ? 'east' : 'south']
-    let e = 0
-    for (let i = 0; i < n; i++) e += deltas[i] * rates[i]
-    // 显示形如「+0.12 珠/局」；符号明确给出涨跌方向。
-    // 浮点误差会让零和顺位率算出 −1.4e−17，取整到 2 位后按 0 处理，避免出现「−0.00」。
-    const rounded = Math.round(e * 100) / 100
-    const sign = rounded > 0 ? '+' : (rounded < 0 ? '−' : '±')
-    const text = `${sign}${Math.abs(rounded).toFixed(2)} 珠/局`
-    return { text, value: rounded, expBeads: rounded, konten: true, approximate: true }
+    const e = kontenBeadsRate(stats, room, n)
+    if (e == null) return null
+    const text = `魂天${formatBeadsRate(e)}`
+    return { text, value: e, expBeads: e, konten: true, approximate: true }
   }
 
   // 闭式解（仅南场房间）。三麻同样适用：末位率取 rank_rates[2]。

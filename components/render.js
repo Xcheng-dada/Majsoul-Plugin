@@ -1003,8 +1003,10 @@ async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null
     const ROW_Y = 163
     if (stableInfo && stableInfo.text) {
       const promo = stableInfo.promo || ''
-      // 从大到小试字号，取第一个能放下的组合
-      const steps = [[26, 21], [24, 19], [22, 18], [20, 16], [18, 15]]
+      // 从大到小试字号，取第一个能放下的组合。
+      // 步长 1px 而非 2px：魂天玩家的安定段位带「魂天±X.XX珠」前缀，长度介于
+      // 「雀圣3.00」与「雀豪3.34」之间，2px 步长会多降一档、字号偏小。
+      const steps = [[26, 21], [25, 20], [24, 19], [23, 18], [22, 17], [21, 16], [20, 15], [19, 14], [18, 13]]
       let chosen = steps[steps.length - 1]
       for (const [s1, s2] of steps) {
         ctx.font = `bold ${s1}px "Microsoft YaHei", sans-serif`
