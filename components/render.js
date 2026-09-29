@@ -2,7 +2,7 @@ import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { loadResImage, drawText, drawRoundRect, applyMask } from './canvas.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
-import { buildPlayerTags, drawTags } from '../utils/PlayerTags.js'
+import { buildPlayerTags, drawTags, RANK_WINDOW } from '../utils/PlayerTags.js'
 import { computePlayStyle } from '../utils/PlayStyle.js'
 import { computeStableRank, computeStableRankWeighted, estimateGamesToRankChange, stableRankEligibleRooms, stableRankFilterRooms } from '../utils/StableRank.js'
 import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
@@ -1123,13 +1123,24 @@ async function getLocalRankedCounts (uid) {
 }
 
 /**
+ * 对局记录拉取场数。
+ *
+ * 走势图只画 16 场（record_bg 宽 1000，点位 x = 108 + i*50，16 个点恰好到 x858），
+ * 但「绝好调 / 恶调中」需要最近 RANK_WINDOW(20) 场顺位率，故一次取 20 场：
+ * 两者共用同一次请求，不多发。走势图只取前 16 个点绘制。
+ */
+const RECORD_FETCH_LIMIT = Math.max(16, RANK_WINDOW)
+
+/**
  * 无牌谱屋数据时，用本地 recentGames（顺位序列）构造走势图所需 record。
  * 走势图按 旧→新 从左到右绘制，故 record 需为 新→旧（chart 内会 reverse）。
+ *
+ * @param {number} limit 取最近多少场（默认 16，走势图用；标签需要更多时传 RECORD_FETCH_LIMIT）
  */
-function buildLocalRecord (entry, nickname, mode) {
+function buildLocalRecord (entry, nickname, mode, limit = 16) {
   if (!entry || !Array.isArray(entry.recentGames) || entry.recentGames.length === 0) return []
   const n = mode === '3' ? 3 : 4
-  return entry.recentGames.slice(-16).reverse().map(g => {
+  return entry.recentGames.slice(-limit).reverse().map(g => {
     const k = (g && g.rank != null && g.rank >= 1 && g.rank <= n) ? g.rank : n
     const players = []
     for (let i = 0; i < n; i++) {
@@ -1137,6 +1148,33 @@ function buildLocalRecord (entry, nickname, mode) {
     }
     return { players }
   })
+}
+
+/**
+ * 从对局记录（新→旧）提取「最近 window 场」的顺位序列，供「绝好调 / 恶调中」判定。
+ *
+ * 顺位判定与走势图完全一致（按 score 降序、找自己昵称的下标），
+ * 因此不会出现「图上是 1 位、标签却按末位算」的矛盾。找不到自己时按末位处理。
+ *
+ * @param {Array} records 新→旧的记录数组，元素含 players[{nickname, score}]
+ * @param {string} nickname 本人昵称
+ * @param {number|string} mode 4 或 3
+ * @param {number} window 窗口场数
+ * @returns {Array<{rank:number}>|null}
+ */
+function extractRecentRanks (records, nickname, mode, window) {
+  if (!Array.isArray(records) || !nickname || !window) return null
+  const n = mode === '3' ? 3 : 4
+  const out = []
+  for (const r of records) {
+    if (!r || !Array.isArray(r.players) || r.players.length === 0) continue
+    const sorted = r.players.slice().sort((a, b) => (b.score || 0) - (a.score || 0))
+    let idx = sorted.findIndex(p => p.nickname === nickname)
+    if (idx < 0) idx = n - 1
+    out.push({ rank: idx + 1 })
+    if (out.length >= window) break
+  }
+  return out.length ? out : null
 }
 
 // 本地数据卡片（details_bg_3/4.png）下方对局走势区：
@@ -1380,13 +1418,13 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     extended = extended3
     if (data3Valid && !scopeInfo) {
       try {
-        record = await api.getRecentRecords(uid, 3, 16)
+        record = await api.getRecentRecords(uid, 3, RECORD_FETCH_LIMIT)
       } catch (e) {
         console.warn(`[render.js] 获取三麻最近对局失败: ${e.message}`)
         record = []
       }
     } else {
-      record = buildLocalRecord(localEntry3, data3.nickname, '3')
+      record = buildLocalRecord(localEntry3, data3.nickname, '3', RECORD_FETCH_LIMIT)
     }
       if (roomFilter && data3Valid) {
         const mp = (roomFilter.ids[3] || []).join(',')
@@ -1402,7 +1440,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
           else extended = JSON.parse(JSON.stringify(playerExtendZero))
         } catch (e) { extended = JSON.parse(JSON.stringify(playerExtendZero)) }
         try {
-          const rr = await api.getRecentRecords(uid, 3, 16, mp)
+          const rr = await api.getRecentRecords(uid, 3, RECORD_FETCH_LIMIT, mp)
           if (rr && !rr.retcode && Array.isArray(rr) && rr.length) record = rr
           else record = []
         } catch (e) { record = [] }
@@ -1413,13 +1451,13 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     extended = extended4
     if (data4Valid && !scopeInfo) {
       try {
-        record = await api.getRecentRecords(uid, 4, 16)
+        record = await api.getRecentRecords(uid, 4, RECORD_FETCH_LIMIT)
       } catch (e) {
         console.warn(`[render.js] 获取四麻最近对局失败: ${e.message}`)
         record = []
       }
     } else {
-      record = buildLocalRecord(localEntry4, data4.nickname, '4')
+      record = buildLocalRecord(localEntry4, data4.nickname, '4', RECORD_FETCH_LIMIT)
     }
     if (roomFilter && data4Valid) {
       const mp = (roomFilter.ids[4] || []).join(',')
@@ -1435,7 +1473,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         else extended = JSON.parse(JSON.stringify(playerExtendZero))
       } catch (e) { extended = JSON.parse(JSON.stringify(playerExtendZero)) }
       try {
-        const rr = await api.getRecentRecords(uid, 4, 16, mp)
+        const rr = await api.getRecentRecords(uid, 4, RECORD_FETCH_LIMIT, mp)
         if (rr && !rr.retcode && Array.isArray(rr) && rr.length) record = rr
         else record = []
       } catch (e) { record = [] }
@@ -1674,7 +1712,12 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       const ps = computePlayStyle(extended, mode, data.count)
       if (ps) playerTags.push({ text: ps.name, type: 'playstyle' })
 
-      const r = buildPlayerTags(data, extended, mode)
+      // 「绝好调 / 恶调中」用最近 RANK_WINDOW 场顺位率（状态词，不能用生涯均值）。
+      // record 已含 RECORD_FETCH_LIMIT 场，此处取前 window 场；不足时该函数返回 null，
+      // 两个标签自然不出（不报错）。
+      const recentRanks = extractRecentRanks(record, data.nickname, mode, RANK_WINDOW)
+
+      const r = buildPlayerTags(data, extended, mode, recentRanks)
       if (r.reliable) {
         // 聚类牌风已给出打法取向时，规则牌风里的「倾向」类与之语义重复
         // （如聚类「均衡型」与倾向「均衡」、「门清防守型」与「门清防守」），
@@ -1782,7 +1825,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const RANK_POS = mode === "3" ? RANK_POS_3P : RANK_POS_4P
   let posPrev = null
   
-  const revRecords = record.slice().reverse()
+  // 走势图只画最近 16 场：record 为新→旧且可能含 RECORD_FETCH_LIMIT(20) 场，
+  // 先截最近 16 场再反转为 旧→新。点位 x = 108 + i*50，20 个点会画到 x1058 超出画布。
+  const CHART_POINTS = 16
+  const revRecords = record.slice(0, CHART_POINTS).reverse()
   
   // 如果没有对局数据，显示提示文字
   if (revRecords.length === 0) {

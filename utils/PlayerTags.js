@@ -7,11 +7,26 @@
  * THsBot 亦将两者统称「牌风」—— 作者在 Koishi 论坛被问及「牌风 tag 的判定依据」时，
  * 给出的正是规则牌风这一套阈值逻辑。
  *
- * 设计参考 THsBot 的 tag 思路（作者 sjn4048 在 Koishi 论坛公开），但**阈值全部按本插件
- * 实测玩家分布重新标定**，不能直接沿用其原始阈值：
- *   - 其 里宝率 > 0.37 / 被炸率 > 0.125 在四麻玉之间几乎永不触发（实测 p95 仅 33.7% / 11.1%）
- *   - 其 和牌率 > 0.235 / 立直率 > 0.22 在三麻则几乎必然触发（三麻 p50 已达 31.2% / 25.9%）
- * 因此四麻、三麻各用一套独立阈值，均取自真实样本分位数（四麻 n=60、三麻 n=25，均 ≥150 场）。
+ * 阈值来源（**有 THsBot 原逻辑就直接沿用，它没有的才拟合**）：
+ *
+ * 1) 四麻 —— **原样沿用 THsBot 作者 sjn4048 在 Koishi 论坛公开的那套值**
+ *    （topic 9963 第 8 楼，2025-04-19）：
+ *      naki > 0.36 / < 0.28、hora > 0.235、dealin < 0.12 / > 0.14、riichi > 0.22、
+ *      rank1 > 0.35、rankLast > 0.30、winpt > 7100 / < 6000、
+ *      beizha > 0.125、libao > 0.37、dama > 0.15
+ *
+ * 2) 三麻 —— THsBot **只公布了上面那一套，没有三麻版本**；直接套用会崩
+ *    （实测本插件样本：hora > 0.235 触发 100%、winpt > 7100 触发 100%）。
+ *    故按「与四麻触发率一致」在本插件样本上反解，使两模式稀有度可比。
+ *
+ * 3) 绝好调 / 恶调中 —— 这两个是**状态**词（「当前手气」），THsBot 的 0.35 / 0.30
+ *    必须配**近期窗口**才有意义：实测全生涯 1 位率 p95 仅 0.29，用 0.35 卡是死标签（0% 触发）；
+ *    改用最近 RANK_WINDOW 场后 0.35 才落在合理尾部。故本插件按近期顺位率判定。
+ *
+ * 标定样本（本插件自行采集，非 THsBot 的）：四麻 n=151 / 三麻 n=158，
+ * 均为 ≥150 场玩家，窗口 20 场。⚠️ 样本存在选择偏差（关键词搜到的玩家比同局对手弱约
+ * 3.4pp，实测同局对手 1 位率 25.9% 而目标玩家 22.5%），故阈值另按「中性基准
+ * （四麻 1/4、三麻 1/3）位置校正」后核对触发率，而非直接取原始分位。
  *
  * 标签分三类：
  *   1. 倾向（style）：互斥，只出一个，描述打法取向，无优劣
@@ -19,34 +34,44 @@
  *   3. 特征（meme）：可叠加，稀有/玩梗向，带传播性
  */
 
-// 阈值来源：四麻 60 人 / 三麻 25 人真实样本分位数（见开发时标定脚本输出）
-// hi 取 p85 附近，lo 取 p15 附近；nakiHi/nakiLo 取 p75/p25
+/**
+ * 绝好调 / 恶调中 的判定窗口（场）。
+ * 取 20 场：THsBot 的 0.35 / 0.30 恰为 7/20 与 6/20，且实测该窗口下触发率合理
+ * （四麻绝好调约 7%、恶调中约 19%）。窗口过短噪声大，过长则被生涯均值抹平。
+ */
+export const RANK_WINDOW = 20
+
+// 阈值来源：四麻沿用 THsBot 原值；三麻按「与四麻触发率一致」拟合；
+// rank1Hi/rankLastHi 为「最近 RANK_WINDOW 场」口径（其余字段仍为生涯口径）。
 const THRESHOLDS = {
   4: {
     nakiHi: 0.36, nakiLo: 0.28,
-    horaHi: 0.24,
-    dealinLo: 0.121, dealinHi: 0.155,
-    riichiHi: 0.215,
-    winptHi: 6900, winptLo: 6150,
-    damaHi: 0.155,
-    libaoHi: 0.335,
-    beizhaHi: 0.109,
-    rank1Hi: 0.27,
-    rankLastHi: 0.255,
-    neteffHi: 780
+    horaHi: 0.235,
+    dealinLo: 0.12, dealinHi: 0.14,
+    riichiHi: 0.22,
+    winptHi: 7100, winptLo: 6000,
+    damaHi: 0.15,
+    libaoHi: 0.37,
+    beizhaHi: 0.125,
+    rank1Hi: 0.35,
+    rankLastHi: 0.30,
+    neteffHi: 765
   },
   3: {
-    nakiHi: 0.335, nakiLo: 0.285,
-    horaHi: 0.32,
-    dealinLo: 0.16, dealinHi: 0.185,
-    riichiHi: 0.305,
-    winptHi: 9700, winptLo: 8900,
-    damaHi: 0.21,
-    libaoHi: 0.425,
-    beizhaHi: 0.144,
-    rank1Hi: 0.36,
-    rankLastHi: 0.335,
-    neteffHi: 1420
+    nakiHi: 0.3361, nakiLo: 0.2674,
+    horaHi: 0.3135,
+    dealinLo: 0.1449, dealinHi: 0.1712,
+    riichiHi: 0.3038,
+    winptHi: 10153, winptLo: 8792,
+    damaHi: 0.2174,
+    libaoHi: 0.4762,
+    beizhaHi: 0.1749,
+    // 三麻中性基准 1/3，沿用 THsBot 四麻的偏移量 +0.10（0.35−0.25）→ 0.4333。
+    // 20 场窗口下即「≥9/20 场拿 1 位 / 末位」，实测绝好调 13.9%、恶调中 20.3%，
+    // 与四麻（15.9% / 21.2%）最接近；取 0.45（≥10/20）会掉到 13.9% / 11.4%，恶调中过严。
+    rank1Hi: 0.4333,
+    rankLastHi: 0.4333,
+    neteffHi: 1362
   }
 }
 
@@ -73,13 +98,45 @@ function usable (v) {
 }
 
 /**
+ * 取最近 window 场的顺位率。
+ *
+ * `recentRanks` 为牌谱屋 player_records 的顺位序列（新→旧，元素形如 `{ rank }`，
+ * rank 从 1 起）。不足 window 场时返回 null —— 样本太短的「近期手气」没有意义，
+ * 宁可不出标签，也不要用 3 场的数据判「绝好调」。
+ *
+ * @param {Array<{rank:number}>|null} recentRanks
+ * @param {number} window 窗口场数
+ * @param {number} mode 4 或 3（决定末位是第 4 还是第 3）
+ * @returns {{rank1:number, rankLast:number, n:number}|null}
+ */
+function recentRanksWindow (recentRanks, window, mode) {
+  if (!Array.isArray(recentRanks)) return null
+  const n = mode === 3 ? 3 : 4
+  const ranks = []
+  for (const g of recentRanks) {
+    const r = g && g.rank
+    if (typeof r === 'number' && r >= 1 && r <= n) ranks.push(r)
+    if (ranks.length >= window) break
+  }
+  if (ranks.length < window) return null
+  let c1 = 0, cl = 0
+  for (const r of ranks) {
+    if (r === 1) c1++
+    if (r === n) cl++
+  }
+  return { rank1: c1 / ranks.length, rankLast: cl / ranks.length, n: ranks.length }
+}
+
+/**
  * 计算玩家牌风标签
  * @param {object} data     牌谱屋 player_stats（需 rank_rates / count）
  * @param {object} extended 牌谱屋 player_extended_stats（中文键）
  * @param {number|string} mode 4 或 3
+ * @param {Array<{rank:number}>|null} recentRanks 最近若干场的顺位序列（新→旧），
+ *        用于「绝好调 / 恶调中」。缺省或不足 RANK_WINDOW 场时这两个标签不出。
  * @returns {{tags: Array<{text:string,type:string}>, reliable:boolean}}
  */
-export function buildPlayerTags (data, extended, mode) {
+export function buildPlayerTags (data, extended, mode, recentRanks = null) {
   const m = String(mode) === '3' ? 3 : 4
   const T = THRESHOLDS[m]
   const tags = []
@@ -97,9 +154,12 @@ export function buildPlayerTags (data, extended, mode) {
   const beizha = extended?.['被炸率']
   const neteff = extended?.['净打点效率']
 
-  const rates = Array.isArray(data?.rank_rates) ? data.rank_rates : []
-  const rank1 = rates[0]
-  const rankLast = rates.length >= (m === 3 ? 3 : 4) ? rates[m === 3 ? 2 : 3] : undefined
+  // 绝好调 / 恶调中：用**最近 RANK_WINDOW 场**的顺位率，不用生涯顺位率。
+  // 这两个标签是状态词（「当前手气」）；生涯均值会被长期平均掉，
+  // 实测全生涯 1 位率 p95 仅 0.29，套 THsBot 的 0.35 恒不触发。
+  const window = recentRanksWindow(recentRanks, RANK_WINDOW, m)
+  const rank1 = window ? window.rank1 : undefined
+  const rankLast = window ? window.rankLast : undefined
 
   const push = (text, type) => tags.push({ text, type })
 
@@ -140,6 +200,9 @@ export function buildPlayerTags (data, extended, mode) {
   if (usable(beizha) && beizha > T.beizhaHi) push('被炸仙人', 'meme')
   if (usable(dama) && dama > T.damaHi) push('dama怪', 'meme')
   if (usable(neteff) && neteff > T.neteffHi) push('局收支重视', 'meme')
+  // 绝好调 / 恶调中：基于最近 RANK_WINDOW 场的顺位率（见上）。两者互斥 ——
+  // 「绝好调」优先；同时满足时只出前者（THsBot 用两个独立 if 可同时出，
+  // 但实测三麻有 21% 的玩家会同时命中两者，同屏显示自相矛盾，故取互斥）。
   if (typeof rank1 === 'number' && rank1 > T.rank1Hi) push('绝好调', 'meme')
   else if (typeof rankLast === 'number' && rankLast > T.rankLastHi) push('恶调中', 'meme')
 
