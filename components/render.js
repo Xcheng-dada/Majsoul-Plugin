@@ -4,7 +4,7 @@ import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
 import { buildPlayerTags, drawTags } from '../utils/PlayerTags.js'
 import { computePlayStyle } from '../utils/PlayStyle.js'
-import { computeStableRank, computeStableRankWeighted, estimateGamesToRankChange, stableRankEligibleRooms, stableRankSouthRoom } from '../utils/StableRank.js'
+import { computeStableRank, computeStableRankWeighted, estimateGamesToRankChange, stableRankEligibleRooms, stableRankFilterRooms } from '../utils/StableRank.js'
 import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
@@ -1499,10 +1499,11 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       const modeData = m === 4 ? data4 : data3
       const curLevelId = realtimePT?.[rtKey]?.levelId ?? modeData.level?.id
 
-      // 房间筛选：用户已指定房间，取其东场+南场两个 id；
-      // 其余情况：按当前段位准入范围，东场与南场都取（按局数加权，见下）。
+      // 房间筛选：用户指定了一个等级，取该等级的东场+南场两个 id，
+      // 其安定段位即这两个场次的混合结果（各用各的表，按局数加权）。
+      // 其余情况：按当前段位准入范围，东场与南场都取（同样按局数加权，见下）。
       const candidates = roomFilter
-        ? stableRankSouthRoom(m, roomFilter.ids[m])
+        ? stableRankFilterRooms(m, roomFilter.ids[m])
         : [...stableRankEligibleRooms(m, curLevelId, false), ...stableRankEligibleRooms(m, curLevelId, true)]
 
       // 1) 牌谱屋：把候选房间**逐个查全**（不再取第一个就停）。

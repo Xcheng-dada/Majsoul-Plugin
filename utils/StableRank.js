@@ -232,22 +232,24 @@ export function stableRankRoomCandidates (mode, east = false) {
 }
 
 /**
- * 该模式的**全部**候选房间（东场 + 南场），按房间等级从高到低。
+ * 把「房间筛选」给出的房间 id 规范化为可参与加权计算的房间列表。
  *
- * 安定段位按局数加权各房间时用这个：同一等级下东、南各算一份，
- * 再按该玩家在两个房间的实际局数加权。
+ * 房间筛选的一个条目对应**一个等级的两个场次**（如 金之间 = [8, 9]，
+ * 8 金东、9 金南），其「安定段位」就应该是这两个场次的**混合**结果 ——
+ * 各用各的 PT 表与罚分表（见 penaltyCurve），再按玩家在两个场次的局数加权。
+ * 故这里两个都返回，由 computeStableRankWeighted 做加权，而不是只取南场。
  *
  * @param {number|string} mode 4 或 3
- * @returns {number[]} 房间 id，从高到低（同等级内南在前）
+ * @param {number[]} roomIds 候选房间 id（东+南）
+ * @returns {number[]} 可用的房间 id（保持传入顺序，去重）
  */
-export function stableRankAllRooms (mode) {
+export function stableRankFilterRooms (mode, roomIds) {
   const m = String(mode) === '3' ? 3 : 4
-  const { south, east } = ROOMS_BY_MODE[m]
-  // 按等级交错：王南、王东、玉南、玉东… 保证「先高等级」的顺序
+  const all = [...ROOMS_BY_MODE[m].south, ...ROOMS_BY_MODE[m].east]
   const out = []
-  for (let i = 0; i < south.length; i++) {
-    out.push(south[i])
-    if (east[i] != null) out.push(east[i])
+  for (const id of (roomIds || [])) {
+    const n = Number(id)
+    if (all.includes(n) && !out.includes(n)) out.push(n)
   }
   return out
 }
@@ -259,28 +261,6 @@ function levelOrdinal (levelId) {
   const minor = realId % 100
   if (major === 7) major = 6
   return major * 100 + minor
-}
-
-/**
- * 从一组房间 id 中挑出可用于安定段位计算的房间（房间筛选用）。
- *
- * 房间筛选传入的是「东+南」两个 id（如 玉之间 = [11, 12]，11 玉东、12 玉南）。
- * 东场与南场**都能算**（各用各的标尺，见 scaleOf），故两个都返回 ——
- * 由调用方按该玩家在两个房间的局数加权，而不是丢弃东场。
- *
- * @param {number|string} mode 4 或 3
- * @param {number[]} roomIds 候选房间 id（东+南）
- * @returns {number[]} 可用的房间 id（保持传入顺序）
- */
-export function stableRankSouthRoom (mode, roomIds) {
-  const m = String(mode) === '3' ? 3 : 4
-  const all = [...ROOMS_BY_MODE[m].south, ...ROOMS_BY_MODE[m].east]
-  const out = []
-  for (const id of (roomIds || [])) {
-    const n = Number(id)
-    if (all.includes(n) && !out.includes(n)) out.push(n)
-  }
-  return out
 }
 
 /**
