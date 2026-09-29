@@ -210,7 +210,10 @@ export const playerStatsZero = {
   avg_rank: 4,
   negative_rate: 0,
   id: 0,
-  nickname: "Player",
+  // ⚠️ 必须是空串而非 'Player'：此对象被用作「无数据」占位符，多处按
+  // `data.nickname || 真实昵称` 取名字。若填 'Player'（真值），`||` 短路会让
+  // 真实昵称/UID 永远不生效，卡片标题就渲染成「Player」（实测 UID 14367043）。
+  nickname: "",
   played_modes: [12, 11, 8, 9]
 }
 

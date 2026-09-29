@@ -1388,8 +1388,16 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 主模式 404 或友人场/比赛场时，用本地 API 对应房间（gc=scopeGc）数据填充统计字段。
   // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行；
   // 友人场/比赛场且有牌谱屋数据时不重置（保留昵称/段位），仅覆盖统计字段。
+  //
+  // ⚠️ 昵称不能取带 retcode 的模式数据：
+  //   牌谱屋 404（铜银玩家无金之间对局）时 data3/data4 已被 fetchStats 换成
+  //   `{...playerStatsZero, retcode:-404}`，其 nickname 是**空串占位符**
+  //   （playerStatsZero.nickname 已置空，见 PlayerLevel.js）。空串本身不会造成
+  //   `||` 短路，但带 retcode 的数据整体就代表「无数据」，不应作为昵称来源。
+  //   优先级：显式昵称查询 > 本地 API 实时昵称 > 本模式牌谱屋 > 另一模式牌谱屋 > UID。
+  const nameOf = d => (d && !d.retcode) ? d.nickname : null
   if (data4.retcode || scopeInfo) {
-    const realName = playerName || data3.nickname || otherData?.nickname || data4.nickname || String(uid)
+    const realName = playerName || realtimePT?.nickname || nameOf(data4) || nameOf(otherData) || nameOf(data3) || String(uid)
     if (data4.retcode) {
       data4 = JSON.parse(JSON.stringify(playerStatsZero))
       data4.nickname = realName
@@ -1398,7 +1406,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     localEntry4 = await fillModeFromLocal(data4, extended4, uid, 4, scopeGc)
   }
   if (data3.retcode || scopeInfo) {
-    const realName = playerName || data4.nickname || otherData?.nickname || data3.nickname || String(uid)
+    const realName = playerName || realtimePT?.nickname || nameOf(data3) || nameOf(otherData) || nameOf(data4) || String(uid)
     if (data3.retcode) {
       data3 = JSON.parse(JSON.stringify(playerStatsZero))
       data3.nickname = realName
@@ -1433,7 +1441,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
           const rd = await api.getPlayerStats(uid, 3, mp)
           if (rd && !rd.retcode) { data = rd; rdOk = true }
         } catch (e) {}
-        if (!rdOk) data = JSON.parse(JSON.stringify(playerStatsZero))
+        if (!rdOk) data = { ...JSON.parse(JSON.stringify(playerStatsZero)), nickname: data.nickname }
         try {
           const re = await api.getPlayerExtendedStats(uid, 3, mp)
           if (re && !re.retcode) extended = re
@@ -1466,7 +1474,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         const rd = await api.getPlayerStats(uid, 4, mp)
         if (rd && !rd.retcode) { data = rd; rdOk = true }
       } catch (e) {}
-      if (!rdOk) data = JSON.parse(JSON.stringify(playerStatsZero))
+      if (!rdOk) data = { ...JSON.parse(JSON.stringify(playerStatsZero)), nickname: data.nickname }
       try {
         const re = await api.getPlayerExtendedStats(uid, 4, mp)
         if (re && !re.retcode) extended = re
@@ -1763,7 +1771,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   ctx.drawImage(title, 0, 0)
 
   const subTitle = roomFilter ? roomFilter.name : `UID ${uid}`
-  drawText(ctx, `${data.nickname} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
+  // 昵称兜底（覆盖所有分支）：无 token / 非 404 错误 / 房间筛选失败等路径都可能让
+  // data.nickname 停留在占位符（playerStatsZero.nickname，已置空串），此处统一兜一次。
+  const titleName = playerName || realtimePT?.nickname || data.nickname || String(uid)
+  drawText(ctx, `${titleName} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
 
   if (!useLocalDetail) {
   const zmRate = getRate(extended["自摸率"])
