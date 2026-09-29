@@ -65,7 +65,7 @@ const ROOM_PLAYERS = {
   17: 3, 18: 3, 19: 3, 20: 3, 21: 3, 22: 3, 23: 3, 24: 3, 25: 3, 26: 3
 }
 
-// 各模式的「南场」房间，按**房间等级从高到低**排列（王座 > 玉 > 金 > 银 > 铜）。
+// 各房间，按**房间等级从高到低**排列（王座 > 玉 > 金 > 银 > 铜），东场与南场分开。
 //
 // 各房间准入段位（取自 matchmode 的 level_limit / level_limit_ceil，已核对）：
 //   铜之间  初心一星 ~ 雀士三星
@@ -76,9 +76,112 @@ const ROOM_PLAYERS = {
 //
 // 注：铜(3/18)、银(6/20) 之间**牌谱屋不返回数据**（实测恒为 404），
 // 其玩家（初心/低段雀士）要走本地 API 兜底；牌谱屋放开后可自动生效。
-const SOUTH_ROOMS_BY_MODE = {
-  4: [16, 12, 9, 6, 3],    // 王南、玉南、金南、银南、铜南
-  3: [26, 24, 22, 20, 18]  // 三王南、三玉南、三金南、三银南、三铜南
+const ROOMS_BY_MODE = {
+  4: {
+    south: [16, 12, 9, 6, 3],   // 王南、玉南、金南、银南、铜南
+    east: [15, 11, 8, 5, 2]     // 王东、玉东、金东、银东、铜东
+  },
+  3: {
+    south: [26, 24, 22, 20, 18], // 三王南、三玉南、三金南、三银南、三铜南
+    east: [25, 23, 21, 19, 17]   // 三王东、三玉东、三金东、三银东、三铜东
+  }
+}
+
+/** 房间 id → 是否为东场（东风战）。东/南的 PT 表与段位价值标尺都不同。 */
+const isEastRoom = roomId => (ROOMS_BY_MODE[3].east.includes(Number(roomId)) || ROOMS_BY_MODE[4].east.includes(Number(roomId)))
+
+/**
+ * 段位价值标尺：把「罚分」换算成连续段位值 value。
+ *
+ * 段位表的 4 位罚分在 value 轴上**线性**：|pen(v)| = a + b·v，
+ * 其中 v 满足 豪1=1.00 / 豪2=2.00 / 豪3=3.00 / 圣1=4.00 / 圣2=5.00 / 圣3=6.00。
+ * 于是反解 v = (|pen| − a) / b，而 E[PT] 与 value 的换算为：
+ *   value = base + E[PT] / (b × 末位率)
+ *
+ * ⚠️ **a 与 b 随模式与场次而变**，不能写死：
+ *     四麻南 b=15 (165→180)、四麻东 b=10 (80→90)
+ *     三麻南 b=25 (165→190)、三麻东 b=15 (80→95)
+ * 此前代码把 b 写死为 15、base 写死为 |rankpt2|/15−10，对四麻南正确，
+ * 但三麻南会偏（实测 三麻玉南 偏 +0.64 星），东场更是完全错（量纲差 1.5 倍）。
+ *
+ * @param {number} mode 4 或 3
+ * @param {boolean} east 是否东场
+ * @returns {{a:number, b:number}} 罚分直线参数
+ */
+function scaleOf (mode, east) {
+  const prefix = String(mode) === '3' ? 2 : 1
+  const map = loadCfg().level_definition.level_definition.map_
+  const pen = id => {
+    const d = map[String(prefix * 10000 + id)]
+    if (!d) return null
+    return Math.abs((east ? d.rankpt1 : d.rankpt2) || 0)
+  }
+  const p1 = pen(401), p2 = pen(402)
+  if (p1 == null || p2 == null || p2 === p1) {
+    // 兜底：四麻南的历史常量，保证不崩
+    return { a: 150, b: 15 }
+  }
+  const b = p2 - p1
+  return { a: p1 - b, b }
+}
+
+/** 段位序号 → value（豪1=1、豪2=2、豪3=3、圣1=4…），按模式与场次取真实罚分反解 */
+function levelValueIn (mode, east, major, minor) {
+  // 杰(3) 也要支持：杰区间的 value 基准随模式/场次不同（四麻南 杰3=−2.00、
+  // 三麻南 −0.80、四麻东 −1.00），格式化与罚分曲线都要用它做锚点。
+  // 雀士及以下 rankpt=0，无法反解 value，故从杰1 起。
+  if (major < 3) return null
+  const prefix = String(mode) === '3' ? 2 : 1
+  const d = loadCfg().level_definition.level_definition.map_[String(prefix * 10000 + major * 100 + minor)]
+  if (!d) return null
+  const p = Math.abs((east ? d.rankpt1 : d.rankpt2) || 0)
+  if (!p) return null
+  const { a, b } = scaleOf(mode, east)
+  return (p - a) / b
+}
+
+/**
+ * **规范 value 轴**上的罚分曲线（用于跨房间按局数加权）。
+ *
+ * 东场与南场的罚分表不同，且两者只在豪/圣区间共用同一套 value 基准；
+ * 杰区间的基准并不一致（四麻南 杰3=−2.00 而 四麻东 杰3=−1.00）。
+ * 因此跨房间加权时必须先把两个场次的罚分都映射到**同一条 value 轴**上，
+ * 这里统一采用**南场口径**（`levelValueIn(mode,false,…)`）作为规范轴。
+ *
+ * 实现：把段位表的杰1~圣3 逐星建成 (规范value, 该场次罚分) 锚点，
+ * 再对任意 value 线性插值。这样 pen(v) 在规范轴上连续，且两端做常数外推。
+ *
+ * @param {number} mode 4 或 3
+ * @param {boolean} east 取东场罚分还是南场罚分
+ * @returns {(v:number)=>number} value → 罚分（负值）
+ */
+function penaltyCurve (mode, east) {
+  const prefix = String(mode) === '3' ? 2 : 1
+  const map = loadCfg().level_definition.level_definition.map_
+  const anchors = []
+  for (const [major, minor] of [[3, 1], [3, 2], [3, 3], [4, 1], [4, 2], [4, 3], [5, 1], [5, 2], [5, 3]]) {
+    const d = map[String(prefix * 10000 + major * 100 + minor)]
+    if (!d) continue
+    // 规范 value 一律按南场口径（保证东/南锚点落在同一根轴上）
+    const vS = levelValueIn(mode, false, major, minor)
+    const pen = (east ? d.rankpt1 : d.rankpt2) || 0
+    if (vS == null) continue
+    anchors.push({ v: vS, pen })
+  }
+  anchors.sort((x, y) => x.v - y.v)
+  return v => {
+    if (!anchors.length) return 0
+    if (v <= anchors[0].v) return anchors[0].pen
+    if (v >= anchors[anchors.length - 1].v) return anchors[anchors.length - 1].pen
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const lo = anchors[i], hi = anchors[i + 1]
+      if (v >= lo.v && v <= hi.v) {
+        if (hi.v === lo.v) return lo.pen
+        return lo.pen + (hi.pen - lo.pen) * (v - lo.v) / (hi.v - lo.v)
+      }
+    }
+    return anchors[anchors.length - 1].pen
+  }
 }
 
 /**
@@ -112,18 +215,41 @@ const KONTEN_PROMOTE_BEADS = 20
 const KONTEN_FLOWER_BEADS = [15, 10, 5]   // 由高到低，用于找「下一个掉花点」
 
 /**
- * 该模式「南场」候选房间，按房间等级从高到低（王座 → 玉 → 金）。
+ * 该模式候选房间，按房间等级从高到低（王座 → 玉 → 金 → 银 → 铜）。
  *
  * ⚠️ 必须配合 `stableRankEligibleRooms` 使用：仅按等级排序会导致
  * 雀豪玩家去查王南——其 633 场是**过去在雀圣时期打的**，用那段数据算出的
  * 安定段位与其当前水平无关（实测产出「雀杰3.99」这类荒谬值）。
  *
  * @param {number|string} mode 4 或 3
+ * @param {boolean} [east] 是否要东场房间；默认 false（南场）
  * @returns {number[]} 候选房间 id，从高到低
  */
-export function stableRankRoomCandidates (mode) {
+export function stableRankRoomCandidates (mode, east = false) {
   const m = String(mode) === '3' ? 3 : 4
-  return [...(SOUTH_ROOMS_BY_MODE[m] || [])]
+  const set = ROOMS_BY_MODE[m]
+  return [...((east ? set.east : set.south) || [])]
+}
+
+/**
+ * 该模式的**全部**候选房间（东场 + 南场），按房间等级从高到低。
+ *
+ * 安定段位按局数加权各房间时用这个：同一等级下东、南各算一份，
+ * 再按该玩家在两个房间的实际局数加权。
+ *
+ * @param {number|string} mode 4 或 3
+ * @returns {number[]} 房间 id，从高到低（同等级内南在前）
+ */
+export function stableRankAllRooms (mode) {
+  const m = String(mode) === '3' ? 3 : 4
+  const { south, east } = ROOMS_BY_MODE[m]
+  // 按等级交错：王南、王东、玉南、玉东… 保证「先高等级」的顺序
+  const out = []
+  for (let i = 0; i < south.length; i++) {
+    out.push(south[i])
+    if (east[i] != null) out.push(east[i])
+  }
+  return out
 }
 
 /** 段位 id → 可比较的序号（major*100+minor，魂天归一为 6xx） */
@@ -136,43 +262,41 @@ function levelOrdinal (levelId) {
 }
 
 /**
- * 从一组房间 id 中挑出可用于安定段位计算的**南场**房间。
+ * 从一组房间 id 中挑出可用于安定段位计算的房间（房间筛选用）。
  *
- * 换算式 value = E[PT]/(15×末位率) − 10 按**南场标尺**标定：除数 15 即南场每星
- * 15 PT（罚分 165→180→195），且只有南场罚分能还原出 豪1=1.00/豪2=2.00/圣1=4.00
- * 这组基准；东场每星只有 10 PT（罚分 80→90→100），同式会把 豪1 算成 −4.67。
- * 故不能把东+南池化后喂单表（实测平均偏 0.26 星、最大 1.56 星）。
- *
- * 房间筛选传入的是「东+南」两个 id（如 玉之间 = [11, 12]，11 玉东、12 玉南），
- * 需挑出其中的南场再计算。
+ * 房间筛选传入的是「东+南」两个 id（如 玉之间 = [11, 12]，11 玉东、12 玉南）。
+ * 东场与南场**都能算**（各用各的标尺，见 scaleOf），故两个都返回 ——
+ * 由调用方按该玩家在两个房间的局数加权，而不是丢弃东场。
  *
  * @param {number|string} mode 4 或 3
- * @param {number[]} roomIds 候选房间 id（可含东场）
- * @returns {number|null} 南场房间 id；无南场时返回 null
+ * @param {number[]} roomIds 候选房间 id（东+南）
+ * @returns {number[]} 可用的房间 id（保持传入顺序）
  */
 export function stableRankSouthRoom (mode, roomIds) {
   const m = String(mode) === '3' ? 3 : 4
-  const south = SOUTH_ROOMS_BY_MODE[m] || []
+  const all = [...ROOMS_BY_MODE[m].south, ...ROOMS_BY_MODE[m].east]
+  const out = []
   for (const id of (roomIds || [])) {
     const n = Number(id)
-    if (south.includes(n)) return n
+    if (all.includes(n) && !out.includes(n)) out.push(n)
   }
-  return null
+  return out
 }
 
 /**
- * 按**当前段位**过滤出该玩家可准入的南场房间，保持高→低顺序。
+ * 按**当前段位**过滤出该玩家可准入的房间，保持高→低顺序。
  *
  * 依据 matchmode 的 level_limit / level_limit_ceil（房间准入段位区间）：
- *   王南 雀圣一星~魂天、玉南 雀豪一星~雀圣三星、金南 雀杰一星~雀豪三星
+ *   王座 雀圣一星~魂天、玉 雀豪一星~雀圣三星、金 雀杰一星~雀豪三星
  * 若传入的段位无法解析，则退回全部候选（由调用方逐个尝试）。
  *
  * @param {number|string} mode 4 或 3
  * @param {number|null} levelId 当前段位 id（含模式位，如 10401）
+ * @param {boolean} [east] 是否要东场房间；默认 false（南场）
  * @returns {number[]} 准入房间 id，从高到低
  */
-export function stableRankEligibleRooms (mode, levelId) {
-  const all = stableRankRoomCandidates(mode)
+export function stableRankEligibleRooms (mode, levelId, east = false) {
+  const all = stableRankRoomCandidates(mode, east)
   if (levelId == null) return all
   const cur = levelOrdinal(levelId)
   if (!isFinite(cur) || cur <= 0) return all
@@ -284,26 +408,22 @@ function formatBeadsRate (e) {
 /**
  * 把连续 value 格式化为段位文字。
  *
- * 各段位的 value 基准（= |rankpt2|/15 − 10，取自段位表）：
- *   杰1 −4.67、杰2 −3.33、杰3 −2.00、豪1 1.00、豪2 2.00、豪3 3.00、
- *   圣1 4.00、圣2 5.00、圣3 6.00
- * 可见豪/圣每星 1.00，杰每星约 1.33，且杰3→豪1 之间存在跳跃（升段门槛），
- * 因此不能统一用「整数 + 小数」表达 —— 本函数按段位表分段插值。
+ * value 的定义与场次无关（豪1=1.00、豪2=2.00、豪3=3.00、圣1=4.00…），
+ * 由 `levelValueIn` 按模式/场次的真实罚分反解保证一致，故本函数只需按
+ * 段位表分段插值，不需知道是东场还是南场。
  *
- * @param {number} value
+ * 豪/圣区间每星恰好 1.00，与牌谱屋 formatStableLevel2 的原式一致：
+ *   value ≥ 4 → 雀圣(value−3)；否则 → 雀豪(value)
+ * 杰区间每星不是 1.00（四麻南约 1.33、三麻南约 0.80），故按段位表算实际步长。
+ *
+ * @param {number} value 规范 value（统一南场标尺，见 levelValueIn）
  * @param {number|string} mode 4 或 3（三麻段位表 major 同为 1~6）
  * @returns {string|null}
  */
 export function formatStableRank (value, mode = 4) {
   if (!isFinite(value)) return null
 
-  // 段位基准（value = |rankpt2|/15 − 10，取自段位表）：
-  //   杰1 −4.67、杰2 −3.33、杰3 −2.00、豪1 1.00、豪2 2.00、豪3 3.00、
-  //   圣1 4.00、圣2 5.00、圣3 6.00
-  //
-  // 豪/圣区间每星恰好 1.00，与牌谱屋 formatStableLevel2 的原式完全一致：
-  //   value ≥ 4 → 雀圣(value−3)；否则 → 雀豪(value)
-  // 故该区间直接沿用原式，不做查表插值（避免跨段位边界被误判）。
+  // 豪/圣区间每星恰好 1.00（东西场都是），直接沿用牌谱屋原式（避免跨段位边界被误判）
   if (value >= 1) {
     if (value >= 6) return '雀圣3.00'          // 雀圣三星封顶
     return value >= 4
@@ -312,15 +432,11 @@ export function formatStableRank (value, mode = 4) {
   }
 
   // 杰区间：以杰3 为锚点，每星步长由段位表算出（杰1→杰2→杰3 的 value 间距）。
+  // 锚点取**规范轴**（南场口径），与 levelValueIn 保持一致。
   // 低于杰1 则落入雀士，夹到雀士三星。
-  const prefix = String(mode) === '3' ? 2 : 1
-  const jieValue = star => {
-    const def = loadCfg().level_definition.level_definition.map_[String(prefix * 10000 + 300 + star)]
-    return def && def.rankpt2 ? Math.abs(def.rankpt2) / 15 - 10 : null
-  }
-  const v3 = jieValue(3), v1 = jieValue(1)
+  const v3 = levelValueIn(mode, false, 3, 3), v1 = levelValueIn(mode, false, 3, 1)
   const JIE_ANCHOR = v3 != null ? v3 : -2.0
-  const JIE_STEP = (v3 != null && v1 != null) ? (v3 - v1) / 2 : 40 / 30
+  const JIE_STEP = (v3 != null && v1 != null && v3 !== v1) ? (v3 - v1) / 2 : 40 / 30
   const starFloat = 3 + (value - JIE_ANCHOR) / JIE_STEP
   // 容差：段位表的值本身带浮点误差，直接比较会误判边界
   if (starFloat < 1 - 1e-6) return '雀士3.00'
@@ -462,13 +578,16 @@ export function estimateGamesToRankChange (stats, roomId, currentScore) {
  * （每局期望 PT 变化），并非段位小数 —— 不能直接拼成「雀豪3.89」。
  *
  * 本实现改为输出与闭式解一致的连续值「雀豪3.34」，换算依据：
- *   value = value_L + E[PT]_含罚分 / (15 × 末位率)
- * 其中 value_L 是该段位的序号（豪1=1、豪2=2、豪3=3、圣1=4…，即 |P_L|/15−10）。
- * 该式与闭式解数学等价，已用 4 组真实数据交叉验证（误差 < 0.001）。
+ *   value = value_L + E[PT]_含罚分 / (b × 末位率)
+ * 其中 value_L 是该段位的序号（豪1=1、豪2=2、豪3=3、圣1=4…），
+ * b 取自 scaleOf(mode, east) —— **随模式与场次而变**（四麻南 15、四麻东 10、
+ * 三麻南 25、三麻东 15），不能写死。
  *
  * @returns {{text:string, value:number, approximate:true}|null}
  */
 function walkStableRank (stats, room, startLevel, mode = 4) {
+  const east = isEastRoom(room.id)
+  const { b } = scaleOf(mode, east)
   const E = lv => expectedPT(stats, room, lv, true)
   const roomId = room.id
   const n = ROOM_PLAYERS[roomId] || 4
@@ -476,9 +595,9 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
 
   // 把「某段位下的 E[PT]」换算为闭式解口径的连续 value
   const toValue = (lv, e) => {
-    const base = levelValueOf(lv)
+    const base = levelValueIn(mode, east, lv.major, lv.minor)
     if (base == null || !lastRate) return null
-    return base + e / (15 * lastRate)
+    return base + e / (b * lastRate)
   }
   const fmt = (lv, e) => {
     let v = toValue(lv, e)
@@ -486,7 +605,7 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
     // 夹到合法区间 [雀杰一星, 雀圣三星] = [−4.67, 6.00]。
     // 注意下界**不能取 1**：雀杰区间的 value 本就是负数（杰3 −2.00、杰1 −4.67），
     // 若夹到 1 会把雀杰玩家错报成「雀豪1.00」。
-    // 上界取 6（雀圣三星）是因为末位率极低时 E[PT]/(15×末位率) 会发散
+    // 上界取 6（雀圣三星）是因为末位率极低时 E[PT]/(b×末位率) 会发散
     // （实测末位率 5% → value 62，即「雀圣59」这类荒谬值）。
     let clamped = false
     if (v > 6) { v = 6; clamped = true }
@@ -550,13 +669,177 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
 }
 
 /**
- * 段位序号：豪1=1、豪2=2、豪3=3、圣1=4…（即 |P|/15−10）
+ * 段位序号：豪1=1、豪2=2、豪3=3、圣1=4…
+ *
+ * 保留此函数供内部按四麻南口径调用；需要区分模式/场次时请用 levelValueIn。
  */
 function levelValueOf (lv) {
-  const def = loadCfg().level_definition.level_definition.map_[String(10000 + lv.major * 100 + lv.minor)]
-  // 注：调用处仅用于四麻逐级试探；三麻走 penaltyOf，已按模式取表
-  if (!def || !def.rankpt2) return null
-  return Math.abs(def.rankpt2) / 15 - 10
+  return levelValueIn(4, false, lv.major, lv.minor)
+}
+
+/**
+ * 按**局数加权多个房间**计算安定段位（核心解法）。
+ *
+ * 单一房间只是本函数的特例（entries 只有一项）。之所以要加权，是因为玩家通常
+ * 同时在东场与南场、以及不同等级的房间打牌 —— 只取其中一个房间会答非所问。
+ *
+ * 数学模型：设规范 value 轴为 v（豪1=1.00…圣3=6.00，见 levelValueIn），
+ * 每局的期望 PT 变化为
+ *   E(v) = Σ_r  w_r × [ E_r[PT]不含罚分 + pen_r(v) × 末位率_r ]
+ * 其中 w_r 是房间 r 的局数占比，E_r 用房间 r 自己的 PT 表（levelpoint/buchang/
+ * init_point），pen_r 用房间 r 自己的罚分表（东 rankpt1 / 南 rankpt2）。
+ * 安定段位即 E(v) = 0 的根 —— 在该段位下期望涨跌为零。
+ *
+ * 关键点：**罚分必须按房间各自的表**，不能把东+南的统计池化后喂单表。
+ * 两表的量纲不同（四麻东每星 10 PT、南每星 15 PT），池化相当于把两种量纲
+ * 加权平均（实测平均偏 0.26 星、最大 1.56 星）。
+ *
+ * @param {Array<{roomId:number, stats:object, count:number}>} entries 各房间的数据
+ * @param {number|string} mode 4 或 3
+ * @returns {{text:string, value:number, expPT?:number, approximate?:boolean, konten?:boolean}|null}
+ */
+export function computeStableRankWeighted (entries, mode) {
+  if (!Array.isArray(entries) || !entries.length) return null
+  const m = mode != null ? (String(mode) === '3' ? 3 : 4) : 4
+  const n = m === 3 ? 3 : 4
+
+  // 只保留有局数、结构合法的房间
+  const rooms = []
+  for (const e of entries) {
+    const rid = Number(e?.roomId)
+    const room = loadCfg().desktop.matchmode.map_[String(rid)]
+    const st = e?.stats
+    if (!room || !st) continue
+    const cnt = Number(e.count)
+    if (!isFinite(cnt) || cnt <= 0) continue
+    const rates = st.rank_rates, avg = st.rank_avg_score
+    if (!Array.isArray(rates) || !Array.isArray(avg)) continue
+    if (rates.length < n || avg.length < n) continue
+    // 校验只针对**实际会参与加权**的顺位：某个顺位率为 0 时该项贡献恒为 0，
+    // 其平均点数缺失（本地 API 会给 null）不应导致整个房间被丢弃。
+    // 例：某房间 5 场全 2 位 → rank_avg_score=[null,31020,null,null]，
+    // 顺位率=[0,1,0,0]；只有 2 位的平均点数有意义，其余为 null 是正常的。
+    // 此前要求 n 项全部为数，会把这 5 场从权重里剔除（实测偏 0.08 星）。
+    let ok = true
+    for (let i = 0; i < n; i++) {
+      if (typeof rates[i] !== 'number' || !isFinite(rates[i])) { ok = false; break }
+      if (rates[i] > 0 && (typeof avg[i] !== 'number' || !isFinite(avg[i]))) { ok = false; break }
+    }
+    if (!ok) continue
+    rooms.push({ rid, room, stats: st, count: cnt, east: isEastRoom(rid) })
+  }
+  if (!rooms.length) return null
+  const total = rooms.reduce((s, r) => s + r.count, 0)
+
+  // 当前段位（各房间共用，取第一个有效的）
+  const raw = rooms[0].stats.level?.id
+  if (raw == null) return null
+  const realId = raw % 10000
+  let major = Math.floor(realId / 100)
+  const minor = realId % 100
+  if (major === 7) major = 6
+  if (major < 1 || major > 6) return null
+  const startLevel = { major, minor: major >= 6 ? Math.max(1, Math.min(20, minor)) : Math.max(1, Math.min(3, minor)) }
+
+  // 魂天：rating（魂珠）制，与 PT 表无关，按局数加权各房间的魂珠漂移即可
+  if (isKonten(startLevel)) {
+    let acc = 0
+    for (const r of rooms) {
+      const e = kontenBeadsRate(r.stats, r.room, n)
+      if (e == null) continue
+      acc += e * r.count
+    }
+    const beads = Math.round(acc / total * 100) / 100
+    const text = `魂天${formatBeadsRate(beads)}`
+    return { text, value: beads, expBeads: beads, konten: true, approximate: true }
+  }
+
+  // E[PT]不含罚分（用房间自己的 PT 表）。
+  // 顺位率为 0 的项直接跳过：其贡献恒为 0，且本地 API 对这类顺位不给平均点数（null）。
+  const eptNoPen = r => {
+    const lp = [r.room.levelpoint1, r.room.levelpoint2, r.room.levelpoint3, r.room.levelpoint4]
+    let e = 0
+    for (let i = 0; i < n; i++) {
+      const rate = r.stats.rank_rates[i]
+      if (!(rate > 0)) continue
+      const pt = Math.ceil((r.stats.rank_avg_score[i] - r.room.init_point) / 1000 + r.room.buchang[i]) + lp[i]
+      e += pt * rate
+    }
+    return e
+  }
+  for (const r of rooms) {
+    r.ept0 = eptNoPen(r)
+    // 末位率：样本里没拿过末位时为 0，此时罚分项恒为 0（乘 0），是正确结果
+    const lr = r.stats.rank_rates[n - 1]
+    r.lastRate = (typeof lr === 'number' && isFinite(lr)) ? lr : 0
+    r.pen = penaltyCurve(m, r.east)
+  }
+
+  // E(v)：加权总期望 PT 变化
+  const E = v => {
+    let e = 0
+    for (const r of rooms) e += (r.count / total) * (r.ept0 + r.pen(v) * r.lastRate)
+    return e
+  }
+
+  // 段位上限：取所有参与房间允许的最高 major，换算成 value 作为上界
+  let maxMajor = 1
+  for (const r of rooms) {
+    const al = ALLOWED_MAJORS[r.rid] || []
+    for (const mm of al) if (mm <= 5 && mm > maxMajor) maxMajor = mm
+  }
+  const V_MIN = -4.67
+  let vMax = 6
+  if (maxMajor < 5) {
+    const lv = levelValueIn(m, false, maxMajor, 3)
+    if (lv != null) vMax = Math.min(vMax, lv + 0.99)   // 该段位三星
+  }
+
+  // 扫描找 E(v)=0 的根（E 关于 v 单调递减：v 越高罚分越重）
+  const step = 0.002
+  let root = null
+  let prev = null
+  for (let v = V_MIN; v <= vMax + 1e-9; v += step) {
+    const e = E(v)
+    if (prev && prev.e >= 0 && e < 0) {
+      let lo = prev.v, hi = v
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2
+        if (E(mid) >= 0) lo = mid; else hi = mid
+      }
+      root = (lo + hi) / 2
+      break
+    }
+    prev = { v, e }
+  }
+
+  if (root == null) {
+    // 全程 E > 0：连最高可表达段位（雀圣3）都是净赚 → 稳定段位已达魂天。
+    // ⚠️ 但只有当参与的房间**允许魂天**（王座间）时才能这么报 —— 玉之间准入
+    // 只到雀圣三星，玩家在玉之间再强也升不到魂天，应夹在雀圣3.00。
+    // 此时 PT 制失效（魂天无 4 位罚分），改用 rating 制给出魂珠漂移，
+    // 与 walkStableRank 的魂天分支保持一致。
+    const allowsKonten = rooms.some(r => (ALLOWED_MAJORS[r.rid] || []).some(mm => mm >= 6))
+    if (E(vMax) >= 0 && vMax >= 6 && allowsKonten) {
+      let acc = 0
+      for (const r of rooms) {
+        const e = kontenBeadsRate(r.stats, r.room, n)
+        if (e == null) continue
+        acc += e * r.count
+      }
+      const beads = Math.round(acc / total * 100) / 100
+      return { text: `魂天${formatBeadsRate(beads)}`, value: beads, expBeads: beads, konten: true, approximate: true }
+    }
+    // 其余越界：夹到区间端点（雀圣3.00 或 雀杰1.00）
+    root = E(vMax) >= 0 ? vMax : V_MIN
+  }
+  const text = formatStableRank(root, m)
+  if (!text) return null
+  const out = { text, value: root, approximate: true }
+  if (root === V_MIN || root === vMax) out.clamped = true
+  // 单一房间时保留 expPT（与历史返回结构兼容）
+  if (rooms.length === 1) out.expPT = rooms[0].ept0
+  return out
 }
 
 /**
@@ -611,10 +894,20 @@ export function computeStableRank (stats, roomId, mode) {
     return { text, value: e, expBeads: e, konten: true, approximate: true }
   }
 
-  // 闭式解（仅南场房间）。三麻同样适用：末位率取 rank_rates[2]。
+  // 闭式解（仅「玉南 / 王南」这类南场快速路径）。三麻同样适用：末位率取 rank_rates[n-1]。
+  //
+  // 推导：4 位罚分只在拿到 4 位时生效，故每局的**期望**罚分是 pen(v) × 末位率。
+  // 均衡段位 v* 满足  E[PT]不含罚分 + pen(v*) × 末位率 = 0，
+  // 代入 pen(v) = −(a + b·v)（a、b 由 scaleOf 给出）解得：
+  //   v* = E[PT] / (b × 末位率) − a / b
+  // 四麻南 a=150 b=15 → a/b=10，即历史公式 E[PT]/(15×末位率) − 10（完全一致）；
+  // 三麻南 a=140 b=25 → a/b=5.6；四麻东 a=70 b=10 → a/b=7。
+  // 此前把 b 写死 15、a/b 写死 10，对四麻南正确但三麻南偏大（实测 三麻玉南 偏 +0.64 星）。
   if (CLOSED_FORM_ROOMS.has(rid) && !isKonten(startLevel)) {
+    const east = isEastRoom(rid)
+    const { a, b } = scaleOf(m, east)
     const expPT = expectedPT(stats, room, startLevel, false)
-    const value = expPT / (15 * rates[n - 1]) - 10
+    const value = expPT / (b * rates[n - 1]) - a / b
     // 有效区间：雀豪一星(1.00) ~ 雀圣三星(6.00)。
     // 上界用 6 而非牌谱屋的 7：value > 6 已超出雀圣三星，继续按公式外推会产出
     // 「雀圣59.07」这类荒谬值（末位率过低时尤甚，实测末位率 5% → value 62）。

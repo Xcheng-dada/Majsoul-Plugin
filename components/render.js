@@ -4,7 +4,7 @@ import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
 import { buildPlayerTags, drawTags } from '../utils/PlayerTags.js'
 import { computePlayStyle } from '../utils/PlayStyle.js'
-import { computeStableRank, estimateGamesToRankChange, stableRankEligibleRooms, stableRankSouthRoom } from '../utils/StableRank.js'
+import { computeStableRank, computeStableRankWeighted, estimateGamesToRankChange, stableRankEligibleRooms, stableRankSouthRoom } from '../utils/StableRank.js'
 import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
@@ -1464,16 +1464,17 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   // 安定段位：四麻/三麻各自独立计算（卡片有两张段位卡，各显示各的）。
   //
-  // 必须用**单一南场**数据。原因不是「东场表不同」，而是换算式本身按南场标尺标定：
-  //   value = E[PT] / (15 × 末位率) − 10
-  // 其中除数 15 来自**南场每星 15 PT**（罚分 165→180→195→210），且只有用南场罚分
-  // 才能还原出 豪1=1.00 / 豪2=2.00 / 豪3=3.00 / 圣1=4.00 这组基准；东场每星只有
-  // 10 PT（罚分 80→90→100→110），同一式子会把 豪1 算成 −4.67。
-  // 因此把东+南样本池化后只喂一个房间的表，等于把两种量纲的数加权平均再除以
-  // 南场的 15。实测（穷举 19600 组顺位率 × 4 组均点，按东50%/南50%加权）：
-  // 平均偏 0.26 星、最大 1.56 星 —— 量级不大但方向不可控，故仍只用南场。
+  // 做法：**逐房间查询，再按局数加权**（computeStableRankWeighted）。
+  // 玩家通常同时打东场与南场、以及不同等级的房间，只取其中一个会答非所问。
+  // 加权模型：
+  //   E(v) = Σ_r  w_r × [ E_r[PT]不含罚分 + pen_r(v) × 末位率_r ]   ，求 E(v)=0
+  // 其中 w_r 是房间 r 的局数占比，各房间**用自己的 PT 表与罚分表**
+  // （东 rankpt1 / 南 rankpt2），v 是规范段位轴（豪1=1.00…圣3=6.00）。
   //
-  // 房间选择：**先按当前段位过滤准入房间**，再取其中最高者（王座 > 玉 > 金 > 银 > 铜）。
+  // ⚠️ 不能把东+南的统计池化后喂单表：两表量纲不同（四麻东每星 10 PT、
+  // 南每星 15 PT），池化相当于把两种量纲加权平均（实测平均偏 0.26 星、最大 1.56 星）。
+  //
+  // 房间选择：**先按当前段位过滤准入房间**（东西场各一份）。
   // 不能只按等级排序：雀豪玩家的王南数据是过去雀圣时期打的，用那段算会产出
   // 「雀杰3.99」这类与当前水平无关的结果（实测 UID 16644588）。
   //
@@ -1483,7 +1484,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   //
   // 「安定段位」这个概念在哪些查询里存在：
   //   默认段位场 —— 有（数据来自牌谱屋/本地 API 的 gc=2 段位场）；
-  //   房间筛选   —— 有（用户指定了具体房间，模型需要的正是「该房间的南场数据」）；
+  //   房间筛选   —— 有（用户指定了具体房间，取其东场+南场按局数加权）；
   //   友人场/比赛场 —— **没有**：数据来自本地 API 的 gc=1/4，与段位场（gc=2）是
   //     不同的对局集合，其顺位率/平均点数不适用于段位场 PT 模型。
   const stableApplicable = !scopeInfo
@@ -1497,62 +1498,64 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       // 当前段位优先取本地 API 的实时值，其次牌谱屋
       const modeData = m === 4 ? data4 : data3
       const curLevelId = realtimePT?.[rtKey]?.levelId ?? modeData.level?.id
-      // 房间筛选：用户已指定房间，只在该房间的南场里算（见上方「单一南场」说明）。
-      // 其余情况：按当前段位准入范围，从高到低取第一个有数据的南场。
-      const filterSouth = roomFilter
-        ? stableRankSouthRoom(m, roomFilter.ids[m])
-        : null
-      const candidates = roomFilter
-        ? (filterSouth ? [filterSouth] : [])
-        : stableRankEligibleRooms(m, curLevelId)
 
-      // 1) 牌谱屋：依次尝试，取**第一个有有效数据**的房间（准入范围内最高者）。
-      // 牌谱屋该模式 404（如三麻未打过金之间）时不再逐个试房间，直接跳过以省请求。
-      let best = null
+      // 房间筛选：用户已指定房间，取其东场+南场两个 id；
+      // 其余情况：按当前段位准入范围，东场与南场都取（按局数加权，见下）。
+      const candidates = roomFilter
+        ? stableRankSouthRoom(m, roomFilter.ids[m])
+        : [...stableRankEligibleRooms(m, curLevelId, false), ...stableRankEligibleRooms(m, curLevelId, true)]
+
+      // 1) 牌谱屋：把候选房间**逐个查全**（不再取第一个就停）。
+      // 因为安定段位要按局数加权各房间：玩家可能同时打东场与南场、以及不同等级的房间，
+      // 只取一个房间会答非所问。数据量不大（每模式至多 10 个房间），且失败房间会被跳过。
+      const entries = []
       if (modeValid) {
         for (const srRoom of candidates) {
           try {
-            const southStats = await api.getPlayerStats(uid, m, String(srRoom))
-            if (!southStats || southStats.retcode || !southStats.count) continue
-            const sr = computeStableRank(southStats, srRoom, m)
-            if (!sr) continue
-            best = { room: srRoom, stats: southStats, sr, count: southStats.count }
-            break
-          } catch (e) { /* 无该南场数据（404）：继续尝试更低房间 */ }
+            const rs = await api.getPlayerStats(uid, m, String(srRoom))
+            if (!rs || rs.retcode || !rs.count) continue
+            entries.push({ roomId: srRoom, stats: rs, count: rs.count })
+          } catch (e) { /* 无该房间数据（404）：跳过 */ }
         }
       }
 
-      // 2) 牌谱屋无数据 → 本地 API 兜底。
+      // 2) 牌谱屋全无数据 → 本地 API 兜底。
       // 本地段位场数据覆盖全部段位（finalPositionCounts 全量），牌谱屋不覆盖的低段位
       // 与「该模式牌谱屋 404」两种情况都靠这里出结果 —— 此前用 continue 提前跳过整个
       // 分支，导致三麻 404 时连本地兜底也走不到，安定段只能显示「—」（实测 UID 14367043）。
       //
       // 房间筛选时**不能**走本地兜底：本地 API 的 finalPositionCounts 是段位场整体
       // （不区分房间），拿它算「玉之间安定段位」等于答非所问 —— 宁可显示「—」。
-      if (!best && !roomFilter) {
+      let sr = null
+      if (entries.length) {
+        sr = computeStableRankWeighted(entries, m)
+      } else if (!roomFilter) {
         const local = await stableRankFromLocal(uid, m, curLevelId)
-        if (local) best = local
+        if (local) { sr = local.sr; entries.push({ roomId: local.room, stats: local.stats, count: local.count }) }
       }
 
-      if (best) {
-        // 升/掉段预计战数：当前段位与分数优先取本地 API 的实时值
+      if (sr && entries.length) {
+        // 升/掉段预计战数：用**局数最多的房间**作代表（该房间是玩家当前的主场，
+        // 其 PT 表与罚分最能反映实际涨跌速度）。当前段位与分数优先取实时值
         // （牌谱屋的 level.score 有延迟，实时值才能算准「还差多少分」）。
+        const main = entries.reduce((a, b) => (b.count > a.count ? b : a))
         const liveId = realtimePT?.[rtKey]?.levelId
         const liveScore = realtimePT?.[rtKey]?.score
         const estStats = (liveId != null)
-          ? { ...best.stats, level: { ...best.stats.level, id: liveId } }
-          : best.stats
-        const curScore = (liveScore != null) ? liveScore : best.stats.level?.score
+          ? { ...main.stats, level: { ...main.stats.level, id: liveId } }
+          : main.stats
+        const curScore = (liveScore != null) ? liveScore : main.stats.level?.score
         let promo = ''
         if (typeof curScore === 'number') {
-          const rc = estimateGamesToRankChange(estStats, best.room, curScore)
+          const rc = estimateGamesToRankChange(estStats, main.roomId, curScore)
           // 魂天的「掉魂花」在游戏内同样显示为掉段，故文案统一用「掉段」，
           // 不出现「掉花」字样；flower 仅用于判断阈值（魂花 15/10/5）。
           if (rc?.promote) promo = `约${rc.promote}战升段`
           else if (rc?.flower) promo = `约${rc.flower}战掉段`
           else if (rc?.demote) promo = `约${rc.demote}战掉段`
         }
-        stableByMode[m] = { text: best.sr.text, promo, room: best.room, count: best.count }
+        const totalCount = entries.reduce((s, e) => s + e.count, 0)
+        stableByMode[m] = { text: sr.text, promo, room: main.roomId, count: totalCount }
       }
     }
   }
