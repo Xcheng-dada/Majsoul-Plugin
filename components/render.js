@@ -1066,19 +1066,39 @@ function parseRankFromText(rankText) {
 }
 
 /**
+ * 从本地 API 的 statistics 里取出「模式 × 对局类别」对应的那一条。
+ *
+ * mahjongCategory：1 四麻 / 2 三麻；gameCategory：1 友人场 / 2 段位场 / 4 比赛场。
+ * gameType=1（真正的对局记录）优先，取不到再退回该类别下任意 gameType。
+ *
+ * 注意 gameCategory=2 的这一条是**段位场整体**：finalPositionCounts 为全量顺位累计
+ * （含铜银金玉，不区分房间），recentGames 为该玩家**真实时间序**的最近对局
+ * （同样跨全部房间）。这正是牌谱屋做不到的部分 —— 牌谱屋的 mode 参数只能圈定
+ * 金/玉/王座，圈不到铜银（恒 404）。
+ *
+ * @returns {object|null}
+ */
+function pickLocalEntry (statRes, mode, gc = 2) {
+  if (!statRes || !Array.isArray(statRes.entries)) return null
+  const mc = String(mode) === '3' ? 2 : 1
+  return statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc && x.gameType === 1)
+    || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc)
+    || null
+}
+
+/**
  * 用本地 API 统计（gameCategory=gc）填充牌谱屋无数据的模式（缺失字段保持零）。
  * gc=2 段位场（覆盖铜银金玉），gc=1 友人场，gc=4 比赛场；
  * 这里仅把有对应关系的字段填上：
  *   count/rank_rates/avg_rank ← finalPositionCounts
  *   和牌率/自摸率/放铳率      ← winRate/tsumoRate/dealInRate
+ *
+ * @param {object} [statRes] 已取到的 statistics；显式传入（含 null）时不再重复请求。
  */
-async function fillModeFromLocal (data, extended, uid, mode, gc = 2) {
+async function fillModeFromLocal (data, extended, uid, mode, gc = 2, statRes) {
   try {
-    const statRes = await getPlayerStatistics(uid)
-    if (!statRes || !Array.isArray(statRes.entries)) return
-    const mc = mode === 3 ? 2 : 1
-    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc && x.gameType === 1)
-      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === gc)
+    const stats = statRes !== undefined ? statRes : await getPlayerStatistics(uid)
+    const entry = pickLocalEntry(stats, mode, gc)
     if (!entry) return
     const fpc = entry.finalPositionCounts || []
     const count = fpc.reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
@@ -1104,13 +1124,12 @@ async function fillModeFromLocal (data, extended, uid, mode, gc = 2) {
  * 牌谱屋只统计金之间以上，用于把卡片上的对局数覆盖为完整段位场次数；
  * sum(finalPositionCounts) 为全量顺位累计，不受 roundCount 封顶 100 限制。
  */
-async function getLocalRankedCounts (uid) {
+async function getLocalRankedCounts (uid, statRes) {
   try {
-    const statRes = await getPlayerStatistics(uid)
-    if (!statRes || !Array.isArray(statRes.entries)) return null
+    const stats = statRes !== undefined ? statRes : await getPlayerStatistics(uid)
+    if (!stats || !Array.isArray(stats.entries)) return null
     const pick = (mc) => {
-      const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
-        || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+      const entry = pickLocalEntry(stats, mc === 2 ? 3 : 4, 2)
       if (!entry) return null
       const count = (entry.finalPositionCounts || []).reduce((a, b) => (a || 0) + (b || 0), 0) || entry.roundCount || 0
       return count > 0 ? count : null
@@ -1132,6 +1151,12 @@ async function getLocalRankedCounts (uid) {
 const RECORD_FETCH_LIMIT = Math.max(16, RANK_WINDOW)
 
 /**
+ * 走势图绘制的点位数（record_bg 宽 1000，点位 x = 108 + i*50，16 点恰好到 x858）。
+ * 模块级：preferLocalRecord 需据此判断本地顺位序列是否够画满一张图。
+ */
+const CHART_POINTS = 16
+
+/**
  * 无牌谱屋数据时，用本地 recentGames（顺位序列）构造走势图所需 record。
  * 走势图按 旧→新 从左到右绘制，故 record 需为 新→旧（chart 内会 reverse）。
  *
@@ -1148,6 +1173,35 @@ function buildLocalRecord (entry, nickname, mode, limit = 16) {
     }
     return { players }
   })
+}
+
+/**
+ * 为走势图与「绝好调 / 恶调中」选择数据源：本地 recentGames 优先，返回 null 表示沿用牌谱屋。
+ *
+ * 起因（实测用户三麻）：牌谱屋的 mode 参数只能圈定**金/玉/王座**
+ * （四麻 16.12.9.15.11.8、三麻 22.24.26.21.23.25），**圈不到铜之间(2/3、17/18)
+ * 与银之间(5/6、19/20)** —— 对这两档牌谱屋恒返回 404。于是玩家近期改打银之间、
+ * 历史上有金之间对局时，牌谱屋仍能返回**几个月前的金之间对局**且被当成「最近对局」，
+ * 走势图与顺位率全部失真。
+ *
+ * 本地 API 的段位场 recentGames 是**跨全部房间的真实时间序**（不区分房间，
+ * 上限 50 场），因此只要本地覆盖的对局数**严格多于**牌谱屋（说明存在牌谱屋
+ * 看不到的房间），就以本地顺位序列为准。相等时不切换 —— 那说明玩家只打
+ * 金/玉/王座，牌谱屋的记录本就是完整的，保持原有行为。
+ *
+ * 另需本地序列足够长（≥ CHART_POINTS），否则宁可继续用牌谱屋的 16 场，
+ * 避免把走势图从 16 点缩短成几个点。
+ *
+ * @returns {Array|null} record（新→旧）；返回 null 时调用方应改用牌谱屋
+ */
+function preferLocalRecord (localEntry, paipuCount, nickname, mode, limit) {
+  const recent = localEntry?.recentGames
+  if (!Array.isArray(recent) || recent.length < CHART_POINTS) return null
+  const localTotal = (localEntry.finalPositionCounts || []).reduce((a, b) => a + (b || 0), 0)
+  const paipu = Number(paipuCount) || 0
+  // 严格大于：本地统计含铜/银，牌谱屋只看金/玉/王座，故「本地更多」即存在隐藏房间
+  if (!(localTotal > paipu)) return null
+  return buildLocalRecord(localEntry, nickname, mode, limit)
 }
 
 /**
@@ -1195,15 +1249,12 @@ function extractRecentRanks (records, nickname, mode, window) {
  *
  * @returns {{room:number, stats:object, sr:object, count:number}|null}
  */
-async function stableRankFromLocal (uid, mode, curLevelId) {
+async function stableRankFromLocal (uid, mode, curLevelId, statRes) {
   try {
     const m = String(mode) === '3' ? 3 : 4
     const n = m === 3 ? 3 : 4
-    const mc = m === 3 ? 2 : 1
-    const statRes = await getPlayerStatistics(uid)
-    if (!statRes || !Array.isArray(statRes.entries)) return null
-    const entry = statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2 && x.gameType === 1)
-      || statRes.entries.find(x => x.mahjongCategory === mc && x.gameCategory === 2)
+    const statResolved = statRes !== undefined ? statRes : await getPlayerStatistics(uid)
+    const entry = pickLocalEntry(statResolved, m, 2)
     if (!entry) return null
 
     const fpc = entry.finalPositionCounts || []
@@ -1383,8 +1434,22 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   const data4Valid = data4 && !data4.retcode
   const data3Valid = data3 && !data3.retcode
 
-  let localEntry4 = null
-  let localEntry3 = null
+  // 本地 API 段位场统计：**整个渲染流程只取一次**，供四处共用
+  // （此前 fillModeFromLocal / getLocalRankedCounts / stableRankFromLocal 各自
+  //   独立请求同一接口，最多重复 3 次）：
+  //   1) 牌谱屋无数据时的统计字段填充（fillModeFromLocal）
+  //   2) 走势图与「绝好调/恶调中」的顺位序列（recentGames，见下）
+  //   3) 卡片上的段位场总场次（getLocalRankedCounts）
+  //   4) 低段位玩家的安定段位兜底（stableRankFromLocal）
+  let localStats = null
+  try {
+    localStats = await getPlayerStatistics(uid)
+  } catch (e) {
+    console.warn(`[render.js] 本地API统计获取失败: ${e.message}`)
+  }
+
+  const localEntry4 = pickLocalEntry(localStats, 4, scopeGc)
+  const localEntry3 = pickLocalEntry(localStats, 3, scopeGc)
   // 主模式 404 或友人场/比赛场时，用本地 API 对应房间（gc=scopeGc）数据填充统计字段。
   // 注意：零对象无 retcode，必须先取好真实昵称再替换，否则替换后 if(retcode) 判断会失效导致兜底不执行；
   // 友人场/比赛场且有牌谱屋数据时不重置（保留昵称/段位），仅覆盖统计字段。
@@ -1403,7 +1468,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       data4.nickname = realName
       extended4 = JSON.parse(JSON.stringify(playerExtendZero))
     }
-    localEntry4 = await fillModeFromLocal(data4, extended4, uid, 4, scopeGc)
+    await fillModeFromLocal(data4, extended4, uid, 4, scopeGc, localStats)
   }
   if (data3.retcode || scopeInfo) {
     const realName = playerName || realtimePT?.nickname || nameOf(data3) || nameOf(otherData) || nameOf(data4) || String(uid)
@@ -1412,19 +1477,31 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       data3.nickname = realName
       extended3 = JSON.parse(JSON.stringify(playerExtendZero))
     }
-    localEntry3 = await fillModeFromLocal(data3, extended3, uid, 3, scopeGc)
+    await fillModeFromLocal(data3, extended3, uid, 3, scopeGc, localStats)
   }
   
 
   if (extended4.retcode) extended4 = JSON.parse(JSON.stringify(playerExtendZero))
   if (extended3.retcode) extended3 = JSON.parse(JSON.stringify(playerExtendZero))
 
+  // 牌谱屋原始场次（金/玉/王座口径）：必须在下方「用本地总场次覆盖 count」之前留存，
+  // preferLocalRecord 靠它判断本地是否覆盖了牌谱屋看不到的房间（铜/银）。
+  const paipuCount4 = data4.count || 0
+  const paipuCount3 = data3.count || 0
+
   let _mode, data, extended, record
   if (mode === "3") {
     _mode = "三麻战绩"
     data = data3
     extended = extended3
-    if (data3Valid && !scopeInfo) {
+    // 数据源选择：牌谱屋圈不到铜/银之间，玩家改打银之间时会一直显示旧的金之间对局，
+    // 本地 recentGames 跨全部房间（见 preferLocalRecord），本地覆盖更全时以它为准。
+    const localRec3 = (!scopeInfo && !roomFilter)
+      ? preferLocalRecord(localEntry3, paipuCount3, data3.nickname, '3', RECORD_FETCH_LIMIT)
+      : null
+    if (localRec3) {
+      record = localRec3
+    } else if (data3Valid && !scopeInfo) {
       try {
         record = await api.getRecentRecords(uid, 3, RECORD_FETCH_LIMIT)
       } catch (e) {
@@ -1457,7 +1534,13 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     _mode = "四麻战绩"
     data = data4
     extended = extended4
-    if (data4Valid && !scopeInfo) {
+    // 数据源选择：同上（牌谱屋圈不到铜/银之间）
+    const localRec4 = (!scopeInfo && !roomFilter)
+      ? preferLocalRecord(localEntry4, paipuCount4, data4.nickname, '4', RECORD_FETCH_LIMIT)
+      : null
+    if (localRec4) {
+      record = localRec4
+    } else if (data4Valid && !scopeInfo) {
       try {
         record = await api.getRecentRecords(uid, 4, RECORD_FETCH_LIMIT)
       } catch (e) {
@@ -1498,7 +1581,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 覆盖（牌谱屋仅统计金之间以上）；仅默认段位场查询生效，友人/比赛场、房间筛选保持牌谱屋原值。
   // 主模式 404 的场景 fillModeFromLocal 已直接填好本地总场次，此处跳过该模式。
   if (!scopeInfo && !roomFilter) {
-    const localCounts = await getLocalRankedCounts(uid)
+    const localCounts = await getLocalRankedCounts(uid, localStats)
     if (localCounts) {
       if (data4Valid && localCounts[4] != null) data4.count = localCounts[4]
       if (data3Valid && localCounts[3] != null) data3.count = localCounts[3]
@@ -1577,7 +1660,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       if (entries.length) {
         sr = computeStableRankWeighted(entries, m)
       } else if (!roomFilter) {
-        const local = await stableRankFromLocal(uid, m, curLevelId)
+        const local = await stableRankFromLocal(uid, m, curLevelId, localStats)
         if (local) { sr = local.sr; entries.push({ roomId: local.room, stats: local.stats, count: local.count }) }
       }
 
@@ -1838,7 +1921,6 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   
   // 走势图只画最近 16 场：record 为新→旧且可能含 RECORD_FETCH_LIMIT(20) 场，
   // 先截最近 16 场再反转为 旧→新。点位 x = 108 + i*50，20 个点会画到 x1058 超出画布。
-  const CHART_POINTS = 16
   const revRecords = record.slice(0, CHART_POINTS).reverse()
   
   // 如果没有对局数据，显示提示文字
