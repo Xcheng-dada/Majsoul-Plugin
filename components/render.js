@@ -4,7 +4,7 @@ import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
 import { buildPlayerTags, drawTags } from '../utils/PlayerTags.js'
 import { computePlayStyle } from '../utils/PlayStyle.js'
-import { computeStableRank, estimateGamesToRankChange, stableRankEligibleRooms } from '../utils/StableRank.js'
+import { computeStableRank, estimateGamesToRankChange, stableRankEligibleRooms, stableRankSouthRoom } from '../utils/StableRank.js'
 import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
@@ -955,14 +955,15 @@ export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, s
  *
  * @param {object|null} stableInfo { text, promo } 该模式的安定段位与升/掉段预计
  * @param {boolean} stableApplicable 本次查询是否存在「安定段位」这个概念
- *   （友人场/比赛场、房间筛选都不存在）—— 为 false 时用无安定段槽的旧素材
+ *   （友人场/比赛场不存在）—— 为 false 时用无安定段槽的旧素材
  */
 async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null, stableApplicable = true) {
   // 以下两种情况用旧素材 rank_bg.png（无「安定段」槽），不预留标签位：
   //   1) 初心段位 —— 安定段位数学上无定义（rankpt=0 且不可掉段）；
-  //   2) 本次查询不存在安定段概念（友人场/比赛场、房间筛选）—— 留槽只会显示「—」，
+  //   2) 本次查询不存在安定段概念（友人场/比赛场）—— 留槽只会显示「—」，
   //      看起来像渲染缺失，而实际上该字段对本次查询根本不存在。
-  // 其余情况用新素材 rank_bg2.png（带安定段位槽）。
+  // 其余情况用新素材 rank_bg2.png（带安定段位槽）；此时若无数据（如房间筛选
+  // 下该房间南场无对局）会在槽内显示「—」，表示「有此概念但暂无数据」。
   // level.major_rank 是字符串段位名，level._majorRank 是数字 1~6。
   const isBeginner = level && level._majorRank === 1
   let rankbg, hasStableSlot = false
@@ -1473,12 +1474,12 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 实测恒为 404）用本地 API 兜底 —— 本地 API 的段位场数据覆盖**全部段位**，
   // 且 finalPositionCounts 是全量顺位率（不区分房间，正适合按段位判断的用法）。
   //
-  // 「安定段位」这个概念只在默认段位场查询里存在：
-  //   友人场/比赛场 —— 数据来自本地 API 的 gc=1/4，与段位场（gc=2）是**不同的对局
-  //     集合**，其顺位率/平均点数不适用于段位场 PT 模型；
-  //   房间筛选 —— 房间已由用户指定，语义交给筛选本身。
-  // 两种情况都不计算，段位卡也相应改用无「安定段」槽的素材（见 getRankIcon）。
-  const stableApplicable = !scopeInfo && !roomFilter
+  // 「安定段位」这个概念在哪些查询里存在：
+  //   默认段位场 —— 有（数据来自牌谱屋/本地 API 的 gc=2 段位场）；
+  //   房间筛选   —— 有（用户指定了具体房间，模型需要的正是「该房间的南场数据」）；
+  //   友人场/比赛场 —— **没有**：数据来自本地 API 的 gc=1/4，与段位场（gc=2）是
+  //     不同的对局集合，其顺位率/平均点数不适用于段位场 PT 模型。
+  const stableApplicable = !scopeInfo
 
   const stableByMode = { 4: null, 3: null }
   if (stableApplicable) {
@@ -1489,7 +1490,14 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       // 当前段位优先取本地 API 的实时值，其次牌谱屋
       const modeData = m === 4 ? data4 : data3
       const curLevelId = realtimePT?.[rtKey]?.levelId ?? modeData.level?.id
-      const candidates = stableRankEligibleRooms(m, curLevelId)
+      // 房间筛选：用户已指定房间，只在该房间的南场里算（东+南混合会引入偏差）。
+      // 其余情况：按当前段位准入范围，从高到低取第一个有数据的南场。
+      const filterSouth = roomFilter
+        ? stableRankSouthRoom(m, roomFilter.ids[m])
+        : null
+      const candidates = roomFilter
+        ? (filterSouth ? [filterSouth] : [])
+        : stableRankEligibleRooms(m, curLevelId)
 
       // 1) 牌谱屋：依次尝试，取**第一个有有效数据**的房间（准入范围内最高者）。
       // 牌谱屋该模式 404（如三麻未打过金之间）时不再逐个试房间，直接跳过以省请求。
@@ -1511,7 +1519,10 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       // 本地段位场数据覆盖全部段位（finalPositionCounts 全量），牌谱屋不覆盖的低段位
       // 与「该模式牌谱屋 404」两种情况都靠这里出结果 —— 此前用 continue 提前跳过整个
       // 分支，导致三麻 404 时连本地兜底也走不到，安定段只能显示「—」（实测 UID 14367043）。
-      if (!best) {
+      //
+      // 房间筛选时**不能**走本地兜底：本地 API 的 finalPositionCounts 是段位场整体
+      // （不区分房间），拿它算「玉之间安定段位」等于答非所问 —— 宁可显示「—」。
+      if (!best && !roomFilter) {
         const local = await stableRankFromLocal(uid, m, curLevelId)
         if (local) best = local
       }

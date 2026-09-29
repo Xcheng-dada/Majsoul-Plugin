@@ -136,6 +136,27 @@ function levelOrdinal (levelId) {
 }
 
 /**
+ * 从一组房间 id 中挑出可用于安定段位计算的**南场**房间。
+ *
+ * 安定段位模型必须用单一南场数据（东场与南场 PT 表不同，混合会引入偏差，
+ * 实测可达 0.39 星）；而房间筛选传入的是「东+南」两个 id
+ * （如 玉之间 = [11, 12]，11 为玉东、12 为玉南），故需挑出其中的南场再计算。
+ *
+ * @param {number|string} mode 4 或 3
+ * @param {number[]} roomIds 候选房间 id（可含东场）
+ * @returns {number|null} 南场房间 id；无南场时返回 null
+ */
+export function stableRankSouthRoom (mode, roomIds) {
+  const m = String(mode) === '3' ? 3 : 4
+  const south = SOUTH_ROOMS_BY_MODE[m] || []
+  for (const id of (roomIds || [])) {
+    const n = Number(id)
+    if (south.includes(n)) return n
+  }
+  return null
+}
+
+/**
  * 按**当前段位**过滤出该玩家可准入的南场房间，保持高→低顺序。
  *
  * 依据 matchmode 的 level_limit / level_limit_ceil（房间准入段位区间）：
