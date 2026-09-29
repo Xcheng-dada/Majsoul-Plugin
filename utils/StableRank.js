@@ -125,12 +125,18 @@ function scaleOf (mode, east) {
   return { a: p1 - b, b }
 }
 
-/** 段位序号 → value（豪1=1、豪2=2、豪3=3、圣1=4…），按模式与场次取真实罚分反解 */
+/**
+ * 段位序号 → value（豪1=1、豪2=2、豪3=3、圣1=4…），按模式与场次取真实罚分反解。
+ *
+ * 支持的段位范围：**雀士(2) ~ 雀圣(5)**。
+ *   - 雀士也有罚分（南 −20/−40/−60），故可以反解 value（雀士3 = −6.00）；
+ *   - 初心(1) rankpt1=rankpt2=0 且不可掉段，罚分为 0 无法反解，返回 null
+ *     —— 这正是「初心安定段位数学上无定义」的体现，由调用方显示「—」。
+ *   - 杰(3) 必须支持：杰区间的 value 基准随模式/场次不同
+ *     （四麻南 杰3=−2.00、三麻南 −0.80、四麻东 −1.00），格式化与罚分曲线都要用它做锚点。
+ */
 function levelValueIn (mode, east, major, minor) {
-  // 杰(3) 也要支持：杰区间的 value 基准随模式/场次不同（四麻南 杰3=−2.00、
-  // 三麻南 −0.80、四麻东 −1.00），格式化与罚分曲线都要用它做锚点。
-  // 雀士及以下 rankpt=0，无法反解 value，故从杰1 起。
-  if (major < 3) return null
+  if (major < 2) return null          // 初心：罚分恒为 0，无法反解
   const prefix = String(mode) === '3' ? 2 : 1
   const d = loadCfg().level_definition.level_definition.map_[String(prefix * 10000 + major * 100 + minor)]
   if (!d) return null
@@ -148,8 +154,11 @@ function levelValueIn (mode, east, major, minor) {
  * 因此跨房间加权时必须先把两个场次的罚分都映射到**同一条 value 轴**上，
  * 这里统一采用**南场口径**（`levelValueIn(mode,false,…)`）作为规范轴。
  *
- * 实现：把段位表的杰1~圣3 逐星建成 (规范value, 该场次罚分) 锚点，
+ * 实现：把段位表的雀士1~圣3 逐星建成 (规范value, 该场次罚分) 锚点，
  * 再对任意 value 线性插值。这样 pen(v) 在规范轴上连续，且两端做常数外推。
+ *
+ * ⚠️ 必须包含**雀士**锚点：雀士也有罚分（南 −20/−40/−60），
+ * 若从杰1 起建锚点，雀士段位的罚分会错误地沿用杰1 的值。
  *
  * @param {number} mode 4 或 3
  * @param {boolean} east 取东场罚分还是南场罚分
@@ -159,7 +168,12 @@ function penaltyCurve (mode, east) {
   const prefix = String(mode) === '3' ? 2 : 1
   const map = loadCfg().level_definition.level_definition.map_
   const anchors = []
-  for (const [major, minor] of [[3, 1], [3, 2], [3, 3], [4, 1], [4, 2], [4, 3], [5, 1], [5, 2], [5, 3]]) {
+  for (const [major, minor] of [
+    [2, 1], [2, 2], [2, 3],                        // 雀士
+    [3, 1], [3, 2], [3, 3],                        // 雀杰
+    [4, 1], [4, 2], [4, 3],                        // 雀豪
+    [5, 1], [5, 2], [5, 3]                         // 雀圣
+  ]) {
     const d = map[String(prefix * 10000 + major * 100 + minor)]
     if (!d) continue
     // 规范 value 一律按南场口径（保证东/南锚点落在同一根轴上）
@@ -182,6 +196,22 @@ function penaltyCurve (mode, east) {
     }
     return anchors[anchors.length - 1].pen
   }
+}
+
+/**
+ * 规范 value 轴的**下界**：该模式/场次能表达的最低段位（雀士一星）。
+ *
+ * 雀士也有罚分，故安定段位可以落在雀士区间（四麻南 雀士1 = −8.67、
+ * 三麻南 雀士1 = −4.80）。低于此值无段位可表达，由调用方夹取。
+ *
+ * @param {number} mode 4 或 3
+ * @returns {number}
+ */
+function valueFloor (mode) {
+  const v = levelValueIn(mode, false, 2, 1)
+  // 兜底仅在段位表缺雀士1 时触发；取四麻南 雀士1 的值（−8.67）而非杰1（−4.67），
+  // 否则低段位玩家的安定段会被错误地夹到雀杰区间。
+  return v != null ? v : -8.67
 }
 
 /**
@@ -394,7 +424,8 @@ function formatBeadsRate (e) {
  *
  * 豪/圣区间每星恰好 1.00，与牌谱屋 formatStableLevel2 的原式一致：
  *   value ≥ 4 → 雀圣(value−3)；否则 → 雀豪(value)
- * 杰区间每星不是 1.00（四麻南约 1.33、三麻南约 0.80），故按段位表算实际步长。
+ * 杰区间每星不是 1.00（四麻南约 1.33、三麻南约 0.80），故按段位表算实际步长；
+ * 雀士区间同理（四麻南 雀士1 = −8.67、雀士3 = −6.00）。
  *
  * @param {number} value 规范 value（统一南场标尺，见 levelValueIn）
  * @param {number|string} mode 4 或 3（三麻段位表 major 同为 1~6）
@@ -413,14 +444,22 @@ export function formatStableRank (value, mode = 4) {
 
   // 杰区间：以杰3 为锚点，每星步长由段位表算出（杰1→杰2→杰3 的 value 间距）。
   // 锚点取**规范轴**（南场口径），与 levelValueIn 保持一致。
-  // 低于杰1 则落入雀士，夹到雀士三星。
   const v3 = levelValueIn(mode, false, 3, 3), v1 = levelValueIn(mode, false, 3, 1)
   const JIE_ANCHOR = v3 != null ? v3 : -2.0
   const JIE_STEP = (v3 != null && v1 != null && v3 !== v1) ? (v3 - v1) / 2 : 40 / 30
   const starFloat = 3 + (value - JIE_ANCHOR) / JIE_STEP
   // 容差：段位表的值本身带浮点误差，直接比较会误判边界
-  if (starFloat < 1 - 1e-6) return '雀士3.00'
-  return `雀杰${Math.min(3.99, Math.max(1, starFloat)).toFixed(2)}`
+  if (starFloat >= 1 - 1e-6) {
+    return `雀杰${Math.min(3.99, Math.max(1, starFloat)).toFixed(2)}`
+  }
+
+  // 雀士区间：以雀士3 为锚点，每星步长由段位表算出（雀士1→雀士3 的 value 间距）。
+  // 低于雀士1 则夹到雀士1.00（雀士是最低可表达段位 —— 初心罚分为 0，无安定段位）。
+  const s3 = levelValueIn(mode, false, 2, 3), s1 = levelValueIn(mode, false, 2, 1)
+  const SHI_ANCHOR = s3 != null ? s3 : -6.0
+  const SHI_STEP = (s3 != null && s1 != null && s3 !== s1) ? (s3 - s1) / 2 : 1.33
+  const shiFloat = 3 + (value - SHI_ANCHOR) / SHI_STEP
+  return `雀士${Math.min(3.99, Math.max(1, shiFloat)).toFixed(2)}`
 }
 
 /**
@@ -582,14 +621,15 @@ function walkStableRank (stats, room, startLevel, mode = 4) {
   const fmt = (lv, e) => {
     let v = toValue(lv, e)
     if (v == null || !isFinite(v)) return null
-    // 夹到合法区间 [雀杰一星, 雀圣三星] = [−4.67, 6.00]。
-    // 注意下界**不能取 1**：雀杰区间的 value 本就是负数（杰3 −2.00、杰1 −4.67），
-    // 若夹到 1 会把雀杰玩家错报成「雀豪1.00」。
+    // 夹到合法区间 [雀士一星, 雀圣三星]。
+    // 注意下界**不能取 1**：杰/士区间的 value 本就是负数（杰3 −2.00、雀士1 −8.67），
+    // 若夹到 1 会把低段位玩家错报成「雀豪1.00」。
     // 上界取 6（雀圣三星）是因为末位率极低时 E[PT]/(b×末位率) 会发散
     // （实测末位率 5% → value 62，即「雀圣59」这类荒谬值）。
+    const V_FLOOR = valueFloor(mode)
     let clamped = false
     if (v > 6) { v = 6; clamped = true }
-    else if (v < -4.67) { v = -4.67; clamped = true }
+    else if (v < V_FLOOR) { v = V_FLOOR; clamped = true }
     // 不显示期望值（E[PT]）：统一格式化为「雀豪3.34」这类段位表达
     const text = formatStableRank(v, mode)
     if (!text) return null
@@ -762,13 +802,14 @@ export function computeStableRankWeighted (entries, mode) {
     return e
   }
 
-  // 段位上限：取所有参与房间允许的最高 major，换算成 value 作为上界
+  // 段位上限：取所有参与房间允许的最高 major，换算成 value 作为上界。
+  // 下限取雀士一星（雀士也有罚分，是模型能表达的最低段位）。
   let maxMajor = 1
   for (const r of rooms) {
     const al = ALLOWED_MAJORS[r.rid] || []
     for (const mm of al) if (mm <= 5 && mm > maxMajor) maxMajor = mm
   }
-  const V_MIN = -4.67
+  const V_MIN = valueFloor(m)
   let vMax = 6
   if (maxMajor < 5) {
     const lv = levelValueIn(m, false, maxMajor, 3)
@@ -888,12 +929,13 @@ export function computeStableRank (stats, roomId, mode) {
     const { a, b } = scaleOf(m, east)
     const expPT = expectedPT(stats, room, startLevel, false)
     const value = expPT / (b * rates[n - 1]) - a / b
-    // 有效区间：雀豪一星(1.00) ~ 雀圣三星(6.00)。
+    // 有效区间：雀士一星 ~ 雀圣三星。
     // 上界用 6 而非牌谱屋的 7：value > 6 已超出雀圣三星，继续按公式外推会产出
     // 「雀圣59.07」这类荒谬值（末位率过低时尤甚，实测末位率 5% → value 62）。
     // 越界一律回退逐级试探，其结果受房间段位上限约束，不会发散。
-    // 下界用雀杰一星（−4.67）：玉/王座房间也可能算出低于雀豪的值（如 0.65）。
-    if (isFinite(value) && value >= -4.67 && value <= 6) {
+    // 下界用雀士一星（雀士也有罚分，是模型能表达的最低段位）。
+    const V_FLOOR = valueFloor(m)
+    if (isFinite(value) && value >= V_FLOOR && value <= 6) {
       const text = formatStableRank(value, m)
       if (text) return { text, value, expPT }
     }
