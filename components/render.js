@@ -954,14 +954,19 @@ export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, s
  * 缺失新素材时回落到旧素材与原坐标，保证兼容。
  *
  * @param {object|null} stableInfo { text, promo } 该模式的安定段位与升/掉段预计
+ * @param {boolean} stableApplicable 本次查询是否存在「安定段位」这个概念
+ *   （友人场/比赛场、房间筛选都不存在）—— 为 false 时用无安定段槽的旧素材
  */
-async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null) {
-  // 初心段位无安定段位（数学上无定义），沿用旧素材 rank_bg.png 渲染，
-  // 不预留「安定段」标签位；其余段位用新素材 rank_bg2.png（带安定段位槽）。
+async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null, stableApplicable = true) {
+  // 以下两种情况用旧素材 rank_bg.png（无「安定段」槽），不预留标签位：
+  //   1) 初心段位 —— 安定段位数学上无定义（rankpt=0 且不可掉段）；
+  //   2) 本次查询不存在安定段概念（友人场/比赛场、房间筛选）—— 留槽只会显示「—」，
+  //      看起来像渲染缺失，而实际上该字段对本次查询根本不存在。
+  // 其余情况用新素材 rank_bg2.png（带安定段位槽）。
   // level.major_rank 是字符串段位名，level._majorRank 是数字 1~6。
   const isBeginner = level && level._majorRank === 1
   let rankbg, hasStableSlot = false
-  if (!isBeginner) {
+  if (!isBeginner && stableApplicable) {
     try {
       rankbg = await loadResImage('info_texture/rank_bg2.png')
       hasStableSlot = true
@@ -1457,7 +1462,6 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   let level3Score = data3.level?.score + data3.level?.delta || 0
 
   // 安定段位：四麻/三麻各自独立计算（卡片有两张段位卡，各显示各的）。
-  // 仅在「无房间筛选」时计算（有筛选时房间已指定，语义交给房间筛选本身）。
   // 必须用**单一南场**数据：东场与南场的 PT 表完全不同（玉东 55/30/−80，玉南 110/55/−165），
   // 东+南混合会引入偏差（实测可达 0.39 星）。
   //
@@ -1468,8 +1472,16 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 数据来源：优先牌谱屋（精度高）；牌谱屋查不到时（铜/银等金之间以下段位，
   // 实测恒为 404）用本地 API 兜底 —— 本地 API 的段位场数据覆盖**全部段位**，
   // 且 finalPositionCounts 是全量顺位率（不区分房间，正适合按段位判断的用法）。
+  //
+  // 「安定段位」这个概念只在默认段位场查询里存在：
+  //   友人场/比赛场 —— 数据来自本地 API 的 gc=1/4，与段位场（gc=2）是**不同的对局
+  //     集合**，其顺位率/平均点数不适用于段位场 PT 模型；
+  //   房间筛选 —— 房间已由用户指定，语义交给筛选本身。
+  // 两种情况都不计算，段位卡也相应改用无「安定段」槽的素材（见 getRankIcon）。
+  const stableApplicable = !scopeInfo && !roomFilter
+
   const stableByMode = { 4: null, 3: null }
-  if (!scopeInfo && !roomFilter) {
+  if (stableApplicable) {
     for (const m of [4, 3]) {
       const rtKey = m === 3 ? 'threePlayer' : 'fourPlayer'
       const modeValid = m === 4 ? data4Valid : data3Valid
@@ -1526,7 +1538,6 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
       }
     }
   }
-  const stableRank = stableByMode[mainMode]
 
   if (realtimePT) {
     if (realtimePT.fourPlayer) {
@@ -1852,8 +1863,8 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   drawText(ctx, footerText, 500, footerY, 24, '#FFFFFF', 'center', 'bold')
 
-  const rank4Icon = await getRankIcon(level4, data4, extended4, "4", stableByMode[4])
-  const rank3Icon = await getRankIcon(level3, data3, extended3, "3", stableByMode[3])
+  const rank4Icon = await getRankIcon(level4, data4, extended4, "4", stableByMode[4], stableApplicable)
+  const rank3Icon = await getRankIcon(level3, data3, extended3, "3", stableByMode[3], stableApplicable)
 
   const charBg = await loadResImage('info_texture/char_bg.png')
   const charFg = await loadResImage('info_texture/char_fg.png')
