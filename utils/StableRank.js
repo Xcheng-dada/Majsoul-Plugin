@@ -423,7 +423,7 @@ function formatBeadsRate (e) {
 export function formatStableRank (value, mode = 4) {
   if (!isFinite(value)) return null
 
-  // 豪/圣区间每星恰好 1.00（东西场都是），直接沿用牌谱屋原式（避免跨段位边界被误判）
+  // 豪/圣区间每星恰好 1.00（东场、南场都是），直接沿用牌谱屋原式（避免跨段位边界被误判）
   if (value >= 1) {
     if (value >= 6) return '雀圣3.00'          // 雀圣三星封顶
     return value >= 4
