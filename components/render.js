@@ -1152,7 +1152,7 @@ const RECORD_FETCH_LIMIT = Math.max(16, RANK_WINDOW)
 
 /**
  * 走势图绘制的点位数（record_bg 宽 1000，点位 x = 108 + i*50，16 点恰好到 x858）。
- * 模块级：localRecord 需据此判断本地顺位序列是否够画满一张图。
+ * 走势图最多画这么多点；本地顺位不足时少画几个点，不回退牌谱屋。
  */
 const CHART_POINTS = 16
 
@@ -1189,30 +1189,34 @@ function buildLocalRecord (entry, nickname, mode, limit = 16) {
  * 故一律以它为准。已用雀豪+玩家（进不了银之间，两边应看到同一批对局）交叉验证：
  * 6/6 玩家的最近 16 场顺位序列与牌谱屋**逐一完全一致**，可放心作为首选。
  *
- * 回退牌谱屋的三种情形：
+ * 回退牌谱屋的情形（**只看本地有没有数据，不看场次多少**）：
  *   1) 本地 API 未启动 / 未登录 → localStats 为 null
- *   2) 该模式无段位场数据 → 无 entry 或无 recentGames
- *   3) 本地序列不足 CHART_POINTS 场 → 避免把走势图从 16 点缩短成几个点
+ *   2) 该模式无段位场数据 → 无 entry 或 recentGames 为空
+ * 场次不足 16 场**不回退**：本地覆盖的房间是牌谱屋的超集（牌谱屋圈不到铜/银之间），
+ * 哪怕只有几场也比牌谱屋那份「几个月前的金之间对局」更真实 —— 走势图少画几个点即可。
  *
  * @param {object|null} localEntry pickLocalEntry 取出的段位场条目
  * @returns {Array|null} record（新→旧）；返回 null 时调用方应改用牌谱屋
  */
 function localRecord (localEntry, nickname, mode, limit) {
   const recent = localEntry?.recentGames
-  if (!Array.isArray(recent) || recent.length < CHART_POINTS) return null
+  if (!Array.isArray(recent) || recent.length === 0) return null
   return buildLocalRecord(localEntry, nickname, mode, limit)
 }
 
 /**
- * 从对局记录（新→旧）提取「最近 window 场」的顺位序列，供「绝好调 / 恶调中」判定。
+ * 从对局记录（新→旧）提取最近若干场的顺位序列，供「绝好调 / 恶调中」判定。
  *
  * 顺位判定与走势图完全一致（按 score 降序、找自己昵称的下标），
  * 因此不会出现「图上是 1 位、标签却按末位算」的矛盾。找不到自己时按末位处理。
  *
+ * 记录不足 window 场时返回实际可得的场次（由 PlayerTags 按 MIN_RANK_WINDOW
+ * 判断够不够出标签），不在此处截断为 null。
+ *
  * @param {Array} records 新→旧的记录数组，元素含 players[{nickname, score}]
  * @param {string} nickname 本人昵称
  * @param {number|string} mode 4 或 3
- * @param {number} window 窗口场数
+ * @param {number} window 窗口上限场数
  * @returns {Array<{rank:number}>|null}
  */
 function extractRecentRanks (records, nickname, mode, window) {
