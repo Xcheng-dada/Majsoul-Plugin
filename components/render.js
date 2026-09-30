@@ -1152,7 +1152,7 @@ const RECORD_FETCH_LIMIT = Math.max(16, RANK_WINDOW)
 
 /**
  * 走势图绘制的点位数（record_bg 宽 1000，点位 x = 108 + i*50，16 点恰好到 x858）。
- * 模块级：preferLocalRecord 需据此判断本地顺位序列是否够画满一张图。
+ * 模块级：localRecord 需据此判断本地顺位序列是否够画满一张图。
  */
 const CHART_POINTS = 16
 
@@ -1176,7 +1176,8 @@ function buildLocalRecord (entry, nickname, mode, limit = 16) {
 }
 
 /**
- * 为走势图与「绝好调 / 恶调中」选择数据源：本地 recentGames 优先，返回 null 表示沿用牌谱屋。
+ * 为走势图与「绝好调 / 恶调中」构造 record：**本地 recentGames 优先**，
+ * 返回 null 表示本地不可用，调用方回退牌谱屋。
  *
  * 起因（实测用户三麻）：牌谱屋的 mode 参数只能圈定**金/玉/王座**
  * （四麻 16.12.9.15.11.8、三麻 22.24.26.21.23.25），**圈不到铜之间(2/3、17/18)
@@ -1184,23 +1185,21 @@ function buildLocalRecord (entry, nickname, mode, limit = 16) {
  * 历史上有金之间对局时，牌谱屋仍能返回**几个月前的金之间对局**且被当成「最近对局」，
  * 走势图与顺位率全部失真。
  *
- * 本地 API 的段位场 recentGames 是**跨全部房间的真实时间序**（不区分房间，
- * 上限 50 场），因此只要本地覆盖的对局数**严格多于**牌谱屋（说明存在牌谱屋
- * 看不到的房间），就以本地顺位序列为准。相等时不切换 —— 那说明玩家只打
- * 金/玉/王座，牌谱屋的记录本就是完整的，保持原有行为。
+ * 本地 API 的段位场 recentGames 是**跨全部房间的真实时间序**（不区分房间，上限 50 场），
+ * 故一律以它为准。已用雀豪+玩家（进不了银之间，两边应看到同一批对局）交叉验证：
+ * 6/6 玩家的最近 16 场顺位序列与牌谱屋**逐一完全一致**，可放心作为首选。
  *
- * 另需本地序列足够长（≥ CHART_POINTS），否则宁可继续用牌谱屋的 16 场，
- * 避免把走势图从 16 点缩短成几个点。
+ * 回退牌谱屋的三种情形：
+ *   1) 本地 API 未启动 / 未登录 → localStats 为 null
+ *   2) 该模式无段位场数据 → 无 entry 或无 recentGames
+ *   3) 本地序列不足 CHART_POINTS 场 → 避免把走势图从 16 点缩短成几个点
  *
+ * @param {object|null} localEntry pickLocalEntry 取出的段位场条目
  * @returns {Array|null} record（新→旧）；返回 null 时调用方应改用牌谱屋
  */
-function preferLocalRecord (localEntry, paipuCount, nickname, mode, limit) {
+function localRecord (localEntry, nickname, mode, limit) {
   const recent = localEntry?.recentGames
   if (!Array.isArray(recent) || recent.length < CHART_POINTS) return null
-  const localTotal = (localEntry.finalPositionCounts || []).reduce((a, b) => a + (b || 0), 0)
-  const paipu = Number(paipuCount) || 0
-  // 严格大于：本地统计含铜/银，牌谱屋只看金/玉/王座，故「本地更多」即存在隐藏房间
-  if (!(localTotal > paipu)) return null
   return buildLocalRecord(localEntry, nickname, mode, limit)
 }
 
@@ -1484,20 +1483,15 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   if (extended4.retcode) extended4 = JSON.parse(JSON.stringify(playerExtendZero))
   if (extended3.retcode) extended3 = JSON.parse(JSON.stringify(playerExtendZero))
 
-  // 牌谱屋原始场次（金/玉/王座口径）：必须在下方「用本地总场次覆盖 count」之前留存，
-  // preferLocalRecord 靠它判断本地是否覆盖了牌谱屋看不到的房间（铜/银）。
-  const paipuCount4 = data4.count || 0
-  const paipuCount3 = data3.count || 0
-
   let _mode, data, extended, record
   if (mode === "3") {
     _mode = "三麻战绩"
     data = data3
     extended = extended3
-    // 数据源选择：牌谱屋圈不到铜/银之间，玩家改打银之间时会一直显示旧的金之间对局，
-    // 本地 recentGames 跨全部房间（见 preferLocalRecord），本地覆盖更全时以它为准。
+    // 数据源：本地 recentGames 优先（跨全部房间，牌谱屋圈不到铜/银之间），
+    // 本地未启动/未登录/不足 16 场时回退牌谱屋。见 localRecord。
     const localRec3 = (!scopeInfo && !roomFilter)
-      ? preferLocalRecord(localEntry3, paipuCount3, data3.nickname, '3', RECORD_FETCH_LIMIT)
+      ? localRecord(localEntry3, data3.nickname, '3', RECORD_FETCH_LIMIT)
       : null
     if (localRec3) {
       record = localRec3
@@ -1534,9 +1528,9 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     _mode = "四麻战绩"
     data = data4
     extended = extended4
-    // 数据源选择：同上（牌谱屋圈不到铜/银之间）
+    // 数据源：同上（本地优先，回退牌谱屋）
     const localRec4 = (!scopeInfo && !roomFilter)
-      ? preferLocalRecord(localEntry4, paipuCount4, data4.nickname, '4', RECORD_FETCH_LIMIT)
+      ? localRecord(localEntry4, data4.nickname, '4', RECORD_FETCH_LIMIT)
       : null
     if (localRec4) {
       record = localRec4
