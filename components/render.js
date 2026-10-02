@@ -1142,19 +1142,18 @@ async function getLocalRankedCounts (uid, statRes) {
 }
 
 /**
- * 对局记录拉取场数。
- *
- * 走势图只画 16 场（record_bg 宽 1000，点位 x = 108 + i*50，16 个点恰好到 x858），
- * 但「绝好调 / 恶调中」需要最近 RANK_WINDOW(20) 场顺位率，故一次取 20 场：
- * 两者共用同一次请求，不多发。走势图只取前 16 个点绘制。
- */
-const RECORD_FETCH_LIMIT = Math.max(16, RANK_WINDOW)
-
-/**
  * 走势图绘制的点位数（record_bg 宽 1000，点位 x = 108 + i*50，16 点恰好到 x858）。
  * 走势图最多画这么多点；本地顺位不足时少画几个点，不回退牌谱屋。
  */
 const CHART_POINTS = 16
+
+/**
+ * 对局记录拉取场数。
+ *
+ * 走势图要画 16 场，「绝好调 / 恶调中」要最近 RANK_WINDOW 场。
+ * 取两者较大值，共用同一次请求不多发。
+ */
+const RECORD_FETCH_LIMIT = Math.max(CHART_POINTS, RANK_WINDOW)
 
 /**
  * 无牌谱屋数据时，用本地 recentGames（顺位序列）构造走势图所需 record。
@@ -1210,7 +1209,7 @@ function localRecord (localEntry, nickname, mode, limit) {
  * 顺位判定与走势图完全一致（按 score 降序、找自己昵称的下标），
  * 因此不会出现「图上是 1 位、标签却按末位算」的矛盾。找不到自己时按末位处理。
  *
- * 记录不足 window 场时返回实际可得的场次（由 PlayerTags 按 MIN_RANK_WINDOW
+ * 记录不足 window 场时返回实际可得的场次（由 PlayerTags 按 RANK_WINDOW
  * 判断够不够出标签），不在此处截断为 null。
  *
  * @param {Array} records 新→旧的记录数组，元素含 players[{nickname, score}]

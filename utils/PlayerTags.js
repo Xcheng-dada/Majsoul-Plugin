@@ -35,24 +35,22 @@
  */
 
 /**
- * 绝好调 / 恶调中 的判定窗口上限（场）。
- * 取 20 场：THsBot 的 0.35 / 0.30 恰为 7/20 与 6/20（即它的窗口就是 20 场）。
- * 窗口过短噪声大，过长则被生涯均值抹平（生涯 1 位率 p95 仅 0.29，任何尾部阈值都卡不住）。
+ * 绝好调 / 恶调中 的判定窗口（场）。
  *
- * ⚠️ 这是**上限**而非硬性要求：近期对局不足 20 场时用实际可得场次
- * （下限见 MIN_RANK_WINDOW），否则 10~19 场的玩家这两个标签永远不出，
- * 会把 MIN_GAMES_FOR_TAGS(10) 的牌风门槛架空。
+ * ⚠️ 取 **10 场**（= MIN_GAMES_FOR_TAGS），不是 THsBot 的 20 场。
+ * 这两个标签是**状态词**（「当前手气」），窗口越短越贴近当下；窗口过长会把近期
+ * 的极端手气稀释掉。实测案例（UID 22288871）：最近 10 场 `3,3,3,3,2,1,3,3,3,2`
+ * 末位 7/10 = 70%，用 20 场窗口时末位率被稀释成 8/20 = 40%，差 2 次未达标而
+ * 不出「恶调中」—— 玩家一眼就能看出「这么霉居然不报」，观感上就是漏报。
+ *
+ * 用 10 场的代价（实测 1201 名真实玩家）：
+ *   标签翻转率（相邻窗口间标签是否变化）三麻 9.6% vs 20 场的 7.3%；
+ *   四麻 9.2% vs 8.0%。仅差约 2pp，换来的是对当下手气的即时反映。
  */
-export const RANK_WINDOW = 20
-
-/**
- * 绝好调 / 恶调中 的判定窗口下限（场），与牌风总门槛 MIN_GAMES_FOR_TAGS 一致。
- * 少于 10 场时顺位率方差过大 —— 1 场一位就是 100%，会人人「绝好调」。
- */
-export const MIN_RANK_WINDOW = 10
+export const RANK_WINDOW = 10
 
 // 阈值来源：四麻沿用 THsBot 原值（顺位两项除外，见下）；三麻按「与四麻触发率一致」拟合（n=500/500）；
-// rank1Hi/rankLastHi 为「最近 RANK_WINDOW 场」口径（其余字段仍为生涯口径）。
+// rank1Min/rankLastMin 为「最近 RANK_WINDOW 场」口径（其余字段仍为生涯口径）。
 const THRESHOLDS = {
   4: {
     nakiHi: 0.36, nakiLo: 0.28,
@@ -63,16 +61,16 @@ const THRESHOLDS = {
     damaHi: 0.15,
     libaoHi: 0.37,
     beizhaHi: 0.125,
-    // 绝好调 / 恶调中 的基准门槛（满 RANK_WINDOW=20 场口径）。
-    // ⚠️ 这两个值按**实测触发率**标定，不是沿用 THsBot，也不是理论推算：
-    //    实测 2000 名真实玩家（满 20 场者 1082 人）各门槛触发率——
-    //      一位 ≥7/20 → 21.4%    ≥8/20 → 11.1%    ≥9/20 → 4.2%
-    //      末位 ≥7/20 → 28.9%    ≥8/20 → 14.8%    ≥9/20 → 7.1%
-    //    取 ≥8/20（0.35）：两标签触发率 11.1% / 14.8%，稀有度相当。
-    //    （注：玩家一位次数均值 4.81、末位 5.34，均低于理论值 5 —— 整体比随机好，
+    // 绝好调 / 恶调中 的命中次数门槛（窗口 RANK_WINDOW=10 场，即 ≥k/10）。
+    // ⚠️ 按**实测触发率**标定，不是沿用 THsBot，也不是理论推算。
+    //    实测 1201 名真实玩家（近期≥10 场者四麻 1082 人）——
+    //      一位 ≥4/10 → 20.1%   ≥5/10 → 7.5%    ≥6/10 → 2.0%
+    //      末位 ≥4/10 → 29.5%   ≥5/10 → 13.3%   ≥6/10 → 3.6%
+    //    取 ≥5/10：两标签 7.5% / 13.3%，稀有度最接近的一档。
+    //    （注：玩家一位次数均值 2.35、末位 2.80，理论值均为 2.50 —— 整体比随机好，
     //      故门槛需比理论值更严才能达到同等稀有度。）
-    rank1Hi: 0.35,
-    rankLastHi: 0.35,
+    rank1Min: 5,
+    rankLastMin: 5,
     // 净打点效率 p90（THsBot 的 point_ev>200 口径不同：实测触发 99.2%，人人都有）
     neteffHi: 778
   },
@@ -86,12 +84,12 @@ const THRESHOLDS = {
     libaoHi: 0.471,
     beizhaHi: 0.1763,
     // 三麻无 THsBot 原值（其只公布一套四麻值）→ 同样按**实测触发率**标定。
-    //    实测 2000 名真实玩家（满 20 场者 1090 人）各门槛触发率——
-    //      一位 ≥9/20 → 19.3%    ≥10/20 → 10.8%    ≥11/20 → 5.6%
-    //      末位 ≥9/20 → 23.5%    ≥10/20 → 12.8%    ≥11/20 → 6.5%
-    //    取 ≥10/20（0.45）：两标签触发率 10.8% / 12.8%，与四麻同档（约 11~15%）。
-    rank1Hi: 0.45,
-    rankLastHi: 0.45,
+    //    实测 1201 名真实玩家（近期≥10 场者三麻 921 人）——
+    //      一位 ≥5/10 → 19.7%   ≥6/10 → 7.8%    ≥7/10 → 2.0%
+    //      末位 ≥5/10 → 27.7%   ≥6/10 → 12.1%   ≥7/10 → 3.6%
+    //    取 ≥6/10：两标签 7.8% / 12.1%，与四麻同档。
+    rank1Min: 6,
+    rankLastMin: 6,
     neteffHi: 1395
   }
 }
@@ -119,60 +117,17 @@ function usable (v) {
 }
 
 /**
- * 二项分布上尾概率 P(X ≥ k)，n 次试验、单次概率 p。
- * n ≤ 20，直接用精确公式，无需数值近似。
- */
-function binomTail (n, k, p) {
-  let s = 0
-  for (let i = k; i <= n; i++) {
-    let c = 1
-    for (let j = 0; j < i; j++) c = c * (n - j) / (j + 1)
-    s += c * Math.pow(p, i) * Math.pow(1 - p, n - i)
-  }
-  return s
-}
-
-/**
- * 在窗口 n 下求「尾概率最接近 target 的命中次数门槛 k」。
- *
- * 为什么要这样做：判定只能用**整数**命中次数（n 场里 k 次一位），而阈值若写成固定
- * **比率**，可达值就只有 k/n 这些离散档位，窗口一变门槛就跳档。实测（2000 名真实玩家）
- * 固定比率 0.30 在 n=12 时落到 ≥4/12=33.3%（尾概率 35%）、n=20 时落到 ≥7/20=35.0%
- * （尾概率 21%）—— 同一名玩家近期打 12 场比打 20 场更容易拿「绝好调」，且实测触发率
- * 从 39.4% 跳到 21.5%，差近一倍。
- *
- * 故改为：先按满窗口（n=20）的比率定出**基准尾概率**，再对实际窗口长度取尾概率最接近
- * 的整数门槛。这样「绝好调 / 恶调中」的稀有度不随可得场次变化。
- *
- * @param {number} n 实际窗口场数
- * @param {number} p 单顺位概率（四麻 1/4、三麻 1/3）
- * @param {number} target 目标尾概率
- * @returns {number} 命中次数门槛 k（达到即触发）
- */
-function alignedMinCount (n, p, target) {
-  let best = 1, bestD = Infinity
-  for (let k = 1; k <= n; k++) {
-    const d = Math.abs(binomTail(n, k, p) - target)
-    if (d < bestD) { bestD = d; best = k }
-  }
-  return best
-}
-
-/**
- * 取最近 window 场（上限）的顺位统计，供「绝好调 / 恶调中」判定。
+ * 取最近 RANK_WINDOW 场的顺位命中次数，供「绝好调 / 恶调中」判定。
  *
  * `recentRanks` 为顺位序列（新→旧，元素形如 `{ rank }`，rank 从 1 起），
  * 由 render.js 的 extractRecentRanks 从对局记录（本地优先，牌谱屋回退）提取。
  *
- * 窗口是**上限**：不足 window 场时按实际可得场次计算，只要不少于 MIN_RANK_WINDOW。
- * 此前硬性要求满 window 场，导致 10~19 场的玩家「绝好调/恶调中」永远不出，
- * 把 MIN_GAMES_FOR_TAGS(10) 的牌风门槛架空了。
+ * 不足 RANK_WINDOW 场时返回 null（这两个标签不出），与 MIN_GAMES_FOR_TAGS 一致。
  *
  * @param {Array<{rank:number}>|null} recentRanks
- * @param {number} window 窗口上限场数
+ * @param {number} window 窗口场数
  * @param {number} mode 4 或 3（决定末位是第 4 还是第 3）
- * @returns {{n:number, c1:number, cl:number, k1:number, kl:number}|null}
- *          n 为实际场数；c1/cl 为窗口内一位/末位次数；k1/kl 为对应门槛
+ * @returns {{c1:number, cl:number}|null} c1/cl 为窗口内一位/末位次数
  */
 function recentRanksWindow (recentRanks, window, mode) {
   if (!Array.isArray(recentRanks)) return null
@@ -183,25 +138,14 @@ function recentRanksWindow (recentRanks, window, mode) {
     if (typeof r === 'number' && r >= 1 && r <= last) ranks.push(r)
     if (ranks.length >= window) break
   }
-  if (ranks.length < MIN_RANK_WINDOW) return null
+  if (ranks.length < window) return null
 
-  const n = ranks.length
   let c1 = 0, cl = 0
   for (const r of ranks) {
     if (r === 1) c1++
     else if (r === last) cl++
   }
-
-  const p = mode === 3 ? 1 / 3 : 1 / 4
-  const T = THRESHOLDS[mode]
-  // 基准：按满窗口的比率算出整数门槛，取其尾概率作为目标稀有度
-  const baseK1 = Math.floor(RANK_WINDOW * T.rank1Hi) + 1
-  const baseKl = Math.floor(RANK_WINDOW * T.rankLastHi) + 1
-  return {
-    n, c1, cl,
-    k1: alignedMinCount(n, p, binomTail(RANK_WINDOW, baseK1, p)),
-    kl: alignedMinCount(n, p, binomTail(RANK_WINDOW, baseKl, p))
-  }
+  return { c1, cl }
 }
 
 /**
@@ -210,7 +154,7 @@ function recentRanksWindow (recentRanks, window, mode) {
  * @param {object} extended 牌谱屋 player_extended_stats（中文键）
  * @param {number|string} mode 4 或 3
  * @param {Array<{rank:number}>|null} recentRanks 最近若干场的顺位序列（新→旧），
- *        用于「绝好调 / 恶调中」。缺省或不足 MIN_RANK_WINDOW(10) 场时这两个标签不出。
+ *        用于「绝好调 / 恶调中」。缺省或不足 RANK_WINDOW(10) 场时这两个标签不出。
  * @returns {{tags: Array<{text:string,type:string}>, reliable:boolean}}
  */
 export function buildPlayerTags (data, extended, mode, recentRanks = null) {
@@ -231,11 +175,11 @@ export function buildPlayerTags (data, extended, mode, recentRanks = null) {
   const beizha = extended?.['被炸率']
   const neteff = extended?.['净打点效率']
 
-  // 绝好调 / 恶调中：用**最近 RANK_WINDOW 场**（上限）的顺位，不用生涯顺位率。
-  // 这两个标签是状态词（「当前手气」）；生涯均值会被长期平均掉，
-  // 实测全生涯 1 位率 p95 仅 0.29，套 THsBot 的 0.35 恒不触发。
-  // 不足 20 场时按实际可得场次算（下限 MIN_RANK_WINDOW=10，与牌风总门槛一致），
-  // 且门槛按尾概率对齐到整数命中次数，避免稀有度随窗口长度跳档（见 alignedMinCount）。
+  // 绝好调 / 恶调中：用**最近 RANK_WINDOW(10) 场**的顺位，不用生涯顺位率。
+  // 这两个标签是状态词（「当前手气」）：窗口越短越贴近当下，过长会把近期极端手气
+  // 稀释掉（实测 UID 22288871：最近 10 场末位 7/10=70%，用 20 场窗口被稀释成
+  // 8/20=40% 而不出「恶调中」，玩家一眼就看出漏报）。
+  // 不足 10 场时这两个标签不出（方差过大，1 场一位就是 100%）。
   const win = recentRanksWindow(recentRanks, RANK_WINDOW, m)
 
   const push = (text, type) => tags.push({ text, type })
@@ -277,12 +221,12 @@ export function buildPlayerTags (data, extended, mode, recentRanks = null) {
   if (usable(beizha) && beizha > T.beizhaHi) push('被炸仙人', 'meme')
   if (usable(dama) && dama > T.damaHi) push('dama怪', 'meme')
   if (usable(neteff) && neteff > T.neteffHi) push('局收支重视', 'meme')
-  // 绝好调 / 恶调中：基于最近 RANK_WINDOW 场（上限）的顺位命中次数（见上）。两者互斥 ——
+  // 绝好调 / 恶调中：基于最近 RANK_WINDOW(10) 场的顺位命中次数（见上）。两者互斥 ——
   // 「绝好调」优先；同时满足时只出前者（THsBot 用两个独立 if 可同时出，
   // 但实测三麻有 21% 的玩家会同时命中两者，同屏显示自相矛盾，故取互斥）。
   if (win) {
-    if (win.c1 >= win.k1) push('绝好调', 'meme')
-    else if (win.cl >= win.kl) push('恶调中', 'meme')
+    if (win.c1 >= T.rank1Min) push('绝好调', 'meme')
+    else if (win.cl >= T.rankLastMin) push('恶调中', 'meme')
   }
 
   return { tags, reliable, count }
