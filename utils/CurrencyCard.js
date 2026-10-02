@@ -229,33 +229,48 @@ const SUMMARY_PAD = 40;       // 左右内边距
 const SUMMARY_FONT_FAMILY = 'Microsoft YaHei, sans-serif';
 
 /**
- * 按最大宽度折行（优先在顿号/分号处断开）
+ * 按最大宽度折行（优先在顿号/分号/竖线处断开）
+ *
+ * 断点规则：
+ *   - 在 `（`、`｜` **之前**断开（分隔符留在下一行行首，作为续行标记）
+ *   - 在 `、`、`；`、`）` **之后**断开
+ * 摘要行形如「信仰 57（+1）｜寻觅卷轴 53｜辉玉 33769」，若不含 `｜` 断点，
+ * 整行只能作为一个 token 参与折行，超宽后会被按字符硬折，把「辉玉 33769」
+ * 劈成「辉玉 33」/「769」（实测单抽窄图 420px 必然触发）。
  */
 function _wrapSummaryLine(ctx, text, maxW, font) {
   ctx.font = font;
   if (ctx.measureText(text).width <= maxW) return [text];
-  // 切 token：顿号/分号/右括号后、左括号前为断行点（避免"）"单独成行）
   const tokens = [];
-  for (const ch of text) {
-    if (tokens.length === 0 || ch === '（') {
-      tokens.push(ch);
-    } else {
-      tokens[tokens.length - 1] += ch;
-      if ('、；）'.includes(ch)) tokens.push('');
-    }
-  }
-  const rows = [];
   let cur = '';
-  for (const token of tokens) {
-    if (cur && ctx.measureText(cur + token).width > maxW) {
-      rows.push(cur);
-      cur = token;
-    } else {
-      cur += token;
+  for (const ch of text) {
+    if ((ch === '（' || ch === '｜') && cur) {
+      tokens.push(cur);
+      cur = '';
+    }
+    cur += ch;
+    if ('、；）'.includes(ch)) {
+      tokens.push(cur);
+      cur = '';
     }
   }
-  if (cur) rows.push(cur);
-  // 单个 token 仍超宽时按字符硬折
+  if (cur) tokens.push(cur);
+
+  const rows = [];
+  let line = '';
+  for (const token of tokens) {
+    if (line && ctx.measureText(line + token).width > maxW) {
+      rows.push(line);
+      line = token;
+    } else {
+      line += token;
+    }
+  }
+  if (line) rows.push(line);
+
+  // 单个 token 仍超宽时按字符硬折；但**不把数字从中间劈开**
+  // （断点落在数字内部时，把整个数字挪到下一行）
+  const isDigit = (c) => c >= '0' && c <= '9';
   const result = [];
   for (const row of rows) {
     if (ctx.measureText(row).width <= maxW) {
@@ -265,8 +280,19 @@ function _wrapSummaryLine(ctx, text, maxW, font) {
     let chunk = '';
     for (const ch of row) {
       if (chunk && ctx.measureText(chunk + ch).width > maxW) {
-        result.push(chunk);
-        chunk = ch;
+        let cut = chunk;
+        let carry = ch;
+        if (isDigit(ch) && isDigit(chunk[chunk.length - 1])) {
+          let i = chunk.length;
+          while (i > 0 && isDigit(chunk[i - 1])) i--;
+          // i > 0 才回退：整行都是数字时无法再挪，只能照常硬折（避免死循环）
+          if (i > 0) {
+            carry = chunk.slice(i) + ch;
+            cut = chunk.slice(0, i);
+          }
+        }
+        result.push(cut);
+        chunk = carry;
       } else {
         chunk += ch;
       }
