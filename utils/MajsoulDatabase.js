@@ -165,6 +165,14 @@ CREATE TABLE IF NOT EXISTS majsoul_pool_schedules (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- 抽卡累计（跨群全局累计；total_pulls 按**抽数**计，十连记 10）
+CREATE TABLE IF NOT EXISTS majsoul_gacha_stats (
+  qq_id       TEXT PRIMARY KEY,
+  total_pulls INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
 `;
 
 /**

@@ -5,6 +5,7 @@ import path from 'path';
 import GachaCore from '../utils/GachaCore.js';
 import GachaCollection from '../utils/GachaCollection.js';
 import GachaWallet from '../utils/GachaWallet.js';
+import GachaStats from '../utils/GachaStats.js';
 import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
 import { appendSummary } from '../utils/CurrencyCard.js';
@@ -121,6 +122,7 @@ export class MajsoulGacha extends plugin {
         this.gachaCore = new GachaCore();
         this.collection = new GachaCollection(this.gachaCore);
         this.wallet = new GachaWallet();
+        this.stats = new GachaStats();
         this.poolSchedule = new PoolSchedule(this.gachaCore);
     }
 
@@ -310,6 +312,13 @@ export class MajsoulGacha extends plugin {
                 lines.push(`礼物：${giftParts.join('、')}（已全部奉纳为星之粉尘x${giftDust}）`);
             }
             lines.push(`信仰 ${newWallet.faith}（+${times}）｜寻觅卷轴 ${newWallet.ticket}${ticketGain > 0 ? `（+${ticketGain}）` : ''}｜辉玉 ${newWallet.jade}`);
+
+            // 累计抽数（全局跨群，十连记 10）。放在抽卡**成功之后**：
+            // 失败路径会退还货币，那次不算真正抽过，不应计入。
+            const totalPulls = await this.stats.add(e.user_id, times);
+            if (totalPulls > 0) {
+                lines.push(`累计寻觅 ${totalPulls} 抽`);
+            }
 
             const finalImage = await appendSummary(imageBase64, titleLine, lines);
             await e.reply(segment.image(finalImage), true);
