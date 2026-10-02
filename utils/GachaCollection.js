@@ -66,7 +66,11 @@ export default class GachaCollection {
       const coll = { characters: {}, decorations: {} };
       for (const r of rows) {
         if (!coll[r.kind]) continue; // CHECK 约束兜底，理论上不会出现
-        coll[r.kind][r.item_name] = { count: Math.max(1, Math.floor(Number(r.count) || 1)), first: r.first_date || null };
+        // 雀士不可重复拥有：count 恒为 1，此处对旧库残留的 count>1 做读取层归一化
+        // （历史 bug：add 曾对雀士也累加，实测真实库有 48 条 count>1）
+        const raw = Math.max(1, Math.floor(Number(r.count) || 1));
+        const count = r.kind === 'characters' ? 1 : raw;
+        coll[r.kind][r.item_name] = { count, first: r.first_date || null };
       }
       return coll;
     } catch (error) {
@@ -77,6 +81,13 @@ export default class GachaCollection {
 
   /**
    * 记录获得（事务内判断新旧，防止并发重复计数）
+   *
+   * ⚠️ **雀士不可重复拥有**：重复抽到雀士会即时转为许愿石（见 MajsoulGacha 的
+   * 重复转化逻辑），图鉴里的 count 因此恒为 1 —— 不再累加。
+   * 此前对所有 kind 一律 count+1，导致雀士图鉴出现「x3」这种无意义计数
+   * （实测真实库 48 条雀士记录 count>1，12/24 用户受影响）。
+   * 装扮可以重复拥有（重复转星之石），仍保留累加语义。
+   *
    * @param {string|number} userId
    * @param {'characters'|'decorations'} kind
    * @param {string} name 物品名（文件名去后缀）
@@ -92,9 +103,11 @@ export default class GachaCollection {
     const qq = String(userId);
     const item = String(name);
     const now = Date.now();
+    const countable = kind === 'decorations';
     return db.transaction(() => {
       const existing = s.sel.get(qq, kind, item);
       if (existing) {
+        if (!countable) return { isNew: false, count: 1 };
         const count = existing.count + 1;
         s.upd.run(count, now, qq, kind, item);
         return { isNew: false, count };
@@ -107,6 +120,16 @@ export default class GachaCollection {
   // 判断是否为限定雀士（贵人：仅通过 #创建UP池 贵人 发放，重复转化 150 许愿石）
   async isLimitedCharacter(name) {
     return LIMITED_CHARACTERS.includes(name);
+  }
+
+  // 查单个雀士立绘路径（用于兑换结果卡片等；找不到返回 null）
+  async getCharacterPortrait(name) {
+    try {
+      const all = await this._getAllItems('characters');
+      return all.find(it => it.name === name)?.path || null;
+    } catch {
+      return null;
+    }
   }
 
   // 全量物品列表（5 分钟缓存）：characters / decorations

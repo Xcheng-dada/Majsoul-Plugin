@@ -10,6 +10,7 @@ import GachaMail from '../utils/GachaMail.js';
 import GachaCore from '../utils/GachaCore.js';
 import { renderCurrencyCard, CURRENCY_ICONS } from '../utils/CurrencyCard.js';
 import { renderPacketCover, renderGrabCard } from '../utils/RedpacketCard.js';
+import { renderExchangeCard } from '../utils/ExchangeCard.js';
 import { getSetting } from '../utils/SettingsStore.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 
@@ -254,11 +255,13 @@ export class MajsoulEconomy extends plugin {
             return true;
         }
 
-        // 已拥有的角色不能兑换（图鉴里已有该雀士，含重复）
+        // 已拥有的角色不能兑换（图鉴里已有该雀士）
+        // 注：不显示拥有数量 —— 雀士不可重复拥有，count 恒为 1；
+        // 旧库中残留的 count>1 是历史 bug 产物（add 曾对雀士累加），无展示意义。
         try {
             const coll = await this.collectionMgr.get(e.user_id);
             if (coll?.characters?.[name]) {
-                await e.reply(`「${name}」已经在你的图鉴里啦（x${coll.characters[name].count || 1}），无需兑换`, true);
+                await e.reply(`「${name}」已经在你的图鉴里啦，无需兑换`, true);
                 return true;
             }
         } catch { }
@@ -277,7 +280,20 @@ export class MajsoulEconomy extends plugin {
         // 兑换的雀士入图鉴（必为新获得：已拥有在上面拦截）
         await this.collectionMgr.add(e.user_id, 'characters', name);
         const limitedText = isLimited ? '限定雀士' : '雀士';
-        await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」，快去图鉴看看吧`);
+        try {
+            const image = await renderExchangeCard({
+                name,
+                isLimited,
+                cost,
+                faith: spendResult.wallet.faith,
+                portraitPath: await this.collectionMgr.getCharacterPortrait(name)
+            });
+            await e.reply(segment.image(image));
+        } catch (error) {
+            // 图片渲染失败退回文字，不影响兑换本身（雀士已入图鉴）
+            logger.error('[雀魂经济] 兑换卡片渲染失败:', error);
+            await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」，快去图鉴看看吧`);
+        }
         return true;
     }
 
