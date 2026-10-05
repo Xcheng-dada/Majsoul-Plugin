@@ -271,6 +271,7 @@ function _wrapSummaryLine(ctx, text, maxW, font) {
   // 单个 token 仍超宽时按字符硬折；但**不把数字从中间劈开**
   // （断点落在数字内部时，把整个数字挪到下一行）
   const isDigit = (c) => c >= '0' && c <= '9';
+  const isMult = (c) => c === 'x' || c === 'X' || c === '×';
   const result = [];
   for (const row of rows) {
     if (ctx.measureText(row).width <= maxW) {
@@ -282,10 +283,14 @@ function _wrapSummaryLine(ctx, text, maxW, font) {
       if (chunk && ctx.measureText(chunk + ch).width > maxW) {
         let cut = chunk;
         let carry = ch;
-        if (isDigit(ch) && isDigit(chunk[chunk.length - 1])) {
+        // 断点落在数字内部或紧跟乘号时，把整个「x2」挪到下一行，
+        // 避免折成「立直棒-法棍面包x」/「2」或「辉玉 33」/「769」
+        if (isDigit(ch)) {
           let i = chunk.length;
           while (i > 0 && isDigit(chunk[i - 1])) i--;
-          // i > 0 才回退：整行都是数字时无法再挪，只能照常硬折（避免死循环）
+          // 数量写作「名字x2」时，x 是乘号而非名字的一部分，需与数字一同挪走
+          if (i > 0 && isMult(chunk[i - 1])) i--;
+          // i > 0 才回退：整行都是数字/乘号时无法再挪，只能照常硬折（避免死循环）
           if (i > 0) {
             carry = chunk.slice(i) + ch;
             cut = chunk.slice(0, i);

@@ -317,7 +317,7 @@ export class MajsoulGacha extends plugin {
             // 失败路径会退还货币，那次不算真正抽过，不应计入。
             const totalPulls = await this.stats.add(e.user_id, times);
             if (totalPulls > 0) {
-                lines.push(`累计寻觅 ${totalPulls} 抽`);
+                lines.push(`累计寻觅 ${totalPulls}`);
             }
 
             const finalImage = await appendSummary(imageBase64, titleLine, lines);
