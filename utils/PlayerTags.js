@@ -14,6 +14,10 @@
  *      naki > 0.36 / < 0.28、hora > 0.235、dealin < 0.12 / > 0.14、riichi > 0.22、
  *      rank1 > 0.35、rankLast > 0.30、winpt > 7100 / < 6000、
  *      beizha > 0.125、libao > 0.37、dama > 0.15
+ *    ⚠️ **数值沿用，但比较符号在本插件里统一改为含边界（≥ / ≤）**，原因见
+ *    buildPlayerTags 内的说明：比率类阈值多为整数百分比（0.12 / 0.235 / 0.36 …），
+ *    真实玩家恰好取到该值的比例不低，用严格不等号会让这一整档人漏掉标签
+ *    （实测 UID 24395776：放铳率精确 12.00%，`0.12 < 0.12` 为 false 而不出「防守大师」）。
  *
  * 2) 三麻 —— THsBot **只公布了上面那一套，没有三麻版本**；直接套用会崩
  *    （实测本插件样本：hora > 0.235 触发 100%、winpt > 7100 触发 100%）。
@@ -189,12 +193,14 @@ export function buildPlayerTags (data, extended, mode, recentRanks = null) {
   // 系统性低于全体 1.4~1.7pp。因此「门清 + 高和牌」的组合在统计上几乎不存在
   // （实测触发率 0~1.7%），不能作为倾向分支，否则是死标签。
   // 门清分支改用「立直率」区分：门清人群里立直率高的才是进攻型。
+  // 注：阈值判定一律**含边界**（≥ / ≤）。牌谱屋与本地 API 的比率都是小数，
+  // 常见取值恰为整数百分比（如放铳率正好 0.12），若用严格不等号会整档落空。
   if (usable(naki)) {
-    if (naki > T.nakiHi) {
-      push(usable(dealin) && dealin < T.dealinLo ? '副露防守' : '副露流', 'style')
-    } else if (naki < T.nakiLo) {
-      if (usable(dealin) && dealin < T.dealinLo) push('门清防守', 'style')
-      else if (usable(riichi) && riichi > T.riichiHi) push('门清立直', 'style')
+    if (naki >= T.nakiHi) {
+      push(usable(dealin) && dealin <= T.dealinLo ? '副露防守' : '副露流', 'style')
+    } else if (naki <= T.nakiLo) {
+      if (usable(dealin) && dealin <= T.dealinLo) push('门清防守', 'style')
+      else if (usable(riichi) && riichi >= T.riichiHi) push('门清立直', 'style')
       else push('门清流', 'style')
     } else {
       // 注意：此处不可叫「中庸」。THsBot 的牌风聚类里有一个「中庸后手反击型」，
@@ -205,22 +211,22 @@ export function buildPlayerTags (data, extended, mode, recentRanks = null) {
   }
 
   // ---- 2. 强度（可叠加）----
-  if (usable(hora) && hora > T.horaHi) push('进攻大师', 'power')
+  if (usable(hora) && hora >= T.horaHi) push('进攻大师', 'power')
   if (usable(dealin)) {
-    if (dealin < T.dealinLo) push('防守大师', 'power')
-    else if (dealin > T.dealinHi) push('狂战士', 'power')
+    if (dealin <= T.dealinLo) push('防守大师', 'power')
+    else if (dealin >= T.dealinHi) push('狂战士', 'power')
   }
-  if (usable(riichi) && riichi > T.riichiHi) push('立直超人', 'power')
+  if (usable(riichi) && riichi >= T.riichiHi) push('立直超人', 'power')
   if (usable(winpt)) {
-    if (winpt > T.winptHi) push('打点重视', 'power')
-    else if (winpt < T.winptLo) push('臭水重视', 'power')
+    if (winpt >= T.winptHi) push('打点重视', 'power')
+    else if (winpt <= T.winptLo) push('臭水重视', 'power')
   }
 
   // ---- 3. 特征 / 玩梗（可叠加）----
-  if (usable(libao) && libao > T.libaoHi) push('里宝仙人', 'meme')
-  if (usable(beizha) && beizha > T.beizhaHi) push('被炸仙人', 'meme')
-  if (usable(dama) && dama > T.damaHi) push('dama怪', 'meme')
-  if (usable(neteff) && neteff > T.neteffHi) push('局收支重视', 'meme')
+  if (usable(libao) && libao >= T.libaoHi) push('里宝仙人', 'meme')
+  if (usable(beizha) && beizha >= T.beizhaHi) push('被炸仙人', 'meme')
+  if (usable(dama) && dama >= T.damaHi) push('dama怪', 'meme')
+  if (usable(neteff) && neteff >= T.neteffHi) push('局收支重视', 'meme')
   // 绝好调 / 恶调中：基于最近 RANK_WINDOW(10) 场的顺位命中次数（见上）。两者互斥 ——
   // 「绝好调」优先；同时满足时只出前者（THsBot 用两个独立 if 可同时出，
   // 但实测三麻有 21% 的玩家会同时命中两者，同屏显示自相矛盾，故取互斥）。
