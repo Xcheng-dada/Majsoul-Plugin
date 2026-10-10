@@ -203,21 +203,21 @@ export function supportGuoba () {
         {
           field: 'subscribeInterval4',
           label: '四麻订阅检查间隔（分钟）',
-          bottomHelpMessage: '订阅播报每多久检查一次四麻新对局，默认 3 分钟',
+          bottomHelpMessage: '订阅播报每多久检查一次四麻新对局，默认 5 分钟。牌谱屋链路不稳时可调大（间隔越长越不容易撞上链路抖动），失败会自动补发积压场次',
           component: 'InputNumber',
           componentProps: {
             min: 1,
-            placeholder: '3'
+            placeholder: '5'
           }
         },
         {
           field: 'subscribeInterval3',
           label: '三麻订阅检查间隔（分钟）',
-          bottomHelpMessage: '订阅播报每多久检查一次三麻新对局，默认 5 分钟',
+          bottomHelpMessage: '订阅播报每多久检查一次三麻新对局，默认 10 分钟。同四麻，链路不稳时可调大',
           component: 'InputNumber',
           componentProps: {
             min: 1,
-            placeholder: '5'
+            placeholder: '10'
           }
         },
         {
@@ -236,12 +236,12 @@ export function supportGuoba () {
         {
           field: 'paipuTimeout',
           label: '牌谱屋请求超时（毫秒）',
-          bottomHelpMessage: '牌谱屋对局记录接口响应波动很大（实测同一请求 0.5s~10s，偶发 20s+），超时过短会把其实能通的请求判为失败并刷 aborted 日志。默认 30000',
+          bottomHelpMessage: '牌谱屋对局记录接口响应波动很大（实测同一请求 0.5s~10s，偶发 20s+），超时过短会把其实能通的请求判为失败并刷 aborted 日志。默认 20000',
           component: 'InputNumber',
           componentProps: {
             min: 1000,
             step: 1000,
-            placeholder: '30000'
+            placeholder: '20000'
           }
         },
         {

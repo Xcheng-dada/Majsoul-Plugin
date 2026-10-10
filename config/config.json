@@ -1,10 +1,10 @@
 {
-  "subscribeInterval4": 3,
-  "subscribeInterval3": 5,
+  "subscribeInterval4": 5,
+  "subscribeInterval3": 10,
   "paipuCleanupDays": 15,
   "recordsLimit": 5,
   "paipuHosts": "5-data.amae-koromo.com",
-  "paipuTimeout": 30000,
+  "paipuTimeout": 20000,
   "paipuMaxRetries": 3,
   "paipuMaxPerMinute": 30,
   "paipuIpv4First": true,
