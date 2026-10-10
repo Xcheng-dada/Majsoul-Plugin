@@ -66,12 +66,8 @@ class HostProber {
         const timeoutId = setTimeout(() => controller.abort(), 8000); // 8秒超时
 
         try {
-            // 使用GET请求测试玩家搜索接口，因为HEAD请求可能被拒绝。
-            // ⚠️ 必须用裸 fetch：_apiFetch 是 MajsoulApi 的方法，HostProber 上不存在，
-            // 此前写成 this._apiFetch 导致所有节点探测必然抛 TypeError，
-            // probe() 永远回落到 hosts[0]，节点选择形同虚设（实测 hosts[0]=5-data 恰是最慢节点）。
-            // 探测只测连通性与延迟，任何 HTTP 状态（含 401/404）都算可用，无需带 token。
-            const response = await fetch(`https://${host}/api/v2/pl4/search_player/test`, {
+            // 使用GET请求测试玩家搜索接口，因为HEAD请求可能被拒绝
+            const response = await this._apiFetch(`https://${host}/api/v2/pl4/search_player/test`, {
                 method: 'GET',
                 signal: controller.signal,
                 headers: {
@@ -862,18 +858,24 @@ export default class MajsoulApi {
 
                 this.logger.warn(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
-                // 退避等待后**切换节点**重试。此前四麻分支只对同一节点原地重试且无
-                // 终止条件（无限循环）；而实测各节点延迟差异可达 4 倍（同一 stats 请求
-                // 5-data 6.2s vs sapk.ch 1.5s），死磕慢节点只会一直撞 15s 超时（aborted）。
+                // 四麻：指数退避后重试
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
+                // 三麻：失败也加退避等待，避免无脑切节点狂发请求撞 429
                 const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
                 totalWaitTime += waitTime;
-                this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后切换节点重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                this.logger.info(`[MajsoulApi] [三麻] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 if (attempt >= maxRetries - 1) {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
-                await this._switchEndpoint(error, attempt);
             }
         }
     }
@@ -1038,16 +1040,20 @@ export default class MajsoulApi {
                 
                 this.logger.warn(`[MajsoulApi] 获取玩家统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
-                // 退避等待后切换节点重试（四麻/三麻统一）。旧代码四麻只对同一节点
-                // 原地重试且无终止条件；各节点延迟差异大，死磕慢节点会持续撞超时。
-                const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
-                totalWaitTime += waitTime;
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                if (attempt >= maxRetries - 1) {
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    this.logger.debug(`[MajsoulApi] 四麻请求失败，等待 ${waitTime}ms 后重试`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
+                // 三麻：非 404/429 的可重试错误才切换节点；404 已在上面抛出，不会到这
+                if (attempt < maxRetries - 1) {
+                    await this._switchEndpoint(error, attempt);
+                } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
-                await this._switchEndpoint(error, attempt);
             }
         }
     }
@@ -1138,15 +1144,19 @@ export default class MajsoulApi {
                 
                 this.logger.warn(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
-                // 退避等待后切换节点重试（四麻/三麻统一，同 getPlayerStats）
-                const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
-                totalWaitTime += waitTime;
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                if (attempt >= maxRetries - 1) {
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    this.logger.debug(`[MajsoulApi] 四麻请求失败，等待 ${waitTime}ms 后重试`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
+                if (attempt < maxRetries - 1) {
+                    await this._switchEndpoint(error, attempt);
+                } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
-                await this._switchEndpoint(error, attempt);
             }
         }
     }
@@ -1268,16 +1278,20 @@ export default class MajsoulApi {
                 
                 this.logger.warn(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
-                // 退避等待后切换节点重试（四麻/三麻统一，同 getPlayerRecords）
-                const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
-                totalWaitTime += waitTime;
-                this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局请求失败，等待 ${waitTime}ms 后切换节点重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                if (attempt >= maxRetries - 1) {
+                if (mode === 4) {
+                    const waitTime = Math.min(5000 * Math.pow(2, attempt), 60000);
+                    totalWaitTime += waitTime;
+                    this.logger.info(`[MajsoulApi] [四麻] 玩家 ${playerId} 最近对局请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                    continue;
+                }
+
+                if (attempt < maxRetries - 1) {
+                    await this._switchEndpoint(error, attempt);
+                } else {
                     this.logger.error('[MajsoulApi] 所有API端点都尝试失败');
                     throw new Error(handleApiError(error));
                 }
-                await this._switchEndpoint(error, attempt);
             }
         }
     }
