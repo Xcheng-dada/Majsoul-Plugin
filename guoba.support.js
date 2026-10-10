@@ -221,6 +221,52 @@ export function supportGuoba () {
           }
         },
         {
+          label: '牌谱屋请求',
+          component: 'SOFT_GROUP_BEGIN'
+        },
+        {
+          field: 'paipuHosts',
+          label: '牌谱屋节点',
+          bottomHelpMessage: '多个节点用英文逗号分隔。节点由牌谱屋作者按 token 授权，默认只用主节点 5-data.amae-koromo.com；其他节点实测不稳定且易触发 429，未获作者许可请勿添加',
+          component: 'Input',
+          componentProps: {
+            placeholder: '5-data.amae-koromo.com'
+          }
+        },
+        {
+          field: 'paipuTimeout',
+          label: '牌谱屋请求超时（毫秒）',
+          bottomHelpMessage: '牌谱屋对局记录接口响应波动很大（实测同一请求 0.5s~10s，偶发 20s+），超时过短会把其实能通的请求判为失败并刷 aborted 日志。默认 30000',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1000,
+            step: 1000,
+            placeholder: '30000'
+          }
+        },
+        {
+          field: 'paipuMaxRetries',
+          label: '牌谱屋请求重试次数',
+          bottomHelpMessage: '单次请求失败后的最大尝试次数（与节点数量无关），默认 3',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            max: 10,
+            placeholder: '3'
+          }
+        },
+        {
+          field: 'paipuMaxPerMinute',
+          label: '牌谱屋限流（次/分钟）',
+          bottomHelpMessage: '牌谱屋作者要求最高 1 QPS（60 次/分钟），默认 30 留余量。调高可能导致 429 限流甚至封禁',
+          component: 'InputNumber',
+          componentProps: {
+            min: 1,
+            max: 60,
+            placeholder: '30'
+          }
+        },
+        {
           field: 'paipuCleanupDays',
           label: '牌谱自动清理天数',
           bottomHelpMessage: '超过该天数的旧牌谱与头像缓存会自动清理，默认 15 天',

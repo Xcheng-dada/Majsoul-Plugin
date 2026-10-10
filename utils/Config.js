@@ -14,6 +14,19 @@ export const FEATURE_CONFIG_DEFAULTS = {
   subscribeInterval3: 5,     // 三麻订阅检查间隔（分钟）
   paipuCleanupDays: 15,      // 牌谱/头像自动清理天数
   recordsLimit: 5,           // 对局查询默认返回场数
+  // 牌谱屋（amae-koromo）请求参数
+  // ⚠️ 节点由牌谱屋作者按 token 授权，默认只用主节点 5-data。
+  //    多节点（1/4-data、sapk.ch）实测不稳定（4-data 曾连续 21s 无响应）且易触发 429，
+  //    未获作者许可不要擅自加回。需要时用英文逗号分隔填写。
+  paipuHosts: '5-data.amae-koromo.com',
+  // 请求超时（毫秒）。牌谱屋 player_records 接口服务端响应波动极大
+  // （实测同一请求 461ms ~ 9569ms，偶发 50s+），15s 会让「其实能通」的请求被判死。
+  // 取 30s：能救回绝大多数慢请求，又不会让单次失败等太久。
+  paipuTimeout: 30000,
+  // 单次请求的最大尝试次数（与节点数量无关，单节点时同样会退避重试）
+  paipuMaxRetries: 3,
+  // 每分钟最大请求数（作者要求 max 1 QPS = 60/min，默认 30 留余量）
+  paipuMaxPerMinute: 30,
   // 抽卡经济系统
   signJadeMin: 150,          // 签到随机辉玉下限
   signJadeMax: 250,          // 签到随机辉玉上限

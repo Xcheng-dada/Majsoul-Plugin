@@ -3,6 +3,10 @@
   "subscribeInterval3": 5,
   "paipuCleanupDays": 15,
   "recordsLimit": 5,
+  "paipuHosts": "5-data.amae-koromo.com",
+  "paipuTimeout": 30000,
+  "paipuMaxRetries": 3,
+  "paipuMaxPerMinute": 30,
   "signJadeMin": 150,
   "signJadeMax": 250,
   "signCritRate": 8,
@@ -10,6 +14,6 @@
   "tenGachaJade": 1800,
   "faithNormalCost": 150,
   "faithLimitedCost": 300,
-  "dailyTenPullLimit": 3,
-  "dailySinglePullLimit": 3
+  "halfHourTenPullLimit": 3,
+  "halfHourSinglePullLimit": 3
 }
