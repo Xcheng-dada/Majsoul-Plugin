@@ -7,40 +7,43 @@ import https from 'https';
 import { getFeatureConfig } from './Config.js';
 
 /**
- * IPv4 优先的 DNS lookup。
+ * IPv4-only 的 DNS lookup（牌谱屋专用）。
  *
- * 背景：牌谱屋数据节点（amae-koromo.com）挂在 Cloudflare 后面，A/AAAA 记录同时存在。
- * Node 18+ 的默认解析顺序是 `verbatim`（按 DNS 返回顺序，实测 IPv6 排在前面），
- * 于是请求优先走 IPv6。但在部分网络环境下到 Cloudflare 的 **IPv6 链路虽能建连、
- * HTTP/TLS 层却会卡死**——实测 TCP 三次握手 280ms 正常，而首个 HTTP 请求
- * 25 秒无响应直到超时（报 "The operation was aborted"），切到 IPv4 后
- * 同一请求 6/6 成功、平均 2.8s。
+ * 背景：牌谱屋数据节点（amae-koromo.com）挂在 Cloudflare 后面，A/AAAA 记录并存。
+ * 本机到 Cloudflare 的 **IPv6 链路能完成 TCP 握手，但 HTTP/TLS 层不返回数据**，
+ * 请求会一直挂到超时（报 "The operation was aborted"）；实测同一请求走 IPv4
+ * 6/6 成功、平均 2.8s。更严重的是：超时后 socket 不会被销毁，若启用连接池，
+ * 这条半死连接会被后续请求反复复用，导致整个插件长时间完全无响应
+ * （实测进程内出现挂了 6 分钟仍为 Established 的 IPv6 连接，日志随之停滞）。
  *
- * 因此这里把解析结果按 family 排序，IPv4 排前；仅在传 `family` 时按其过滤。
- * 作用域仅限本插件创建的 agent，**不改全局 dns 设置**，避免影响其他插件。
+ * ⚠️ 为什么不能只「把 IPv4 排前面」：
+ *   Node 20+ 默认启用 Happy Eyeballs（`net.getDefaultAutoSelectFamily() === true`），
+ *   它会以 `{ all: true }` 调用 lookup 拿到**全部**地址，然后**并行**尝试各地址，
+ *   谁先握手成功用谁。排序对它无效——IPv6 仍会被尝试并可能胜出（本机 IPv6 握手更快）。
+ *   因此这里必须**直接过滤掉 IPv6**，只返回 A 记录。
+ *
+ * 作用域仅限本插件创建的 agent，不改全局 dns / net 设置，避免影响其他插件。
+ * 若你的网络 IPv6 正常，可用配置 paipuIpv4First=false 关闭该行为。
  *
  * @param {string} hostname
  * @param {object|number|Function} options
  * @param {Function} callback
  */
-function ipv4FirstLookup(hostname, options, callback) {
+function ipv4OnlyLookup(hostname, options, callback) {
     if (typeof options === 'function') {
         callback = options;
         options = {};
     }
     const opts = { ...(typeof options === 'object' && options ? options : {}) };
     const wantAll = opts.all === true;
-    const family = Number(opts.family) || 0;
     delete opts.all;
-    delete opts.family;
-    if (family) opts.family = family;
+    // 强制只解析 A 记录；family 由调用方指定时同样以 4 为准（IPv6 在本场景不可用）
+    opts.family = 4;
 
     dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
         if (err) return callback(err);
-        let list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
-        if (family === 4 || family === 6) list = list.filter(a => a.family === family);
-        // family 4 排前（稳定排序，保持同族内的 DNS 原始顺序）
-        list = list.slice().sort((a, b) => a.family - b.family);
+        const list = (Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []))
+            .filter(a => a && a.family === 4);
         if (list.length === 0) {
             const e = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
             e.code = 'ENOTFOUND';
@@ -52,28 +55,24 @@ function ipv4FirstLookup(hostname, options, callback) {
 }
 
 /**
- * IPv4 优先的 agent（**禁用 keepAlive**）。
+ * 牌谱屋专用 agent：**仅 IPv4 + 禁用 keepAlive**。
  *
  * ⚠️ 不要开启 keepAlive：AbortController 触发超时后，node-fetch 只会 reject Promise，
- * 底层 socket 并不会被销毁，而是**留在 keepAlive 池里继续被复用**。一旦某条连接
- * 因 IPv6 链路问题半死（TCP Established 但对端不再响应），后续所有请求都会复用它
- * 并一起卡死——实测机器人进程里出现一条挂了 6 分钟仍为 Established 的 IPv6 连接，
- * 且此后日志完全停滞。禁用 keepAlive 后每次请求新建连接，坏连接不会传染。
- *
- * lookup 只影响域名解析顺序，不改变协议与证书校验行为。
+ * 底层 socket 并不会被销毁，而是留在连接池里继续被复用。一旦某条连接半死
+ * （TCP Established 但对端不再响应），后续所有请求都会复用它并一起卡死。
+ * 禁用后每次请求新建连接，坏连接不会传染。
  */
-let ipv4FirstAgent = null;
-function getIpv4FirstAgent() {
-    if (!ipv4FirstAgent) {
-        ipv4FirstAgent = new https.Agent({
+let paipuAgent = null;
+function getPaipuAgent() {
+    if (!paipuAgent) {
+        paipuAgent = new https.Agent({
             keepAlive: false,
-            lookup: ipv4FirstLookup,
-            // socket 级兜底超时：AbortController 只 reject Promise，不会主动销毁 socket。
-            // 这里让 agent 在超时后主动断连，避免半死连接长期占用句柄。
+            lookup: ipv4OnlyLookup,
+            // socket 级兜底超时：AbortController 只 reject Promise，不负责断连
             timeout: 45000,
         });
     }
-    return ipv4FirstAgent;
+    return paipuAgent;
 }
 
 // 牌谱屋（amae-koromo 数据节点）Bearer token。
@@ -700,9 +699,9 @@ export default class MajsoulApi {
             ...(options.headers || {})
         }
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`
-        // IPv4 优先：避免走 IPv6 时 HTTP/TLS 层卡死（详见文件顶部 ipv4FirstLookup 说明）。
+        // 仅 IPv4：避免走 IPv6 时 HTTP/TLS 层卡死（详见文件顶部 ipv4OnlyLookup 说明）。
         // 调用方已显式指定 agent 时以其为准。
-        const agent = options.agent || (this.ipv4First ? getIpv4FirstAgent() : undefined);
+        const agent = options.agent || (this.ipv4First ? getPaipuAgent() : undefined);
         return fetch(url, { ...options, headers, ...(agent ? { agent } : {}) })
     }
 
