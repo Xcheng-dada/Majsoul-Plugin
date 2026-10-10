@@ -27,6 +27,11 @@ export const FEATURE_CONFIG_DEFAULTS = {
   paipuMaxRetries: 3,
   // 每分钟最大请求数（作者要求 max 1 QPS = 60/min，默认 30 留余量）
   paipuMaxPerMinute: 30,
+  // 是否 IPv4 优先解析牌谱屋域名（默认开启）。
+  // 牌谱屋节点在 Cloudflare 后面且有 IPv6 记录，Node 默认会优先走 IPv6；
+  // 部分网络下 IPv6 能建连但 HTTP 层卡死到超时（表现为 aborted）。
+  // 若你的网络 IPv6 正常、想走 IPv6，可设为 false。
+  paipuIpv4First: true,
   // 抽卡经济系统
   signJadeMin: 150,          // 签到随机辉玉下限
   signJadeMax: 250,          // 签到随机辉玉上限

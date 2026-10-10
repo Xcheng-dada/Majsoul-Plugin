@@ -2,7 +2,63 @@
 import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
+import dns from 'dns';
+import https from 'https';
 import { getFeatureConfig } from './Config.js';
+
+/**
+ * IPv4 优先的 DNS lookup。
+ *
+ * 背景：牌谱屋数据节点（amae-koromo.com）挂在 Cloudflare 后面，A/AAAA 记录同时存在。
+ * Node 18+ 的默认解析顺序是 `verbatim`（按 DNS 返回顺序，实测 IPv6 排在前面），
+ * 于是请求优先走 IPv6。但在部分网络环境下到 Cloudflare 的 **IPv6 链路虽能建连、
+ * HTTP/TLS 层却会卡死**——实测 TCP 三次握手 280ms 正常，而首个 HTTP 请求
+ * 25 秒无响应直到超时（报 "The operation was aborted"），切到 IPv4 后
+ * 同一请求 6/6 成功、平均 2.8s。
+ *
+ * 因此这里把解析结果按 family 排序，IPv4 排前；仅在传 `family` 时按其过滤。
+ * 作用域仅限本插件创建的 agent，**不改全局 dns 设置**，避免影响其他插件。
+ *
+ * @param {string} hostname
+ * @param {object|number|Function} options
+ * @param {Function} callback
+ */
+function ipv4FirstLookup(hostname, options, callback) {
+    if (typeof options === 'function') {
+        callback = options;
+        options = {};
+    }
+    const opts = { ...(typeof options === 'object' && options ? options : {}) };
+    const wantAll = opts.all === true;
+    const family = Number(opts.family) || 0;
+    delete opts.all;
+    delete opts.family;
+    if (family) opts.family = family;
+
+    dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
+        if (err) return callback(err);
+        let list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+        if (family === 4 || family === 6) list = list.filter(a => a.family === family);
+        // family 4 排前（稳定排序，保持同族内的 DNS 原始顺序）
+        list = list.slice().sort((a, b) => a.family - b.family);
+        if (list.length === 0) {
+            const e = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+            e.code = 'ENOTFOUND';
+            return callback(e);
+        }
+        if (wantAll) return callback(null, list);
+        callback(null, list[0].address, list[0].family);
+    });
+}
+
+// 复用同一个 agent，保持连接池；仅在需要 IPv4 优先时创建
+let ipv4FirstAgent = null;
+function getIpv4FirstAgent() {
+    if (!ipv4FirstAgent) {
+        ipv4FirstAgent = new https.Agent({ keepAlive: true, lookup: ipv4FirstLookup });
+    }
+    return ipv4FirstAgent;
+}
 
 // 牌谱屋（amae-koromo 数据节点）Bearer token。
 // 作者要求：作为标准 Bearer token 添加到请求 header，并保持最大 1 QPS。
@@ -600,6 +656,15 @@ export default class MajsoulApi {
 
         /** @type {boolean} 是否启用调试模式 */
         this.debug = options.debug || false;
+
+        /**
+         * @type {boolean} 是否强制 IPv4 优先解析（默认开启）
+         *
+         * 牌谱屋节点在 Cloudflare 后面，同时有 A/AAAA 记录。Node 默认 verbatim 顺序会
+         * 优先走 IPv6，而部分网络下到 Cloudflare 的 IPv6 虽能建连、HTTP 层却会卡到超时
+         * （实测 25s 无响应，切 IPv4 后 6/6 成功）。关闭后回退为 Node 默认行为。
+         */
+        this.ipv4First = options.ipv4First !== false && cfg.paipuIpv4First !== false;
     }
 
     /**
@@ -619,7 +684,10 @@ export default class MajsoulApi {
             ...(options.headers || {})
         }
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`
-        return fetch(url, { ...options, headers })
+        // IPv4 优先：避免走 IPv6 时 HTTP/TLS 层卡死（详见文件顶部 ipv4FirstLookup 说明）。
+        // 调用方已显式指定 agent 时以其为准。
+        const agent = options.agent || (this.ipv4First ? getIpv4FirstAgent() : undefined);
+        return fetch(url, { ...options, headers, ...(agent ? { agent } : {}) })
     }
 
     /**
