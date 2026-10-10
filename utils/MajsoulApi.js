@@ -51,11 +51,27 @@ function ipv4FirstLookup(hostname, options, callback) {
     });
 }
 
-// 复用同一个 agent，保持连接池；仅在需要 IPv4 优先时创建
+/**
+ * IPv4 优先的 agent（**禁用 keepAlive**）。
+ *
+ * ⚠️ 不要开启 keepAlive：AbortController 触发超时后，node-fetch 只会 reject Promise，
+ * 底层 socket 并不会被销毁，而是**留在 keepAlive 池里继续被复用**。一旦某条连接
+ * 因 IPv6 链路问题半死（TCP Established 但对端不再响应），后续所有请求都会复用它
+ * 并一起卡死——实测机器人进程里出现一条挂了 6 分钟仍为 Established 的 IPv6 连接，
+ * 且此后日志完全停滞。禁用 keepAlive 后每次请求新建连接，坏连接不会传染。
+ *
+ * lookup 只影响域名解析顺序，不改变协议与证书校验行为。
+ */
 let ipv4FirstAgent = null;
 function getIpv4FirstAgent() {
     if (!ipv4FirstAgent) {
-        ipv4FirstAgent = new https.Agent({ keepAlive: true, lookup: ipv4FirstLookup });
+        ipv4FirstAgent = new https.Agent({
+            keepAlive: false,
+            lookup: ipv4FirstLookup,
+            // socket 级兜底超时：AbortController 只 reject Promise，不会主动销毁 socket。
+            // 这里让 agent 在超时后主动断连，避免半死连接长期占用句柄。
+            timeout: 45000,
+        });
     }
     return ipv4FirstAgent;
 }
