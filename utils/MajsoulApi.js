@@ -831,7 +831,7 @@ export default class MajsoulApi {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     const waitTime = Math.min(10000 * Math.pow(2, attempt), 300000);
-                    this.logger.info(`[MajsoulApi] 搜索玩家遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试)`);
+                    this.logger.debug(`[MajsoulApi] 搜索玩家遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
@@ -958,26 +958,30 @@ export default class MajsoulApi {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
+                        this.logger.warn(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
                         throw new Error(handleApiError('-429'));
                     }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
 
-                this.logger.warn(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+                this.logger.debug(`[MajsoulApi] 获取玩家记录失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
-                // 退避后重试（四麻/三麻统一）。超时已放宽到 45s，这里只需短退避；
+                // 退避后重试（四麻/三麻统一）。超时已放宽到 30s，这里只需短退避；
                 // 旧代码四麻分支的 continue 没有终止条件，会无限重试下去。
+                //
+                // 日志级别：重试过程记 debug。牌谱屋链路对部分网络存在丢包
+                // （实测 4/5 请求会挂到超时且永不返回），过程日志用 warn/info 会刷屏；
+                // 仅在「连续 N 次失败、放弃本次检查」时保留一条 warn。
                 const waitTime = Math.min(2000 * Math.pow(2, attempt), 15000);
                 totalWaitTime += waitTime;
-                this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                this.logger.debug(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 if (attempt >= maxRetries - 1) {
-                    this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录连续 ${maxRetries} 次失败，放弃本次检查`);
+                    this.logger.warn(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 对局记录连续 ${maxRetries} 次失败，放弃本次检查`);
                     throw new Error(handleApiError(error));
                 }
                 await this._switchEndpoint(error, attempt);
@@ -1038,7 +1042,7 @@ export default class MajsoulApi {
                     return null;
                 }
                 
-                this.logger.warn(`[MajsoulApi] 获取玩家昵称失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+                this.logger.debug(`[MajsoulApi] 获取玩家昵称失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 // 404 / 资源未找到：表示该玩家在该模式确实无数据（如三麻玩家查四麻、刚上段0场），
                 // 属于正常情况而非致命错误，返回 null 交由上层用另一模式兜底，避免整个查询崩溃。
@@ -1102,13 +1106,13 @@ export default class MajsoulApi {
 
                 if (response.status === 429) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
                         throw new Error(handleApiError('-429'));
                     }
                     const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
                     const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
@@ -1119,7 +1123,7 @@ export default class MajsoulApi {
 
                 const result = await response.json();
                 if (attempt > 0 || totalWaitTime > 0) {
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
                 }
                 return result;
 
@@ -1133,24 +1137,24 @@ export default class MajsoulApi {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
                         throw new Error(handleApiError('-429'));
                     }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
                 
-                this.logger.warn(`[MajsoulApi] 获取玩家统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+                this.logger.debug(`[MajsoulApi] 获取玩家统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 // 退避后重试（四麻/三麻统一，同 getPlayerRecords）
                 const waitTime = Math.min(2000 * Math.pow(2, attempt), 15000);
                 totalWaitTime += waitTime;
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 if (attempt >= maxRetries - 1) {
-                    this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 统计连续 ${maxRetries} 次失败，放弃本次检查`);
+                    this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 统计连续 ${maxRetries} 次失败，放弃本次检查`);
                     throw new Error(handleApiError(error));
                 }
                 await this._switchEndpoint(error, attempt);
@@ -1201,13 +1205,13 @@ export default class MajsoulApi {
 
                 if (response.status === 429) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
                         throw new Error(handleApiError('-429'));
                     }
                     const retryAfter = parseInt(response.headers.get('Retry-After')) || 10;
                     const waitTime = Math.min(retryAfter * 1000 * (attempt + 1), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，Retry-After: ${retryAfter}s，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
@@ -1218,7 +1222,7 @@ export default class MajsoulApi {
 
                 const result = await response.json();
                 if (attempt > 0 || totalWaitTime > 0) {
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计获取成功，共${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s`);
                 }
                 return result;
 
@@ -1232,24 +1236,24 @@ export default class MajsoulApi {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
+                        this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查`);
                         throw new Error(handleApiError('-429'));
                     }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
                 
-                this.logger.warn(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+                this.logger.debug(`[MajsoulApi] 获取玩家扩展统计失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 // 退避后重试（四麻/三麻统一，同 getPlayerStats）
                 const waitTime = Math.min(2000 * Math.pow(2, attempt), 15000);
                 totalWaitTime += waitTime;
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 if (attempt >= maxRetries - 1) {
-                    this.logger.error(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计连续 ${maxRetries} 次失败，放弃本次检查`);
+                    this.logger.warn(`[MajsoulApi] [${mode === 4 ? '四麻' : '三麻'}] 玩家 ${playerId} 扩展统计连续 ${maxRetries} 次失败，放弃本次检查`);
                     throw new Error(handleApiError(error));
                 }
                 await this._switchEndpoint(error, attempt);
@@ -1362,25 +1366,25 @@ export default class MajsoulApi {
                 if (error.code === 'TOKEN_REQUIRED') throw error;
                 if (error.message.includes('HTTP 429')) {
                     if (attempt >= MAX_429_RETRIES) {
-                        this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
+                        this.logger.warn(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局连续 ${MAX_429_RETRIES} 次遭遇429限流，放弃本次检查（下个周期再试）`);
                         throw new Error(handleApiError('-429'));
                     }
                     const waitTime = Math.min(10000 * Math.pow(2, Math.floor(attempt / 2)), 300000);
                     totalWaitTime += waitTime;
-                    this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                    this.logger.debug(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局遇到429限流，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                     continue;
                 }
                 
-                this.logger.warn(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
+                this.logger.debug(`[MajsoulApi] 获取玩家最近对局失败 (尝试 ${attempt + 1}/${maxRetries}): ${error.message}`);
 
                 // 退避后重试（四麻/三麻统一，同 getPlayerRecords）
                 const waitTime = Math.min(2000 * Math.pow(2, attempt), 15000);
                 totalWaitTime += waitTime;
-                this.logger.info(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
+                this.logger.debug(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局请求失败，等待 ${waitTime}ms 后重试 (第${attempt + 1}次尝试，累计等待${(totalWaitTime / 1000).toFixed(1)}s)`);
                 await new Promise(resolve => setTimeout(resolve, waitTime));
                 if (attempt >= maxRetries - 1) {
-                    this.logger.error(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局连续 ${maxRetries} 次失败，放弃本次检查`);
+                    this.logger.warn(`[MajsoulApi] [${modeName}] 玩家 ${playerId} 最近对局连续 ${maxRetries} 次失败，放弃本次检查`);
                     throw new Error(handleApiError(error));
                 }
                 await this._switchEndpoint(error, attempt);

@@ -10,12 +10,8 @@ const CONFIG_PATH = path.join(__dirname, '../config/config.json')
 
 // 功能配置默认值（与 config/config.json 保持一致，文件缺失/损坏时兜底）
 export const FEATURE_CONFIG_DEFAULTS = {
-  // 订阅检查间隔（分钟）。
-  // 牌谱屋链路对部分网络存在 TLS 握手极慢/丢包（实测握手 1.5~7s，偶发 12s 超时），
-  // 间隔拉长可降低「撞上链路抖动」的概率；订阅播报晚几分钟无妨，
-  // 且失败时会自动补发积压场次（单轮上限 MAX_BACKFILL=5）。
-  subscribeInterval4: 5,     // 四麻订阅检查间隔（分钟）
-  subscribeInterval3: 10,    // 三麻订阅检查间隔（分钟）
+  subscribeInterval4: 3,     // 四麻订阅检查间隔（分钟）
+  subscribeInterval3: 5,     // 三麻订阅检查间隔（分钟）
   paipuCleanupDays: 15,      // 牌谱/头像自动清理天数
   recordsLimit: 5,           // 对局查询默认返回场数
   // 牌谱屋（amae-koromo）请求参数
@@ -24,10 +20,8 @@ export const FEATURE_CONFIG_DEFAULTS = {
   //    未获作者许可不要擅自加回。需要时用英文逗号分隔填写。
   paipuHosts: '5-data.amae-koromo.com',
   // 请求超时（毫秒）。牌谱屋 player_records 接口服务端响应波动极大
-  // （实测同一请求 461ms ~ 9569ms），且链路对部分网络存在 TLS 握手极慢
-  // （1.5~7s，偶发 12s 超时）。取 20s：实测成功请求耗时 548ms~14s，20s 足以覆盖，
-  // 又能让「真失败」的请求更快让位给重试（30s 会让多订阅场景下最坏耗时逼近检查间隔）。
-  paipuTimeout: 20000,
+  // （实测同一请求 461ms ~ 9569ms），15s 会让「其实能通」的请求被判死。
+  paipuTimeout: 30000,
   // 单次请求的最大尝试次数（与节点数量无关，单节点时同样会退避重试）
   paipuMaxRetries: 3,
   // 每分钟最大请求数（作者要求 max 1 QPS = 60/min，默认 30 留余量）
