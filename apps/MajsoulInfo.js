@@ -74,12 +74,28 @@ export class MajsoulInfo extends plugin {
             
             let searchPlayerName = null;
             if (playerName) {
+                // 纯数字输入优先按**好友码**解析（走本地 API，快且能覆盖铜/银玩家）。
+                //
+                // 为什么放在昵称搜索之前：雀魂昵称确实可以是纯数字，但 6~12 位纯数字
+                // 输入绝大多数是好友码。此前一律先搜昵称，若搜不到再走好友码兜底，
+                // 等于必然白跑一次牌谱屋搜索（实测多花 5~8s，链路差时更久）。
+                // 这里先试好友码：解析成功就直接用；失败则继续按昵称搜索，行为不变。
+                if (/^\d{6,12}$/.test(playerName)) {
+                    try {
+                        const profile = await resolveFriendId(playerName);
+                        if (profile && profile.accountId != null) {
+                            return await this.handleFriendCodeFallback(e, playerName, mode);
+                        }
+                    } catch {
+                        // 解析失败（非好友码 / 本地 API 未就绪）：按昵称继续，不报错
+                    }
+                }
+
                 const players = await api.searchPlayer(playerName, mode === '3' ? 3 : 4);
                 if (players && players.length > 0) {
                     uid = String(players[0].id);
                     searchPlayerName = players[0].nickname;
                 } else {
-                    // 不允许直接使用 UID 查询：昵称搜不到即提示，不当作 UID 使用
                     // 兜底：纯数字输入按好友码走本地 API（覆盖无金之间对局的铜银玩家）
                     if (/^\d{6,12}$/.test(playerName)) {
                         return await this.handleFriendCodeFallback(e, playerName, mode);

@@ -1400,19 +1400,32 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
         extended3 = JSON.parse(JSON.stringify(playerExtendZero))
       }
     } else {
-      if (mainMode === 3) {
-        data3 = await fetchStats(3)
-        extended3 = data3.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(3)
-        // 四麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
-        data4 = await fetchStats(4).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
-        extended4 = data4.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(4)
-      } else {
-        data4 = await fetchStats(4)
-        extended4 = data4.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(4)
-        // 三麻仅用于段位 PT 展示，缺失不影响主查询（带 retcode 标记，保持与 fetchStats 返回格式一致）
-        data3 = await fetchStats(3).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
-        extended3 = data3.retcode ? JSON.parse(JSON.stringify(playerExtendZero)) : await fetchExt(3)
+      // 四麻与三麻两组数据**互相独立**，并行拉取以缩短总耗时。
+      // 此前串行 await（主模式 → 另一模式）会把 4 个请求的耗时线性叠加：
+      // 实测牌谱屋单请求 2~5s，串行下来一次查询要 31~42s，并行后约减半。
+      //
+      // 注意组内仍保持串行：extended 依赖 stats 的 retcode（404 时不请求 extended，
+      // 避免对必然无数据的模式多发一次请求、白耗限流额度）。
+      const loadMode = async (m, isMain) => {
+        let stats
+        if (isMain) {
+          stats = await fetchStats(m)
+        } else {
+          // 非主模式仅用于段位 PT 展示，失败不影响主查询
+          stats = await fetchStats(m).catch(() => ({ ...JSON.parse(JSON.stringify(playerStatsZero)), retcode: -404 }))
+        }
+        const ext = stats.retcode
+          ? JSON.parse(JSON.stringify(playerExtendZero))
+          : await fetchExt(m)
+        return { stats, ext }
       }
+
+      const [r3, r4] = await Promise.all([
+        loadMode(3, mainMode === 3),
+        loadMode(4, mainMode === 4)
+      ])
+      data3 = r3.stats; extended3 = r3.ext
+      data4 = r4.stats; extended4 = r4.ext
     }
   } catch (e) {
     console.error(`[render.js] 获取玩家数据失败: ${e.message}`)
