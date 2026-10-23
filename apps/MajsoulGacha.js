@@ -343,8 +343,9 @@ export class MajsoulGacha extends plugin {
                 items,
                 wallet,
                 poolName,
-                nickname: this._displayName(e),
-                avatar: this._avatarUrl(e)
+                nickname: (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
+                    .toString().trim().slice(0, 16),
+                avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(e.user_id).replace(/[^\d]/g, '')}&s=640`
             });
             await e.reply(segment.image(image), true);
 
