@@ -8,7 +8,7 @@ import GachaWallet from '../utils/GachaWallet.js';
 import GachaStats from '../utils/GachaStats.js';
 import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
-import { appendSummary } from '../utils/CurrencyCard.js';
+import { renderGachaResultCard } from '../utils/GachaResultCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 import { getSetting, setSetting, delSetting, getSettingsByPrefix } from '../utils/SettingsStore.js';
 
@@ -197,15 +197,12 @@ export class MajsoulGacha extends plugin {
 
         // 扣费：卷轴优先于辉玉；十连时单张寻觅卷轴不可用（需十连寻觅卷轴）
         let cost = null;
-        let costDesc = '';
         if (times === 1) {
             const wallet = await this.wallet.get(e.user_id);
             if (wallet.ticket >= 1) {
                 cost = { ticket: 1 };
-                costDesc = '寻觅卷轴 x1';
             } else if (wallet.jade >= singleJade) {
                 cost = { jade: singleJade };
-                costDesc = `辉玉 x${singleJade}`;
             } else {
                 await e.reply(`辉玉不足（需要 ${singleJade}，当前 ${wallet.jade}），且没有寻觅卷轴。\n每日签到可以获得辉玉和寻觅卷轴哦~`, true);
                 return;
@@ -214,10 +211,8 @@ export class MajsoulGacha extends plugin {
             const wallet = await this.wallet.get(e.user_id);
             if (wallet.ticket10 >= 1) {
                 cost = { ticket10: 1 };
-                costDesc = '十连寻觅卷轴 x1';
             } else if (wallet.jade >= tenJade) {
                 cost = { jade: tenJade };
-                costDesc = `辉玉 x${tenJade}`;
             } else {
                 const ticketHint = wallet.ticket >= 1 ? '（单张寻觅卷轴无法十连，寻觅卷轴仅可用于单抽）' : '';
                 await e.reply(`辉玉不足（需要 ${tenJade}，当前 ${wallet.jade}），且没有十连寻觅卷轴。${ticketHint}\n每日签到可以获得辉玉和寻觅卷轴哦~`, true);
@@ -239,7 +234,8 @@ export class MajsoulGacha extends plugin {
         }
 
         try {
-            const { imageBase64, results, hasGuaranteed, poolName } = await this.gachaCore.runGacha(e.group_id, times, e.user_id);
+            // 只需 results / hasGuaranteed / poolName；结果图由 renderGachaResultCard 重新合成
+            const { results, hasGuaranteed, poolName } = await this.gachaCore.runGacha(e.group_id, times, e.user_id);
 
             // 处理结果：礼物直接转粉尘；装扮/雀士首入图鉴、重复转石/许愿石
             const gains = { jade: 0, ticket: 0, ticket10: 0, dust: 0, stone: 0, wish: 0, faith: times };
@@ -286,42 +282,70 @@ export class MajsoulGacha extends plugin {
             const decorShown = mergeShow(decorCounts, decorConv, '星之石');
 
             // 货币入账（自动兑换在后台静默完成，不外显转化过程，仅体现寻觅卷轴数量变化）
-            const ticketBefore = spendResult.wallet.ticket;
+            const walletBefore = spendResult.wallet;
             const { wallet: newWallet } = await this.wallet.add(e.user_id, gains);
-            const ticketGain = Math.max(0, newWallet.ticket - ticketBefore);
+            const ticketGain = Math.max(0, newWallet.ticket - walletBefore.ticket);
 
-            // 纯图片输出：结果图 + 摘要条（拼接到结果图下方）
+            // ---- 新的结果卡：官方素材三层合成（樱花背景 + 发光层 + 标题）----
             const poolTitle = await this.gachaCore.getPoolDisplayTitle(poolName);
-            const label = times === 1 ? '单次寻觅结果' : '十连寻觅结果';
-            let titleLine = `${poolTitle}｜${label}（${costDesc}）`;
-            if (times === 10 && hasGuaranteed) {
-                titleLine += '｜含保底';
-            }
-            const lines = [];
-            if (charShown.length > 0) {
-                lines.push(`雀士：${charShown.join('、')}`);
-            }
-            if (decorShown.length > 0) {
-                lines.push(`装饰：${decorShown.join('、')}`);
-            }
-            if (giftCounts.blue + giftCounts.purple > 0) {
-                const giftParts = [];
-                if (giftCounts.blue > 0) giftParts.push(`中级礼物x${giftCounts.blue}`);
-                if (giftCounts.purple > 0) giftParts.push(`高级礼物x${giftCounts.purple}`);
-                const giftDust = giftCounts.blue * 5 + giftCounts.purple * 25;
-                lines.push(`礼物：${giftParts.join('、')}（已全部奉纳为星之粉尘x${giftDust}）`);
-            }
-            lines.push(`信仰 ${newWallet.faith}（+${times}）｜寻觅卷轴 ${newWallet.ticket}${ticketGain > 0 ? `（+${ticketGain}）` : ''}｜辉玉 ${newWallet.jade}`);
+            const totalPullsNow = await this.stats.add(e.user_id, times);
+            let titleLine = `${poolTitle}｜累计寻觅 ${totalPullsNow} 次`;
+            if (times === 10 && hasGuaranteed) titleLine += '｜含保底';
 
-            // 累计抽数（全局跨群，十连记 10）。放在抽卡**成功之后**：
-            // 失败路径会退还货币，那次不算真正抽过，不应计入。
-            const totalPulls = await this.stats.add(e.user_id, times);
-            if (totalPulls > 0) {
-                lines.push(`累计寻觅 ${totalPulls}`);
+            // 物品列表：雀士/装饰/礼物（全部本地资源）
+            const KIND_MAP = {
+                [ITEM_TYPE.CHARACTER]: 'character',
+                [ITEM_TYPE.DECORATION]: 'decoration',
+                [ITEM_TYPE.GIFT_BLUE]: 'gift_blue',
+                [ITEM_TYPE.GIFT_PURPLE]: 'gift_purple'
+            };
+            const merged = new Map();
+            for (const [objInt, fileName] of results) {
+                const key = `${objInt}|${fileName}`;
+                if (!merged.has(key)) merged.set(key, { objInt, fileName, count: 0 });
+                merged.get(key).count++;
+            }
+            const items = [];
+            const tagOf = (fileName) => {
+                // 重复转化标注：雀士→许愿石、装扮→星之石
+                if (charConv[fileName]) return `已转换许愿石x${charConv[fileName]}`;
+                if (decorConv[fileName]) return `已转换星之石x${decorConv[fileName]}`;
+                return null;
+            };
+            for (const { objInt, fileName, count } of merged.values()) {
+                items.push({
+                    name: fileName,
+                    kind: KIND_MAP[objInt],
+                    count,
+                    tag: tagOf(fileName)
+                });
             }
 
-            const finalImage = await appendSummary(imageBase64, titleLine, lines);
-            await e.reply(segment.image(finalImage), true);
+            // 货币行：只列本次真实变化的项（辉玉为消耗，显示负增量）
+            const wallet = [];
+            // 消耗的货币（cost 里非零项）
+            for (const [key, spent] of Object.entries(cost || {})) {
+                if (spent > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: -spent });
+            }
+            // 获得的货币（gains 里非零项；信仰每次 +times）
+            for (const key of ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish']) {
+                const g = gains[key] || 0;
+                if (g > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: g });
+            }
+            // 自动兑换产生的卷轴增量（ticketGain 与 gains.ticket 不同，来自粉尘/石头的兑换链）
+            if (ticketGain > (gains.ticket || 0)) {
+                wallet.push({ icon: CURRENCY_ICONS.ticket, count: newWallet.ticket, delta: ticketGain });
+            }
+
+            const image = await renderGachaResultCard({
+                title: titleLine,
+                items,
+                wallet,
+                poolName,
+                nickname: this._displayName(e),
+                avatar: this._avatarUrl(e)
+            });
+            await e.reply(segment.image(image), true);
 
         } catch (error) {
             logger.error('[雀魂抽卡] 抽卡失败:', error);
