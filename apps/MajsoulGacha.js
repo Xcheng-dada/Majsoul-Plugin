@@ -329,11 +329,15 @@ export class MajsoulGacha extends plugin {
                 wallet.push({ icon: CURRENCY_ICONS.ticket, count: newWallet.ticket, delta: ticketGain });
             }
 
+            // UP 雀士名单（用于结果图贴 UP! 角标）；取原始数组避免 join/split 破坏含顿号的名称
+            const upNames = await this._getUpCharacterList(poolName);
+
             const image = await renderGachaResultCard({
                 title: titleLine,
                 items,
                 wallet,
                 poolName,
+                upNames,
                 nickname: (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
                     .toString().trim().slice(0, 16),
                 avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(e.user_id).replace(/[^\d]/g, '')}&s=640`
@@ -443,12 +447,18 @@ export class MajsoulGacha extends plugin {
 
     // 获取池子的UP雀士名单（自定义UP池/联动池变体），无则返回 null
     async _getUpCharacters(poolId) {
+        const list = await this._getUpCharacterList(poolId);
+        return list.length > 0 ? list.join('、') : null;
+    }
+
+    // 同上，但返回数组（结果图贴 UP! 角标用，避免 join/split 破坏含顿号的名称）
+    async _getUpCharacterList(poolId) {
         try {
             if (typeof poolId === 'string' && poolId.startsWith('custom:')) {
                 const custom = await this.gachaCore.customPoolLoader();
                 const ups = Array.isArray(custom?.[poolId.slice('custom:'.length)]?.characters)
                     ? custom[poolId.slice('custom:'.length)].characters : [];
-                return ups.length > 0 ? ups.join('、') : null;
+                return ups;
             }
             if (typeof poolId === 'string' && poolId.includes('|')) {
                 poolId = poolId.split('|')[0];
@@ -457,10 +467,10 @@ export class MajsoulGacha extends plugin {
                 && !poolId.startsWith('custom:')) {
                 const pool = await this.gachaCore.gachaLoader();
                 const ups = Array.isArray(pool[poolId]) ? pool[poolId] : [];
-                return ups.length > 0 ? ups.join('、') : null;
+                return ups;
             }
         } catch {}
-        return null;
+        return [];
     }
 
     // 卡池倒计时文本（按池）：未到开启时间返回"X后开启"，已开启且设了结束时间返回"X后关闭"，无排期返回空串

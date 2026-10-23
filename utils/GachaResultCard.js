@@ -12,6 +12,10 @@ const RESOURCES_ROOT = path.join(__dirname, '..', 'resources');
 const GACHA_DIR = path.join(RESOURCES_ROOT, 'gacha');
 const ECONOMY_DIR = path.join(RESOURCES_ROOT, 'economy');
 
+// UP 角标（官方素材 47×28，缩放后贴在雀士头像右下角）
+const UP_BADGE_W = 72;
+const UP_BADGE_H = 43;
+
 // 官方素材尺寸
 const W = 1920;
 const H = 1080;
@@ -72,11 +76,12 @@ function findItemImage (name, kind, poolName) {
  *   底部货币行；delta 为本次增量（如卷轴 +10），有则显示为「43（+10）」
  * @param {string[]} [options.lines] 附加摘要行
  * @param {string} [options.poolName] 卡池名（装扮定位用）
+ * @param {string[]} [options.upNames] UP 雀士名单（命中则在头像右下角贴 UP! 角标）
  * @param {string} [options.nickname] 用户名（画在左上角头像旁）
  * @param {string} [options.avatar] 头像 URL/路径
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderGachaResultCard ({ title, items, wallet, lines, poolName, nickname, avatar }) {
+export async function renderGachaResultCard ({ title, items, wallet, lines, poolName, upNames, nickname, avatar }) {
   if ((!items || items.length === 0) && (!lines || lines.length === 0) && (!wallet || !wallet.length)) {
     throw new Error('GachaResultCard: items / lines / wallet 不能同时为空');
   }
@@ -86,6 +91,12 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
     loadRes(path.join(GACHA_DIR, 'result_bg.png')),
     loadRes(path.join(GACHA_DIR, 'title_result.png'))
   ]);
+
+  // UP 角标（延迟加载：只有传入 upNames 才需要）
+  const upSet = new Set((upNames || []).filter(Boolean));
+  const upBadge = upSet.size > 0
+    ? await loadRes(path.join(GACHA_DIR, 'up_badge.png')).catch(() => null)
+    : null;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -172,13 +183,23 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
       const rowW = row.length * ICON + (row.length - 1) * GAP;
       let x = Math.round((W - rowW) / 2);
       for (const it of row) {
+        // 雀士名（文件名去后缀）是否在 UP 名单中
+        const base = path.basename(it.name, path.extname(it.name));
+        const isUp = upBadge && it.kind === 'character' && upSet.has(base);
         const p = findItemImage(it.name, it.kind, poolName);
         if (p) {
           try {
             const icon = await loadRes(p);
             const s = Math.min(ICON / icon.width, ICON / icon.height);
             const dw = icon.width * s, dh = icon.height * s;
-            ctx.drawImage(icon, x + (ICON - dw) / 2, y + (ICON - dh) / 2, dw, dh);
+            const ix = x + (ICON - dw) / 2;
+            const iy = y + (ICON - dh) / 2;
+            ctx.drawImage(icon, ix, iy, dw, dh);
+            // UP! 角标贴在图标右下角（仅 UP 雀士）
+            if (isUp) {
+              ctx.drawImage(upBadge, ix + dw - UP_BADGE_W * 0.72, iy + dh - UP_BADGE_H * 0.72,
+                UP_BADGE_W * 0.72, UP_BADGE_H * 0.72);
+            }
           } catch {
             ctx.fillStyle = 'rgba(255,255,255,0.14)';
             ctx.fillRect(x, y, ICON, ICON);
@@ -188,8 +209,7 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
           ctx.fillRect(x, y, ICON, ICON);
         }
 
-        // 显示名：雀士名即文件名去后缀（characterFileMap 的 key 同规则）
-        const base = path.basename(it.name, path.extname(it.name));
+        // 名称：雀士名即文件名去后缀（characterFileMap 的 key 同规则）
         const label = it.count > 1 ? `${base}x${it.count}` : base;
         drawText(ctx, label, x + ICON / 2, y + ICON + 32, 26, '#FFF3D6', 'center', 'bold');
         if (it.tag) {
