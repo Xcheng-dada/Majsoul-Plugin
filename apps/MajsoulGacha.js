@@ -338,7 +338,8 @@ export class MajsoulGacha extends plugin {
                     .toString().trim().slice(0, 16),
                 avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(e.user_id).replace(/[^\d]/g, '')}&s=640`
             });
-            await e.reply(segment.image(image), true);
+            // 不引用回复（quote=false）：结果图直接发出
+            await e.reply(segment.image(image), false);
 
         } catch (error) {
             logger.error('[雀魂抽卡] 抽卡失败:', error);
