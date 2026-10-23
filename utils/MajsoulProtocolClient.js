@@ -1,10 +1,11 @@
 /**
- * 雀魂协议客户端（本地 API 取谱通道）
+ * 雀魂协议客户端（默认：纯 JS 网关通道；可选：本地 API 通道）
  *
- * 数据来源：本地雀魂协议抓取 API（HTTP 服务端，默认 http://127.0.0.1:5088）
- * 鉴权由 API 自身完成，本类不再做模拟登录/WebSocket。
+ * 默认 mode=js：登录/取谱/玩家数据全部由 utils/MajsoulJsClient.js 直连雀魂官方网关完成
+ *（账密登录 + token 续登，登录态存 data/majsoul-js-session.json），不需要本地 API 程序。
+ * mode=local：本地 API 通道（Majsoul.ProtocolLogin.Api，HTTP 服务端，默认 http://127.0.0.1:5088）。
  *
- * 牌谱格式：API 返回的 `dataBase64` 是 `lq.GameDetailRecords` 的 protobuf 编码：
+ * 牌谱格式：`dataBase64` 是 `lq.GameDetailRecords` 的 protobuf 编码：
  *   - records: 简短元数据（Any 包装，本通道忽略）
  *   - actions: 回放动作流（repeated GameAction）
  *
@@ -23,6 +24,7 @@ import net from 'net'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 import Codec from './Codec.js'
+import JsClient from './MajsoulJsClient.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROTOCOL_CFG_PATH = path.join(__dirname, '../config/majsoul-protocol.json')
@@ -32,6 +34,19 @@ let cachedApiBase = null
 
 // 日志（TRSS 全局 logger 或 console）
 const logger = globalThis.logger || console
+
+/**
+ * 协议通道模式（config/majsoul-protocol.json 的 "mode" 字段）：
+ *   "js"    = 纯 JS 网关通道（utils/MajsoulJsClient.js，默认，不需要本地 API 程序）
+ *   "local" = 本地 API 通道（Majsoul.ProtocolLogin.Api，HTTP 服务端 127.0.0.1:5088，
+ *             Windows / Linux 均有对应程序）
+ */
+export function getChannelMode () {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8'))
+    return cfg.mode === 'local' ? 'local' : 'js'
+  } catch { return 'js' }
+}
 
 /**
  * 解析 RecordCollectedData 的裸 bytes，返回 { uuid, remarks }
@@ -291,6 +306,8 @@ function registerExitHook () {
 export async function ensureApiRunning () {
   let cfg = {}
   try { cfg = JSON.parse(fs.readFileSync(PROTOCOL_CFG_PATH, 'utf8')) } catch {}
+  // 纯 JS 模式不需要本地 exe，永远不拉起进程
+  if (getChannelMode() === 'js') return false
   // 仅 enabled 且显式开启 autoLaunch 时才尝试拉起
   if (!cfg.enabled || !cfg.autoLaunch) return false
   // 已在运行（端口被监听）则跳过，避免重复拉起冲突
@@ -353,6 +370,10 @@ function getTimeoutMs () {
  */
 export async function saveToLocal (paipu, options = {}) {
   const { downloadAvatars = false, exportFiles = false, includeDataBase64 = true } = options
+  // JS 通道：直接向雀魂服务器取牌谱（dataBase64 = lq.GameDetailRecords，与 exe 同源）
+  if (getChannelMode() !== 'local') {
+    return JsClient.getRecordDetail(paipu)
+  }
   const bases = discoverApi()
   let lastErr = null
   for (const base of bases) {
@@ -388,12 +409,16 @@ export async function saveToLocal (paipu, options = {}) {
             if (code === 151 || name === 'ERR_CLIENT_VERSION' ||
                 /client version/i.test(detail) || /ERR_CLIENT_VERSION/i.test(detail)) {
               hint = '本地 API（Majsoul.ProtocolLogin.Api）版本已过期，雀魂服务器拒绝了其协议请求（ERR_CLIENT_VERSION）。请前往本插件 Release 页面下载更新版本的 API 后重试。'
+            } else if (code === 540) {
+              // 540 = 雀魂官方「超過牌譜讀取限制」：短时间取谱过多，冷却即恢复
+              hint = '雀魂提示「牌谱读取过于频繁」（code=540），请稍后再试。这是服务端的取谱频率限制，与登录/牌谱无关。'
             } else if (detail) {
               hint = `本地 API 返回 ${res.status}：${detail}`
             }
           }
         } catch { /* 解析失败则保留原始提示 */ }
         lastErr = new Error(hint)
+        if (/牌谱读取过于频繁/.test(hint)) { lastErr.code = 540 }
         continue
       }
       const dto = await res.json()
@@ -419,6 +444,19 @@ export async function saveToLocal (paipu, options = {}) {
  */
 export async function loginToApi (account, password, saveProfile = true) {
   if (!account || !password) return { ok: false, error: '账号或密码为空' }
+  // JS 通道：账密登录由本插件直接完成，access_token 落盘 data/majsoul-js-session.json 供续登
+  if (getChannelMode() !== 'local') {
+    try {
+      const data = await JsClient.login(account, password, saveProfile)
+      return { ok: true, data }
+    } catch (e) {
+      const isLqErr = e && e.name === 'MajsoulLqError'
+      let error = e?.message || String(e)
+      if (isLqErr && e.code === 1002) error = '账号不存在（ERR_ACC_NOT_SIGN_UP）'
+      else if (isLqErr && e.code === 401) error = '账号或密码错误（401）'
+      return { ok: false, error }
+    }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -447,6 +485,13 @@ export async function loginToApi (account, password, saveProfile = true) {
  * @returns {Promise<{ok:boolean, account?:any}>}
  */
 export async function getApiAccount () {
+  // JS 通道：登录态保存在 data/majsoul-js-session.json
+  if (getChannelMode() !== 'local') {
+    try {
+      const ok = JsClient.loggedIn && JsClient.auth
+      return { ok, account: ok ? { accountId: JsClient.auth.accountId, nickname: JsClient.auth.nickname || '', avatarId: JsClient.auth.avatarId || 0 } : null }
+    } catch { return { ok: false } }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -467,6 +512,21 @@ export async function getApiAccount () {
  * @returns {Promise<{ok:boolean, profiles?:Array<{nickname?:string, avatarId?:number, accountId?:number}>}>}
  */
 export async function getApiProfiles () {
+  // JS 通道：档案即本插件保存的登录态（单账户）
+  if (getChannelMode() !== 'local') {
+    if (JsClient.auth && JsClient.auth.accessToken) {
+      return {
+        ok: true,
+        profiles: [{
+          accountId: JsClient.auth.accountId,
+          nickname: JsClient.auth.nickname || '',
+          avatarId: JsClient.auth.avatarId || 0,
+          savedAt: JsClient.auth.savedAtText || null
+        }]
+      }
+    }
+    return { ok: true, profiles: [] }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -490,6 +550,15 @@ export async function getApiProfiles () {
  */
 export async function getPlayerBrief (accountId) {
   if (accountId == null || accountId === '') return null
+  // JS 通道：fetchMultiAccountBrief（查询者需已登录，被查者无需好友）
+  if (getChannelMode() !== 'local') {
+    try {
+      return await JsClient.getPlayerBrief(accountId)
+    } catch (e) {
+      logger.warn(`[MajsoulProtocol] JS 通道查询玩家简报失败(${accountId}): ${e.message}`)
+      return null
+    }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -505,6 +574,41 @@ export async function getPlayerBrief (accountId) {
 }
 
 /**
+ * 获取玩家在线状态（JS 通道 fetchAccountState / exe 通道 /api/players/states）。
+ * 返回 { online:boolean, playing:boolean, ... } 或 null（失败时静默 null，调用方按"未知"处理）。
+ */
+export async function getPlayerState (accountId) {
+  if (accountId == null || accountId === '') return null
+  if (getChannelMode() !== 'local') {
+    try {
+      return await JsClient.getPlayerState(accountId)
+    } catch {
+      return null
+    }
+  }
+  for (const base of discoverApi()) {
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), getTimeoutMs())
+      const r = await fetch(`${base}/api/players/states?accountIds=${encodeURIComponent(accountId)}`,
+        requestOptions({ signal: ctrl.signal }))
+      clearTimeout(t)
+      if (!r.ok) continue
+      const data = await r.json().catch(() => null)
+      const list = Array.isArray(data) ? data : (data?.states || [])
+      const st = list.find(x => String(x?.accountId ?? x?.account_id) === String(accountId)) || list[0]
+      if (!st) return null
+      return {
+        accountId: Number(st.accountId ?? st.account_id) || Number(accountId),
+        online: !!(st.isOnline ?? st.is_online ?? st.online),
+        playing: !!(st.playing || st.playingGame || st.isPlaying)
+      }
+    } catch { /* try next */ }
+  }
+  return null
+}
+
+/**
  * 获取玩家对局统计（本地 API /api/players/{accountId}/statistics）
  * 返回 { accountId, entries }，entries 内每个元素含：
  *   mahjongCategory(1四麻/2三麻) × gameCategory(1友人/2段位/4比赛) × gameType
@@ -513,6 +617,15 @@ export async function getPlayerBrief (accountId) {
  */
 export async function getPlayerStatistics (accountId) {
   if (accountId == null || accountId === '') return null
+  // JS 通道：fetchAccountStatisticInfo 映射为 exe 同形状的 entries
+  if (getChannelMode() !== 'local') {
+    try {
+      return await JsClient.getPlayerStatistics(accountId)
+    } catch (e) {
+      logger.warn(`[MajsoulProtocol] JS 通道查询统计失败(${accountId}): ${e.message}`)
+      return null
+    }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -536,6 +649,15 @@ export async function getPlayerStatistics (accountId) {
  */
 export async function resolveFriendId (friendId) {
   if (friendId == null || friendId === '') return null
+  // JS 通道：searchAccountByPattern → fetchMultiAccountBrief
+  if (getChannelMode() !== 'local') {
+    try {
+      return await JsClient.resolveFriendId(friendId)
+    } catch (e) {
+      logger.warn(`[MajsoulProtocol] JS 通道解析好友码失败(${friendId}): ${e.message}`)
+      return null
+    }
+  }
   for (const base of discoverApi()) {
     try {
       const ctrl = new AbortController()
@@ -596,17 +718,6 @@ export async function fetchRecordHead (paipu) {
   return { head }
 }
 
-// 以下为旧版网页版/模拟登录相关接口的兼容占位，当前走本地 API 通道不再需要。
-// 保留空实现以避免 MajsoulReview.js 引用时报错（其已优先尝试协议通道）。
-export async function checkSession () { return false }
-export async function ensureSession () { throw new Error('协议通道由本地 API 提供，无需模拟登录') }
-export async function getPlayerList () { throw new Error('协议通道由本地 API 提供') }
-export async function fetchGameRecordByPlayer () { throw new Error('协议通道由本地 API 提供') }
-export async function fetchGameRecord () { throw new Error('协议通道由本地 API 提供') }
-export function clearLoginCache () {}
-export function getLoginInfo () { return null }
-export function getApiCandidates () { return discoverApi() }
-
 /**
  * 协议通道是否启用（供 MajsoulReview 判断取谱入口是否可用）。
  */
@@ -622,6 +733,7 @@ export function setApiBase (url) { cachedApiBase = url }
 export function getProtocolClient () {
   return {
     isEnabled,
+    getChannelMode,
     fetchRecordHead,
     fetchFullRecord,
     loginToApi,

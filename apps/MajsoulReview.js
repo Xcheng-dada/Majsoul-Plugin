@@ -130,6 +130,9 @@ export class MajsoulReview extends plugin {
 
     const client = getProtocolClient()
     if (!client.isEnabled()) {
+      if (client.getChannelMode && client.getChannelMode() === 'js') {
+        return e.reply('❌ 取谱通道未启用：请把 config/majsoul-protocol.json 的 `enabled` 设为 true（JS 通道不需要本地 API 程序）。')
+      }
       return e.reply('❌ 未启用本地取谱（config/majsoul-protocol.json 的 enabled 不为 true）。\n请先本地运行 Majsoul.ProtocolLogin.Api 对应平台程序（Windows 为 Majsoul.ProtocolLogin.Api-win-x64.exe，Linux 为 Majsoul.ProtocolLogin.Api-linux-x64）并在配置中开启 enabled。')
     }
 
@@ -139,6 +142,13 @@ export class MajsoulReview extends plugin {
     try {
       full = await client.fetchFullRecord(gameId)
     } catch (err) {
+      // 540 = 雀魂官方「超過牌譜讀取限制」：短时间取谱过多，冷却即恢复。
+      // 单独给出可操作提示，避免用户以为是登录或牌谱问题反复重试。
+      const isTooFrequent = err?.code === 540 || /code=540/.test(err?.message || '')
+      if (isTooFrequent) {
+        return e.reply('⚠️ 雀魂提示「牌谱读取过于频繁」，请等几分钟后再试。\n' +
+          '（这是雀魂服务端的取谱频率限制，与登录、牌谱本身无关；短时间内连续 Review 多条牌谱会触发）')
+      }
       // 取谱阶段失败（如本地 API 版本过期、上游拒绝、API 未启动等），
       // 直接把底层提示回给用户，避免只打印裸 Error 到日志。
       return e.reply(`❌ 取谱失败：${err.message || err}`)
@@ -153,7 +163,14 @@ export class MajsoulReview extends plugin {
       } catch { /* 忽略探测错误 */ }
 
       if (notLoggedIn) {
-        return e.reply('⚠️ 当前未登录，无法进行牌谱分析。请先发送「#雀魂登录 <账号> <密码>」完成登录后再试。')
+        return e.reply('⚠️ 当前未登录，无法进行牌谱分析。请由机器人主人【私聊】发送「#雀魂登录 <账号> <密码>」完成登录后再试。')
+      }
+      // 按当前通道给出准确提示：js 模式不需要（也没有）本地 exe，不能再让用户去查 5088 端口
+      if (client.getChannelMode && client.getChannelMode() === 'js') {
+        return e.reply('❌ 取谱失败（JS 通道）。可能原因：\n' +
+          '· 登录态已过期（雀魂 token 会被服务端轮换）→ 由主人【私聊】重新发送「#雀魂登录 <账号> <密码>」\n' +
+          '· 该牌谱不存在 / 无权访问（服务器返回 540 或 1203）\n' +
+          '· 网络无法连到雀魂官方网关')
       }
       return e.reply('❌ 取谱失败（本地 API 未启动 / 取不到牌谱 / 解码失败）。\n请确认本地 API 程序（Majsoul.ProtocolLogin.Api-win-x64.exe / Majsoul.ProtocolLogin.Api-linux-x64）已在 127.0.0.1:5088 运行。')
     }
@@ -184,15 +201,19 @@ export class MajsoulReview extends plugin {
       if (typeof logger !== 'undefined') logger.warn('[MajsoulReview] 牌谱自身解析段位失败，将依赖兜底源：' + (err?.message || err))
     }
 
-    // 主视角账号：仅用本地 API 下发的 targetAccountId（真实账号 ID）。
-    // 牌谱链接 UUID 后的 _a64678917 是雀魂的分享访问令牌，并非账号 ID，
-    // 不能当作 accountId 去匹配座位，故不再解析 URL 后缀。
+    // 主视角账号：优先协议下发的 targetAccountId（与 exe 通道 reference.targetAccountId 同义）。
+    // 注意：牌谱链接 UUID 后的 _a64678917 是雀魂的分享访问令牌，并非一定账号 ID（历史实测结论），
+    // JS 通道内部只在“尾缀恰为四家账号之一”时才采用它。
     let mainAccountId = null
     try {
       if (Number.isFinite(Number(full?.targetAccountId)) && Number(full.targetAccountId) > 0) {
         mainAccountId = Number(full.targetAccountId)
       }
     } catch {}
+    if (typeof logger !== 'undefined') {
+      const accList = (full?.head?.accounts || []).map(a => `${a.account_id}@seat${a.seat}`).join(', ')
+      logger.info(`[MajsoulReview] 主视角判定: targetAccountId=${mainAccountId ?? '无'}, 谱内账号=[${accList || '空'}]`)
+    }
     let mainSeat = null
     if (Number.isInteger(forcedSeat) && forcedSeat >= 0 && forcedSeat <= 3) {
       // 用户显式指定座位（东/南/西/北 或 0~3），优先使用，跳过主视角账号匹配
@@ -473,10 +494,19 @@ export class MajsoulReview extends plugin {
   }
 
   // 雀魂登录：#雀魂登录 账号 密码
-  // 纯协议模式：账号密码直接交给本地 Majsoul.ProtocolLogin.Api 对应平台程序完成登录，
-  // 登录态由 API 自身持有，Yunzai 侧不保存 token/密码。
-  // 需先启用 majsoul-protocol（enabled=true）且 API 已在运行（或已开启 autoLaunch）。
+  // 默认 JS 模式：账密交给插件内置 JS 网关（MajsoulJsClient）直连雀魂服务器完成登录，
+  // 登录态（access_token）保存在插件 data/majsoul-js-session.json，后续自动续登。
+  // 需先启用 majsoul-protocol（enabled=true）。
+  // 安全约束：与 设置token 一致，仅机器人主人私聊可用（群聊发账密会泄露）。
   async loginCommand(e) {
+    if (e.message_type !== 'private') {
+      await e.reply('⚠️ 为安全起见，雀魂登录仅支持私聊机器人使用');
+      return true;
+    }
+    if (!e.isMaster) {
+      await e.reply('⚠️ 该指令仅机器人主人可使用');
+      return true;
+    }
     const m = e.msg.match(/^#?雀魂登录\s+(\S+)\s+(.+)$/)
     if (!m) return e.reply('❌ 格式：雀魂登录 账号 密码')
     const account = m[1]
@@ -484,28 +514,30 @@ export class MajsoulReview extends plugin {
 
     const client = getProtocolClient()
     if (!client || !client.isEnabled || !client.isEnabled()) {
-      return e.reply('❌ majsoul-protocol 未启用：请先在 config/majsoul-protocol.json 中将 enabled 设为 true，并确保本地 API 已运行（或开启 autoLaunch）。')
+      return e.reply('❌ majsoul-protocol 未启用：请先在 config/majsoul-protocol.json 中将 enabled 设为 true。')
     }
 
-    await e.reply('⏳ 正在通过本地 API 发起雀魂登录（账号密码将发送给本地 API，由它完成登录并持有登录态）...')
+    await e.reply('⏳ 正在通过协议通道发起雀魂登录（账号密码仅用于本次登录，插件只保存 access_token 用于续登）...')
 
     const res = await client.loginToApi(account, password, true)
     if (!res.ok) {
-      return e.reply(`❌ 登录失败：${res.error || '未知错误'}\n请确认本地 API 已运行、账号密码正确。`)
+      return e.reply(`❌ 登录失败：${res.error || '未知错误'}\n请确认账号密码正确、服务器可访问雀魂官方网关。`)
     }
 
-    let nick = ''
-    try {
-      const { ok, profiles } = await client.getApiProfiles()
-      if (ok && Array.isArray(profiles) && profiles.length) {
-        const loginId = res.data && (res.data.accountId || (res.data.account && res.data.account.accountId))
-        const hit = loginId ? profiles.find(p => String(p.accountId) === String(loginId)) : null
-        nick = (hit || profiles[0]).nickname || ''
-      }
-    } catch { /* 昵称获取失败不影响登录结果 */ }
+    let nick = (res.data && res.data.nickname) || ''
+    if (!nick) {
+      try {
+        const { ok, profiles } = await client.getApiProfiles()
+        if (ok && Array.isArray(profiles) && profiles.length) {
+          const loginId = res.data && (res.data.accountId || (res.data.account && res.data.account.accountId))
+          const hit = loginId ? profiles.find(p => String(p.accountId) === String(loginId)) : null
+          nick = (hit || profiles[0]).nickname || ''
+        }
+      } catch { /* 昵称获取失败不影响登录结果 */ }
+    }
 
     await e.reply(nick
-      ? `✅ 雀魂登录成功（${nick}，登录态由本地 API 持有）！`
-      : '✅ 雀魂登录成功（登录态由本地 API 持有）！')
+      ? `✅ 雀魂登录成功（${nick}）！登录态已保存，取谱/PT 查询等已可用。`
+      : '✅ 雀魂登录成功！登录态已保存，取谱/PT 查询等已可用。')
   }
 }

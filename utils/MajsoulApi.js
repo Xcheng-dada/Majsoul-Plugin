@@ -7,29 +7,61 @@ import https from 'https';
 import { getFeatureConfig } from './Config.js';
 
 /**
- * IPv4-only 的 DNS lookup（牌谱屋专用）。
+ * 牌谱屋专用的 DNS lookup：**按主机自适应选择地址族**。
  *
- * 背景：牌谱屋数据节点（amae-koromo.com）挂在 Cloudflare 后面，A/AAAA 记录并存。
- * 本机到 Cloudflare 的 **IPv6 链路能完成 TCP 握手，但 HTTP/TLS 层不返回数据**，
- * 请求会一直挂到超时（报 "The operation was aborted"）；实测同一请求走 IPv4
- * 6/6 成功、平均 2.8s。更严重的是：超时后 socket 不会被销毁，若启用连接池，
- * 这条半死连接会被后续请求反复复用，导致整个插件长时间完全无响应
- * （实测进程内出现挂了 6 分钟仍为 Established 的 IPv6 连接，日志随之停滞）。
+ * 背景（两类节点要求相反的地址族，不能一刀切）：
+ *   · 5-data / 1.data（Cloudflare 后面）：IPv6 能完成 TCP 握手但 HTTP/TLS 不返回，
+ *     请求会挂到超时；只有 IPv4 可靠。
+ *   · 4.data（CNAME 到 gcdn.co）：**IPv4 完全不通（ETIMEDOUT）**，只有 IPv6 可用。
+ *   实测：4.data IPv6 0.27s 通 / IPv4 8s 超时；5-data 双栈都通。
  *
- * ⚠️ 为什么不能只「把 IPv4 排前面」：
- *   Node 20+ 默认启用 Happy Eyeballs（`net.getDefaultAutoSelectFamily() === true`），
- *   它会以 `{ all: true }` 调用 lookup 拿到**全部**地址，然后**并行**尝试各地址，
- *   谁先握手成功用谁。排序对它无效——IPv6 仍会被尝试并可能胜出（本机 IPv6 握手更快）。
- *   因此这里必须**直接过滤掉 IPv6**，只返回 A 记录。
+ * 因此这里不再强制 family，而是：先解析出 A + AAAA 全部地址，
+ * 按 `familyPreference` 里记录的主机偏好排序（首次未知时按 hostname 判断：
+ * `4.data.*` 优先 IPv6，其余优先 IPv4），把**偏好族的地址排在最前**返回。
  *
- * 作用域仅限本插件创建的 agent，不改全局 dns / net 设置，避免影响其他插件。
- * 若你的网络 IPv6 正常，可用配置 paipuIpv4First=false 关闭该行为。
+ * ⚠️ 为什么必须排序 + 过滤而不是只排序：
+ *   Node 20+ 默认 Happy Eyeballs（`net.getDefaultAutoSelectFamily() === true`）
+ *   会以 `{ all: true }` 调 lookup 拿全部地址并**并行**尝试，排序对它无效。
+ *   所以这里在 `wantAll` 场景下**只返回偏好族的地址**，逼它走正确的那一族；
+ *   若偏好族没有地址则退回另一族，保证不会 ENOTFOUND。
+ *
+ * 作用域仅限本插件创建的 agent，不改全局 dns / net 设置。
  *
  * @param {string} hostname
  * @param {object|number|Function} options
  * @param {Function} callback
  */
-function ipv4OnlyLookup(hostname, options, callback) {
+const perHostFamily = new Map();   // hostname -> 4 | 6（运行时学习结果，优先于默认规则）
+
+function preferredFamilyFor(hostname) {
+    const learned = perHostFamily.get(hostname);
+    if (learned === 4 || learned === 6) return learned;
+    // 未学习时的默认规则：4.data 走 IPv6（其 IPv4 不通），其余走 IPv4
+    return /^4\.data\./i.test(hostname) ? 6 : 4;
+}
+
+function familiesFromAddresses(addresses) {
+    const by = { 4: [], 6: [] };
+    for (const a of addresses || []) {
+        if (!a) continue;
+        if (a.family === 4 || a.family === 6) by[a.family].push(a);
+    }
+    return by;
+}
+
+/**
+ * 记录某主机实际可用的地址族（由请求成功/失败处调用，供后续 lookup 参考）。
+ * @param {string} hostname
+ * @param {4|6} family
+ */
+function rememberHostFamily(hostname, family) {
+    if (!hostname || (family !== 4 && family !== 6)) return;
+    if (perHostFamily.get(hostname) !== family) {
+        perHostFamily.set(hostname, family);
+    }
+}
+
+function adaptiveLookup(hostname, options, callback) {
     if (typeof options === 'function') {
         callback = options;
         options = {};
@@ -37,20 +69,35 @@ function ipv4OnlyLookup(hostname, options, callback) {
     const opts = { ...(typeof options === 'object' && options ? options : {}) };
     const wantAll = opts.all === true;
     delete opts.all;
-    // 强制只解析 A 记录；family 由调用方指定时同样以 4 为准（IPv6 在本场景不可用）
-    opts.family = 4;
+    // 不指定 family，让 dns 返回 A + AAAA 全量，由我们按偏好挑选
+    delete opts.family;
 
     dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
         if (err) return callback(err);
-        const list = (Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []))
-            .filter(a => a && a.family === 4);
-        if (list.length === 0) {
+        const list = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+        const by = familiesFromAddresses(list);
+        const pref = preferredFamilyFor(hostname);
+        const first = by[pref];
+        const second = by[pref === 4 ? 6 : 4];
+
+        // wantAll：只返回偏好族；该族无地址时退回另一族（保证可用）
+        if (wantAll) {
+            const chosen = first.length ? first : second;
+            if (chosen.length === 0) {
+                const e = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+                e.code = 'ENOTFOUND';
+                return callback(e);
+            }
+            return callback(null, chosen);
+        }
+
+        const pick = first[0] || second[0];
+        if (!pick) {
             const e = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
             e.code = 'ENOTFOUND';
             return callback(e);
         }
-        if (wantAll) return callback(null, list);
-        callback(null, list[0].address, list[0].family);
+        callback(null, pick.address, pick.family);
     });
 }
 
@@ -67,7 +114,7 @@ function getPaipuAgent() {
     if (!paipuAgent) {
         paipuAgent = new https.Agent({
             keepAlive: false,
-            lookup: ipv4OnlyLookup,
+            lookup: adaptiveLookup,
             // socket 级兜底超时：AbortController 只 reject Promise，不负责断连
             timeout: 45000,
         });
@@ -699,7 +746,7 @@ export default class MajsoulApi {
             ...(options.headers || {})
         }
         if (this.token) headers['Authorization'] = `Bearer ${this.token}`
-        // 仅 IPv4：避免走 IPv6 时 HTTP/TLS 层卡死（详见文件顶部 ipv4OnlyLookup 说明）。
+        // 按主机自适应地址族：4.data 走 IPv6、其余走 IPv4（详见文件顶部 adaptiveLookup 说明）。
         // 调用方已显式指定 agent 时以其为准。
         const agent = options.agent || (this.ipv4First ? getPaipuAgent() : undefined);
         return fetch(url, { ...options, headers, ...(agent ? { agent } : {}) })

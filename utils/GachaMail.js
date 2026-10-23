@@ -1,12 +1,13 @@
 // plugins/Majsoul-Plugin/utils/GachaMail.js
-// 奖励邮件：管理员向全群发放奖励邮件（任意奖励组合，仅当前群可领，30 天过期）
+// 奖励邮件：管理员向全群发放奖励邮件（任意奖励组合，仅当前群可领，默认 30 天过期，可指定有效期天数）
 // 存储：SQLite majsoul_mails + majsoul_mail_claims（永久持久化，读取时惰性清理过期邮件）
 // 兼容结构：rewards 仍为 {货币key: 数量} 对象，claimed 为领取用户 id 数组
 
 import { getDatabase } from './MajsoulDatabase.js';
 import { NAME_TO_KEY } from './GachaWallet.js';
 
-const MAIL_TTL_DAYS = 30;
+const MAIL_TTL_DAYS = 30;          // 未指定有效期时的默认过期天数
+const MAX_TTL_DAYS = 3650;         // 有效期上限（10 年），防误输入
 const MAX_MAILS = 50; // 每群最多保留邮件数（超出丢弃最旧）
 
 // rewards 对象与固定货币列的映射
@@ -70,16 +71,20 @@ export default class GachaMail {
    * @param {string|number} groupId
    * @param {object} rewards 各货币数量，如 { dust: 5, ticket: 1 }
    * @param {string} title 邮件标题
+   * @param {number} [ttlDays] 有效期天数；未指定/非法时默认 MAIL_TTL_DAYS（30 天）
    * @returns {object} 创建的邮件条目
    */
-  async send(groupId, rewards, title) {
+  async send(groupId, rewards, title, ttlDays) {
     const now = Date.now();
+    // 有效期：非法值（非数字/≤0/超上限）一律回退默认 30 天
+    const days = Number.isFinite(Number(ttlDays)) && Number(ttlDays) > 0 && Number(ttlDays) <= MAX_TTL_DAYS
+      ? Math.floor(Number(ttlDays)) : MAIL_TTL_DAYS;
     const mail = {
       id: `${String(groupId)}:${now.toString(36)}${Math.floor(Math.random() * 1000).toString(36)}`,
       title: title || '奖励邮件',
       rewards,
       createdAt: now,
-      expireAt: now + MAIL_TTL_DAYS * 86400 * 1000,
+      expireAt: now + days * 86400 * 1000,
       claimed: []
     };
     const db = getDatabase();
@@ -154,13 +159,27 @@ export default class GachaMail {
   /**
    * 解析奖励文本为货币数量（如"星之粉尘5 寻觅卷轴1"、"辉玉x200"）
    * 非货币的剩余文字作为邮件标题返回（如"新春活动 辉玉100000"→ 标题"新春活动"）
+   * 支持有效期："有效7天"/"有效期7天"/"限时7天"，或独立成词的"7天"→ ttlDays
    * @param {string} text
-   * @returns {{ rewards: object, title: string }|null} 无有效奖励返回 null
+   * @returns {{ rewards: object, title: string, ttlDays: number|null }|null} 无有效奖励返回 null
    */
   static parseRewards(text) {
     if (!text) return null;
     let working = String(text);
     const rewards = {};
+
+    // 先提取有效期："有效7天" / "有效期7天" / "限时7天"，或独立的 "N天"（前后须是边界，
+    // 避免把"星之粉尘5天"这类连写误剥离——裸数字仅在独立成词时视为天数）
+    let ttlDays = null;
+    let ttlMatch = working.match(/(?:有效期?|限时)\s*(\d+)\s*天/);
+    if (!ttlMatch) ttlMatch = working.match(/(?:^|\s)(\d+)\s*天(?=\s|$)/);
+    if (ttlMatch) {
+      const n = parseInt(ttlMatch[1]);
+      if (n > 0 && n <= MAX_TTL_DAYS) {
+        ttlDays = n;
+        working = working.replace(ttlMatch[0], ' ');
+      }
+    }
 
     // 长名称优先匹配，避免"寻觅卷轴"误匹配"十连寻觅卷轴"
     const names = Object.keys(NAME_TO_KEY).sort((a, b) => b.length - a.length);
@@ -178,7 +197,7 @@ export default class GachaMail {
     if (Object.keys(rewards).length === 0) return null;
     // 剩余文字清理后作为标题（去掉分隔符、截断过长内容）
     const rest = working.replace(/^[\s,，、/|丨-]+|[\s,，、/|丨-]+$/g, '').slice(0, 20).trim();
-    return { rewards, title: rest || '奖励邮件' };
+    return { rewards, title: rest || '奖励邮件', ttlDays };
   }
 
   // 奖励转文字描述（如"星之粉尘x5 寻觅卷轴x1"）

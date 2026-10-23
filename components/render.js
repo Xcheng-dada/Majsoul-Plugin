@@ -5,7 +5,7 @@ import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerL
 import { buildPlayerTags, drawTags, RANK_WINDOW } from '../utils/PlayerTags.js'
 import { computePlayStyle } from '../utils/PlayStyle.js'
 import { computeStableRank, computeStableRankWeighted, estimateGamesToRankChange, stableRankEligibleRooms, stableRankFilterRooms } from '../utils/StableRank.js'
-import { getPlayerStatistics } from '../utils/MajsoulProtocolClient.js'
+import { getPlayerStatistics, getPlayerState } from '../utils/MajsoulProtocolClient.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -898,16 +898,58 @@ async function getLzBar(title, v1, v2, v3 = null) {
   return canvas
 }
 
+/**
+ * 段位图标画布布局常量。
+ *
+ * 非魂天：156×156，图标 + 3 颗星。
+ * 魂天：  156×190，图标 + 3 朵魂花 + 5 颗魂珠（魂珠在魂花正下方一行），
+ *         Lv 等级贴在徽章左下角空白处。多出的 34px 高度只向下延伸，
+ *         徽章本身仍画在 (14,7)，所以调用方按左上角绘制即可，不必改坐标。
+ */
+const RANK_W = 156
+const RANK_H_STAR = 156
+const RANK_H_KONTEN = 190
+
+/**
+ * 魂花 / 魂珠数量。
+ *
+ * score 就是「魂珠数」（0~20+，小数表示进度）：
+ *   魂花 = floor(魂珠 / 5)，最多 3 朵（即 15 珠封顶）
+ *   魂珠 = floor(魂珠) % 5，最多 4 颗亮珠
+ *
+ * 第 5 颗魂珠是特殊的：只有魂天满级（20 级）且魂珠数达到 20 时才亮。
+ * 因为 20 珠会自动晋级 20 级，所以「20 珠」必然对应 20 级，
+ * 20 级 20 珠本身就是全亮状态，超过 20 珠同样全亮。
+ *
+ * 实测样例（官方图反推）：
+ *   11.5 → 花2 珠1    10 → 花2 珠0
+ *   19.9 → 花3 珠4    4.3 → 花0 珠4
+ *   魂天20 + 20 珠 → 花3 珠5（满级全亮）
+ *
+ * @param {number} score 魂珠数（可带小数）
+ * @param {number} minorRank 魂天等级 1~20
+ */
+function getKontenBadgeCount(score, minorRank) {
+  const s = Math.max(0, Math.floor(score))
+  const flowerCount = Math.min(3, Math.floor(s / 5))
+  let pearlCount = s % 5
+  // 第 5 颗魂珠：魂天满级且魂珠数达到 20（即晋级线）时全亮
+  if (minorRank >= 20 && s >= 20) pearlCount = 5
+  return { flowerCount, pearlCount }
+}
+
 export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, score = 0) {
-  const canvas = createCanvas(156, 156)
+  const isKonten = majorRank === '魂天'
+  const H = isKonten ? RANK_H_KONTEN : RANK_H_STAR
+  const canvas = createCanvas(RANK_W, H)
   const ctx = canvas.getContext('2d')
-  
+
   try {
     const rankIcon = await loadResImage(`info_texture/${majorRank}_${mode}.png`)
     ctx.drawImage(rankIcon, 14, 7, 128, 128)
   } catch(e) {}
-  
-  if (majorRank !== '魂天') {
+
+  if (!isKonten) {
     const starFull = await loadResImage(`info_texture/star_full.png`)
     const starEmpty = await loadResImage(`info_texture/star_empty.png`)
     for (let i = 0; i < 3; i++) {
@@ -915,30 +957,76 @@ export async function getRankImg(majorRank, minorRank, mode = '4', size = 156, s
       ctx.drawImage(star, 26 + i * 38, 118, 32, 32)
     }
   } else {
+    const { flowerCount, pearlCount } = getKontenBadgeCount(score, minorRank)
+
+    // 魂花：3 个槽位，中心间距 31（比官方星星的 38 更紧凑），整体水平居中。
+    // 官方星星槽位中心为 42 / 80 / 118，收缩后中心为 47 / 78 / 109。
+    const FS = 32
+    const F_SPACING = 31
+    const FLOWER_Y = 122
+    const FLOWER_H = FS * 47 / 48
     const flowerFull = await loadResImage(`info_texture/flower_full.png`)
     const flowerEmpty = await loadResImage(`info_texture/flower_empty.png`)
-    let flowerCount = 0
-    if (score >= 5 && score < 10) flowerCount = 1
-    else if (score >= 10 && score < 15) flowerCount = 2
-    else if (score >= 15) flowerCount = 3
+    const firstCenter = RANK_W / 2 - F_SPACING
     for (let i = 0; i < 3; i++) {
       const flower = flowerCount > i ? flowerFull : flowerEmpty
-      ctx.drawImage(flower, 38 + i * 30, 118, 28, 28)
+      ctx.drawImage(flower, firstCenter + i * F_SPACING - FS / 2, FLOWER_Y, FS, FLOWER_H)
     }
-    // 魂天等级：使用等级图片素材（info_texture/Lv{minorRank}.png），画在图标内部左下角，避免遮挡花朵
-    // 素材尚未齐全（Lv1~19 缺失），暂时统一不显示 Lv，等素材补齐后取消下方注释即可恢复
-    // try {
-    //   const lvImg = await loadResImage(`info_texture/Lv${minorRank}.png`)
-    //   ctx.drawImage(lvImg, 16, 92, 56, 24)
-    // } catch (_) {
-    //   // 等级图片素材不存在时静默跳过（仅显示段位图标+花朵）
-    // }
+
+    // 魂珠：魂花正下方一行，固定 5 个槽位，尺寸约为魂花的 0.42（官方比例）。
+    // 纵向与魂花轻微重叠 2px（gap=-2），视觉上连成一组，
+    // 同时避免整行下探到段位卡边框外。
+    const PS = FS * 0.42
+    const P_SPACING = 19
+    const pearlFull = await loadResImage(`info_texture/pearl_full.png`)
+    const pearlEmpty = await loadResImage(`info_texture/pearl_empty.png`)
+    const pearlY = FLOWER_Y + FLOWER_H - 2
+    for (let i = 0; i < 5; i++) {
+      const pearl = pearlCount > i ? pearlFull : pearlEmpty
+      ctx.drawImage(pearl, RANK_W / 2 - 2 * P_SPACING + i * P_SPACING - PS / 2, pearlY, PS, PS * 24 / 20)
+    }
+
+    // 魂天等级：Lv 前缀 + 逐位数字，画在徽章左下角空白处。
+    // 左对齐：Lv 前缀左边缘固定，数字依次向右排 —— 这样 Lv9 的「9」停在第一位，
+    // 右侧自动空出两位数的位置，与官方图一致（官方 Lv9 / Lv19 左边缘对齐）。
+    //
+    // 位置与字号按官方客户端截图目视比对确定：
+    //   LV_X=16（Lv 左边缘）、LV_Y=100（数字顶部）、LV_H=24（数字高）、
+    //   Lv 前缀高 24*1.2=28.8。
+    // 数字再下移 1.6px：让数字底边与 Lv 底边视觉齐平。
+    // 注意不能按「盒子底边」对齐（那样是 4.8px，实测偏多）——
+    // Lv 字形在盒内上下有留白（墨迹仅占约 86%），数字则占满盒子，
+    // 所以只补 1.6px 的视觉差即可。
+    try {
+      const LV_H = 24            // 数字高度
+      const LV_PREFIX_SCALE = 1.2
+      const LV_X = 16            // Lv 左边缘（官方截图目视比对确定）
+      const LV_Y = 100           // 顶部
+      const DIGIT_DY = 1.6       // 数字相对 Lv 顶部的下移量（视觉对齐基线）
+      const TRACK = -2           // 字距（负值收紧）
+      const s = LV_H / 36
+      const prefixH = LV_H * LV_PREFIX_SCALE
+      const lvW = 41 * (prefixH / 36)
+      const digW = 26 * s
+      let x = LV_X
+      const lvPrefix = await loadResImage('info_texture/lv_prefix.png')
+      ctx.drawImage(lvPrefix, x, LV_Y, lvW, prefixH)
+      x += lvW + TRACK
+      for (const d of String(minorRank).split('')) {
+        const digImg = await loadResImage(`info_texture/lv_${d}.png`)
+        ctx.drawImage(digImg, x, LV_Y + DIGIT_DY, digW, LV_H)
+        x += digW + TRACK
+      }
+    } catch (_) {
+      // 素材缺失时静默跳过（仍显示徽章 + 魂花 + 魂珠）
+    }
   }
-  
-  if (size !== 156) {
-    const resized = createCanvas(size, size)
+
+  if (size !== RANK_W) {
+    const ratio = H / RANK_W
+    const resized = createCanvas(size, Math.round(size * ratio))
     const rctx = resized.getContext('2d')
-    rctx.drawImage(canvas, 0, 0, size, size)
+    rctx.drawImage(canvas, 0, 0, resized.width, resized.height)
     return resized
   }
   return canvas
@@ -1360,7 +1448,40 @@ async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null, top = L
   drawText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 34, '#FFFFFF', 'center', 'bold')
 }
 
-export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null, scope = null) {
+/**
+ * 卡片标题行：昵称按在线状态染色，并保持整行水平居中。
+ *
+ * 配色规则（用户指定，不带圆点）：
+ *   · 昵称：**在线 = 绿色**；离线 / 未知 = 白色
+ *   · UID 与分隔符：始终白色
+ *
+ * 说明：不再区分「对局中」的蓝色。原因是雀魂只对**好友**返回真实的
+ * AccountActiveState（上下线时间、playing 状态）；非好友一律返回 null/未知，
+ * 分不出"在线但没打牌"和"在打牌"，蓝色容易造成误判，故只保留一个"在线"信号。
+ *
+ * @param {object|null} playerState  { online:boolean, playing:boolean }
+ * @param {string} name  昵称
+ * @param {string} sub   副标题（UID xxx 或房间名）
+ */
+function drawStatusDot (ctx, playerState, centerX, baselineY, name, sub) {
+  const FONT_SIZE = 30
+  const SEP = ' · '
+  ctx.font = `bold ${FONT_SIZE}px "Microsoft YaHei"`
+
+  // 仅在确定在线时染绿；离线或未知都保持白色（避免把"查不到"误显示成离线）
+  const nameColor = playerState?.online ? '#4ADE80' : '#FFFFFF'
+
+  const nw = ctx.measureText(name).width
+  const sw = ctx.measureText(SEP).width
+  const uw = ctx.measureText(sub).width
+
+  const x0 = centerX - (nw + sw + uw) / 2
+  drawText(ctx, name, x0, baselineY, FONT_SIZE, nameColor, 'left', 'bold')
+  drawText(ctx, SEP, x0 + nw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
+  drawText(ctx, sub, x0 + nw + sw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
+}
+
+export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null, scope = null, playerState = undefined) {
   let data4, data3, extended4, extended3
   
   const fetchStats = async (m) => api.getPlayerStats(uid, m).catch(e => {
@@ -1461,6 +1582,14 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     localStats = await getPlayerStatistics(uid)
   } catch (e) {
     console.warn(`[render.js] 本地API统计获取失败: ${e.message}`)
+  }
+  // 在线状态：优先用调用方传入的，否则自行查询一次（失败返回 null → 卡片不画点，避免误报离线）
+  if (playerState === undefined) {
+    try {
+      playerState = await getPlayerState(uid)
+    } catch {
+      playerState = null
+    }
   }
 
   const localEntry4 = pickLocalEntry(localStats, 4, scopeGc)
@@ -1867,7 +1996,9 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 昵称兜底（覆盖所有分支）：无 token / 非 404 错误 / 房间筛选失败等路径都可能让
   // data.nickname 停留在占位符（playerStatsZero.nickname，已置空串），此处统一兜一次。
   const titleName = playerName || realtimePT?.nickname || data.nickname || String(uid)
-  drawText(ctx, `${titleName} · ${subTitle}`, 504, 435, 30, '#FFFFFF', 'center', 'bold')
+  // 在线状态：昵称按状态染色（对局中蓝/在线绿/离线白），UID 与分隔符始终白色。
+  // playerState 由调用方查询后传入；为 null/undefined 时不画点，整行保持白色。
+  drawStatusDot(ctx, playerState, 504, 435, titleName, subTitle)
 
   if (!useLocalDetail) {
   const zmRate = getRate(extended["自摸率"])
@@ -2135,7 +2266,9 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     const uid = player.id.toString()
     const realtime = realtimeData[uid]
     
-    drawText(ctx, `${i + 1}. ${player.nickname}`, PADDING + 25, y + 35, 28, '#FFFFFF', 'left', 'bold')
+    // 昵称染色：仅"确定在线"染绿，离线/未知保持白色（非好友查不到时不会误显示）
+    const onlineColor = realtime?.online ? '#4ADE80' : '#FFFFFF'
+    drawText(ctx, `${i + 1}. ${player.nickname}`, PADDING + 25, y + 35, 28, onlineColor, 'left', 'bold')
     
     drawText(ctx, `UID: ${player.id}`, PADDING + 25, y + 65, 18, '#999999', 'left')
     
@@ -2543,8 +2676,7 @@ const HELP_DATA = {
     desc: "基于 Mortal AI 的牌谱复盘与场况分析",
     items: [
       { name: "牌谱Review", desc: "AI 分析牌谱（可选座位）", eg: "牌谱Review <URL> [座位]", icon: "牌谱" },
-      { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "场况 <URL> <局> [巡]", icon: "场况" },
-      { name: "雀魂登录", desc: "登录账号以使用牌谱分析", eg: "雀魂登录 <账号> <密码>", icon: "登录" }
+      { name: "雀魂场况", desc: "查看指定局巡的场况图", eg: "场况 <URL> <局> [巡]", icon: "场况" }
     ]
   },
   "对局订阅": {

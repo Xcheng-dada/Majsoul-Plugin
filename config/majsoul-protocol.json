@@ -1,8 +1,9 @@
 {
   "enabled": true,
+  "mode": "js",
   "baseUrl": "http://127.0.0.1:5088",
   "apiKey": "",
   "timeoutMs": 20000,
-  "autoLaunch": true,
+  "autoLaunch": false,
   "apiDir": "api"
 }

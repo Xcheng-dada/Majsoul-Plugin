@@ -10,9 +10,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROTOCOL_CFG_PATH = path.join(__dirname, 'config/majsoul-protocol.json')
 const FEATURE_CFG_PATH = path.join(__dirname, 'config/config.json')
 
-// 本地 API（Majsoul.ProtocolLogin.Api）配置默认值，文件缺失/损坏时兜底
+// 协议通道配置默认值，文件缺失/损坏时兜底
 const DEFAULT_PROTOCOL_CONFIG = {
   enabled: true,
+  mode: 'js',
   baseUrl: 'http://127.0.0.1:5088',
   apiKey: '',
   timeoutMs: 20000,
@@ -48,19 +49,32 @@ export function supportGuoba () {
     configInfo: {
       schemas: [
         {
-          label: '本地 API',
+          label: '协议通道',
           component: 'SOFT_GROUP_BEGIN'
         },
         {
           field: 'enabled',
-          label: '启用本地取谱',
-          bottomHelpMessage: '是否通过本地 API 拉取牌谱与玩家数据',
+          label: '启用取谱',
+          bottomHelpMessage: '是否通过协议通道拉取牌谱与玩家数据',
           component: 'Switch'
+        },
+        {
+          field: 'mode',
+          label: '通道模式',
+          bottomHelpMessage: 'js = 内置纯 JS 网关直连雀魂官方服务器（不需要本地 API 程序，推荐）；local = 本地 API 通道（Majsoul.ProtocolLogin.Api，Windows/Linux 均有程序，127.0.0.1:5088）',
+          component: 'Select',
+          componentProps: {
+            options: [
+              { label: 'js（内置纯 JS 通道，推荐）', value: 'js' },
+              { label: 'local（本地 API 程序）', value: 'local' }
+            ],
+            placeholder: 'js'
+          }
         },
         {
           field: 'baseUrl',
           label: 'API 地址',
-          bottomHelpMessage: '本地 API 服务地址，默认 http://127.0.0.1:5088，修改后立即生效',
+          bottomHelpMessage: '【仅 local 模式】本地 API 服务地址，默认 http://127.0.0.1:5088。js 模式下此项无效',
           component: 'Input',
           componentProps: {
             placeholder: 'http://127.0.0.1:5088'
@@ -89,13 +103,13 @@ export function supportGuoba () {
         {
           field: 'autoLaunch',
           label: '自动拉起 API 程序',
-          bottomHelpMessage: 'API 未运行时是否自动启动本地 API 程序',
+          bottomHelpMessage: '【仅 local 模式】API 未运行时是否自动启动本地 API 程序。js 模式下永不拉起外部程序',
           component: 'Switch'
         },
         {
           field: 'apiDir',
           label: 'API 程序目录',
-          bottomHelpMessage: '存放 Majsoul.ProtocolLogin.Api 可执行文件的目录，相对插件根目录或绝对路径',
+          bottomHelpMessage: '【仅 local 模式】存放 Majsoul.ProtocolLogin.Api 可执行文件的目录，相对插件根目录或绝对路径',
           component: 'Input',
           componentProps: {
             placeholder: 'api'

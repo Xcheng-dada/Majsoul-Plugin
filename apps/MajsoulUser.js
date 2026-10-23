@@ -1,7 +1,7 @@
 // plugins/Majsoul-Plugin/apps/MajsoulUser.js
 import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
-import { getPlayerBrief, resolveFriendId } from '../utils/MajsoulProtocolClient.js';
+import { getPlayerBrief, resolveFriendId, getPlayerState } from '../utils/MajsoulProtocolClient.js';
 import { drawSearchResultImg } from '../components/render.js';
 import {
   getUserBindings as lookupUserBindings,
@@ -211,10 +211,18 @@ export class MajsoulUser extends plugin {
                 try {
                     const brief = await getPlayerBrief(player.id);
                     if (!brief) continue;
+                    // 在线状态：仅好友才返回真实值，非好友/查询失败一律 null → 卡片按白色处理。
+                    // 用 catch 兜住，避免个别玩家查状态失败拖垮整个搜索卡片。
+                    let online = false;
+                    try {
+                        const st = await getPlayerState(brief.accountId);
+                        online = !!(st && st.online);
+                    } catch { online = false; }
                     realtimeData[String(brief.accountId)] = {
                         nickname: brief.nickname,
                         uid: String(brief.accountId),
                         isRealTime: true,
+                        online,
                         fourPlayer: brief.level ? { levelId: brief.level.id, score: brief.level.score } : null,
                         threePlayer: brief.level3 ? { levelId: brief.level3.id, score: brief.level3.score } : null
                     };

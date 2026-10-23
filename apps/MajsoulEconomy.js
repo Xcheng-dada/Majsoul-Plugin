@@ -348,12 +348,13 @@ export class MajsoulEconomy extends plugin {
         const match = e.msg.match(/^#?发送邮件\s+(.+)$/);
         const parsed = GachaMail.parseRewards(match[1]);
         if (!parsed) {
-            await e.reply('未解析到有效奖励，示例：#发送邮件 星之粉尘5 寻觅卷轴1\n可在奖励前加标题，如：#发送邮件 新春活动 辉玉100000', true);
+            await e.reply('未解析到有效奖励，示例：#发送邮件 星之粉尘5 寻觅卷轴1\n可在奖励前加标题，如：#发送邮件 新春活动 辉玉100000\n可指定有效期，如：#发送邮件 活动奖励 辉玉100 有效7天（未指定默认 30 天）', true);
             return true;
         }
 
-        const mail = await this.mailMgr.send(e.group_id, parsed.rewards, parsed.title);
-        await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(parsed.rewards)}\n成员发送"雀魂邮件"即可领取（30 天内有效）`);
+        const mail = await this.mailMgr.send(e.group_id, parsed.rewards, parsed.title, parsed.ttlDays);
+        const days = Math.round((mail.expireAt - mail.createdAt) / 86400000);
+        await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(parsed.rewards)}\n成员发送"雀魂邮件"即可领取（${days} 天内有效）`);
         return true;
     }
 

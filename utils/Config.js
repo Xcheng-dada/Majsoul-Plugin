@@ -18,7 +18,7 @@ export const FEATURE_CONFIG_DEFAULTS = {
   // ⚠️ 节点由牌谱屋作者按 token 授权，默认只用主节点 5-data。
   //    多节点（1/4-data、sapk.ch）实测不稳定（4-data 曾连续 21s 无响应）且易触发 429，
   //    未获作者许可不要擅自加回。需要时用英文逗号分隔填写。
-  paipuHosts: '5-data.amae-koromo.com',
+  paipuHosts: '4.data.amae-koromo.com,5-data.amae-koromo.com',
   // 请求超时（毫秒）。牌谱屋 player_records 接口服务端响应波动极大
   // （实测同一请求 461ms ~ 9569ms），15s 会让「其实能通」的请求被判死。
   paipuTimeout: 30000,

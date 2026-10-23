@@ -331,10 +331,11 @@ export class majsoul extends plugin {
           permission: 'group'
         },
         // 雀魂账号登录（获取真实昵称/头像，并持久化登录态以支持自动续期）
+        // 安全：仅主人私聊可用（与 设置token 一致），实现内再校验 isMaster + 私聊
         {
           reg: '^#?雀魂登录\\s+(\\S+)\\s+(.+)$',
           fnc: 'majsoulLogin',
-          permission: 'group'
+          permission: 'all'
         },
         // 帮助界面
         {
