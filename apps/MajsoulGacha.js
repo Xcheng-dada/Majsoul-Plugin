@@ -9,6 +9,7 @@ import GachaStats from '../utils/GachaStats.js';
 import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
 import { renderGachaResultCard } from '../utils/GachaResultCard.js';
+import { CURRENCY_ICONS } from '../utils/CurrencyCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 import { getSetting, setSetting, delSetting, getSettingsByPrefix } from '../utils/SettingsStore.js';
 
