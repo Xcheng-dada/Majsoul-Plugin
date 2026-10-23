@@ -293,34 +293,25 @@ export class MajsoulGacha extends plugin {
             let titleLine = `${poolTitle}｜累计寻觅 ${totalPullsNow} 次`;
             if (times === 10 && hasGuaranteed) titleLine += '｜含保底';
 
-            // 物品列表：雀士/装饰/礼物（全部本地资源）
+            // 物品列表：按抽取顺序逐项展示（十连即 10 个格子，重复物品不合并，与官方一致）
             const KIND_MAP = {
                 [ITEM_TYPE.CHARACTER]: 'character',
                 [ITEM_TYPE.DECORATION]: 'decoration',
                 [ITEM_TYPE.GIFT_BLUE]: 'gift_blue',
                 [ITEM_TYPE.GIFT_PURPLE]: 'gift_purple'
             };
-            const merged = new Map();
-            for (const [objInt, fileName] of results) {
-                const key = `${objInt}|${fileName}`;
-                if (!merged.has(key)) merged.set(key, { objInt, fileName, count: 0 });
-                merged.get(key).count++;
-            }
-            const items = [];
             const tagOf = (fileName) => {
                 // 重复转化标注：雀士→许愿石、装扮→星之石
                 if (charConv[fileName]) return `已转换许愿石x${charConv[fileName]}`;
                 if (decorConv[fileName]) return `已转换星之石x${decorConv[fileName]}`;
                 return null;
             };
-            for (const { objInt, fileName, count } of merged.values()) {
-                items.push({
-                    name: fileName,
-                    kind: KIND_MAP[objInt],
-                    count,
-                    tag: tagOf(fileName)
-                });
-            }
+            const items = results.map(([objInt, fileName]) => ({
+                name: fileName,
+                kind: KIND_MAP[objInt],
+                count: 1,
+                tag: tagOf(fileName)
+            }));
 
             // 货币行：只列本次真实变化的项（辉玉为消耗，显示负增量）
             const wallet = [];
