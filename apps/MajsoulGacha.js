@@ -1,4 +1,4 @@
-// plugins/Majsoul-Plugin/apps/MajsoulGacha.js
+﻿// plugins/Majsoul-Plugin/apps/MajsoulGacha.js
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import path from 'path';
@@ -9,6 +9,7 @@ import GachaStats from '../utils/GachaStats.js';
 import PoolSchedule from '../utils/PoolSchedule.js';
 import { ITEM_TYPE } from '../utils/GachaCore.js';
 import { renderGachaResultCard } from '../utils/GachaResultCard.js';
+import { renderPoolListCard, renderPoolScheduleCard } from '../utils/PoolListCard.js';
 import { CURRENCY_ICONS } from '../utils/CurrencyCard.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 import { getSetting, setSetting, delSetting, getSettingsByPrefix } from '../utils/SettingsStore.js';
@@ -100,11 +101,6 @@ export class MajsoulGacha extends plugin {
                 {
                     reg: '^#?关闭联动$',
                     fnc: 'closeCollab',
-                    permission: 'master'
-                },
-                {
-                    reg: '^#?查看联动池$',
-                    fnc: 'viewCollab',
                     permission: 'master'
                 },
                 // 抽卡开关功能
@@ -319,8 +315,8 @@ export class MajsoulGacha extends plugin {
             for (const [key, spent] of Object.entries(cost || {})) {
                 if (spent > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: -spent });
             }
-            // 获得的货币（gains 里非零项；信仰每次 +times）
-            for (const key of ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish']) {
+            // 获得的货币（gains 里非零项；信仰每次 +times，单抽 +1 / 十连 +10）
+            for (const key of ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith']) {
                 const g = gains[key] || 0;
                 if (g > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: g });
             }
@@ -329,8 +325,10 @@ export class MajsoulGacha extends plugin {
                 wallet.push({ icon: CURRENCY_ICONS.ticket, count: newWallet.ticket, delta: ticketGain });
             }
 
-            // UP 雀士名单（用于结果图贴 UP! 角标）；取原始数组避免 join/split 破坏含顿号的名称
+            // UP / 限定名单（用于结果图角标）
             const upNames = await this._getUpCharacterList(poolName);
+            const upDecorNames = await this._getUpDecorationList(poolName);
+            const limitedNames = await this._getLimitedNames(poolName);
 
             const image = await renderGachaResultCard({
                 title: titleLine,
@@ -338,6 +336,8 @@ export class MajsoulGacha extends plugin {
                 wallet,
                 poolName,
                 upNames,
+                upDecorNames,
+                limitedNames,
                 nickname: (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
                     .toString().trim().slice(0, 16),
                 avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(e.user_id).replace(/[^\d]/g, '')}&s=640`
@@ -415,7 +415,7 @@ export class MajsoulGacha extends plugin {
         return true;
     }
 
-    // 查看卡池（全局池 + 个人当前卡池 + 当前可用池列表）
+    // 查看卡池（图片呈现：当前卡池 + UP 雀士 + 可用卡池列表）
     async viewPool(e) {
         try {
             // 当前实际生效池：个人选择 > 全局池 > 默认樱花之路（联动池解析为对应变体）
@@ -423,21 +423,51 @@ export class MajsoulGacha extends plugin {
             try {
                 current = await this.gachaCore.resolveUserPool(e.group_id, e.user_id);
             } catch {}
-            const parts = [`当前卡池：${await this.gachaCore.getPoolDisplayTitle(current)}`];
-            const ups = await this._getUpCharacters(current);
-            if (ups) parts.push(`UP雀士：${ups}`);
-            // 当前可用池（仅池名，去重；有排期的池带开启/关闭倒计时）
-            // 联动池保留樱花/竹林变体后缀，两池都显示
-            const poolList = await this.gachaCore.getAvailablePools();
+            const currentName = await this.gachaCore.getPoolDisplayTitle(current);
+            // UP 雀士用头像呈现，取原始数组（不用拼接后的字符串）
+            const upNames = await this._getUpCharacterList(current).catch(() => []);
+
+            // 当前可用池（联动池保留樱花/竹林变体后缀，两池都显示）
+            // 未到开启时间的池只对主人可见（includePending），普通用户完全看不到
+            const isMaster = !!e.isMaster;
+            const poolList = await this.gachaCore.getAvailablePools(isMaster);
             const pools = [];
+            const seen = new Set();
             for (const p of poolList) {
                 const name = p.id.includes('|') ? p.name : p.name.replace(/（[^）]*）/, '');
-                const cd = (p.id !== 'male' && p.id !== 'female') ? await this._poolCountdownText(p.id) : '';
-                pools.push(cd ? `${name}（${cd}）` : name);
+                if (seen.has(name)) continue;
+                seen.add(name);
+                const st = (p.id !== 'male' && p.id !== 'female')
+                    ? await this._poolScheduleState(p.id)
+                    : { state: 'none', text: '' };
+                // 未开启的池（仅主人可见）不显示「剩余时间」，用「X后开启」文字
+                const isPending = p.pending || st.state === 'pending';
+                pools.push({
+                    name,
+                    countdown: isPending ? '' : (st.state === 'open' ? st.text : ''),
+                    pendingText: isPending ? st.text : '',
+                    // 联动池 id 形如 saki1|female；贵人池为 custom:<池名>，两者需区分
+                    // 贵人池暂无「特定装扮UP」，只有联动池带该标签
+                    isCollab: p.id.includes('|'),
+                    isCurrent: p.id === current
+                });
             }
-            parts.push(`当前可用池：${[...new Set(pools)].join('、')}`);
-            parts.push('切换命令：切换竹林 / 切换樱花 / 切换卡池 <池名> / 重置卡池');
-            await e.reply(parts.join('\n'), true);
+            // 候选中没命中当前池时（如自定义UP池），补一行当前池，保证列表里有高亮项
+            if (currentName && !pools.some(p => p.isCurrent)) {
+                pools.unshift({ name: currentName, countdown: '', isCurrent: true });
+            }
+
+            const image = await renderPoolListCard({
+                currentName,
+                upNames,
+                pools,
+                // 卡池是个人选择，图上标注是谁的卡池
+                nickname: (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
+                    .toString().trim().slice(0, 16),
+                avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(e.user_id).replace(/[^\d]/g, '')}&s=640`,
+                footer: '切换：切换竹林 / 切换樱花 / 切换卡池 <池名> / 重置卡池'
+            });
+            await e.reply(segment.image(image), false);
         } catch (error) {
             logger.error('[雀魂抽卡] 查看卡池失败:', error);
             await e.reply('查看卡池失败，可能是配置文件读取错误。');
@@ -473,26 +503,72 @@ export class MajsoulGacha extends plugin {
         return [];
     }
 
+    // 获取池子的 UP 装扮名单（联动池/自定义UP池的 decoration/<池名>/ 目录）
+    async _getUpDecorationList(poolId) {
+        try {
+            let key = String(poolId || '');
+            if (key.includes('|')) key = key.split('|')[0];
+            if (!key) return [];
+            // 自定义UP池目录为纯池名（去掉 custom: 前缀），与 GachaCore 抽取逻辑一致
+            const dir = key.startsWith('custom:') ? key.slice('custom:'.length) : key;
+            if (!dir || dir === 'male' || dir === 'female') return [];
+            const files = await this.gachaCore.fileLoader('decoration', dir).catch(() => []);
+            if (!Array.isArray(files) || files.length === 0) return [];
+            // 统一成「文件名去后缀」，与结果卡里 path.basename 的规则一致
+            return files.map(f => path.basename(String(f), path.extname(String(f))));
+        } catch {
+            return [];
+        }
+    }
+
+    // 限定名单：所有贵人均为限定；联动池的雀士与 UP 装扮也标限定
+    async _getLimitedNames(poolId) {
+        try {
+            const pool = await this.gachaCore.gachaLoader();
+            const list = [];
+            // 贵人恒为限定
+            if (Array.isArray(pool.guiren)) list.push(...pool.guiren);
+            // 联动池（非 male/female/custom/guiren 的自定义键）的雀士与装扮
+            let key = String(poolId || '');
+            if (key.includes('|')) key = key.split('|')[0];
+            const isCollab = key && !key.startsWith('custom:')
+                && key !== 'male' && key !== 'female' && key !== 'guiren'
+                && Array.isArray(pool[key]);
+            if (isCollab) {
+                list.push(...pool[key]);
+                const decor = await this._getUpDecorationList(key);
+                list.push(...decor);
+            }
+            return [...new Set(list)];
+        } catch {
+            return [];
+        }
+    }
+
     // 卡池倒计时文本（按池）：未到开启时间返回"X后开启"，已开启且设了结束时间返回"X后关闭"，无排期返回空串
     // 联动池变体 id（theme|female/male）按主题 id 查排期
-    async _poolCountdownText(poolId) {
+    // 卡池排期状态
+    //   state: 'none' 无排期 / 'pending' 尚未到开启时间 / 'open' 开放中（有结束时间）
+    //   text : open → 仅剩余时长（如「2小时」，不再赘述「后关闭」，界面上已有「剩余时间」标签）
+    //          pending → 「3天后开启」
+    async _poolScheduleState(poolId) {
         try {
             let key = String(poolId || '');
             if (key.includes('|')) key = key.split('|')[0];
             const sched = await this.poolSchedule.get(key);
-            if (!sched) return '';
+            if (!sched) return { state: 'none', text: '' };
             const now = Date.now();
             if (sched.startAt != null && now < sched.startAt) {
                 const t = this._formatDuration(sched.startAt - now);
-                return t ? `${t}后开启` : '';
+                return { state: 'pending', text: t ? `${t}后开启` : '' };
             }
             if (sched.endAt != null && now < sched.endAt) {
                 const t = this._formatDuration(sched.endAt - now);
-                return t ? `${t}后关闭` : '';
+                return { state: 'open', text: t || '' };
             }
-            return '';
+            return { state: 'none', text: '' };
         } catch {
-            return '';
+            return { state: 'none', text: '' };
         }
     }
 
@@ -788,14 +864,14 @@ export class MajsoulGacha extends plugin {
         const input = match[1].trim().split(/[\s,，、]+/)[0];
         const poolId = this.gachaCore.getPoolId(input);
         if (!poolId || ['male', 'female', 'normal'].includes(poolId) || poolId.startsWith('custom:')) {
-            await e.reply('没有找到该联动池，可用 #查看联动池 查看已配置的联动池\n格式：#开启联动 <联动池名>', true);
+            await e.reply('没有找到该联动池\n格式：#开启联动 <联动池名>', true);
             return true;
         }
 
         try {
             const data = await this.gachaCore.gachaLoader();
             if (!data[poolId]) {
-                await e.reply('没有找到该联动池，可用 #查看联动池 查看已配置的联动池\n格式：#开启联动 <联动池名>', true);
+                await e.reply('没有找到该联动池\n格式：#开启联动 <联动池名>', true);
                 return true;
             }
             setSetting(`collabopen:${poolId}`, '1'); // 开放标记（支持多个联动池同时开放）
@@ -857,28 +933,6 @@ export class MajsoulGacha extends plugin {
             logger.error('[雀魂抽卡] 关闭联动失败:', error);
             await e.reply('关闭联动失败，系统异常', true);
         }
-        return true;
-    }
-
-    // 查看已配置的联动池（主题池）列表
-    async viewCollab(e) {
-        const data = await this.gachaCore.gachaLoader();
-        const known = ['male', 'female', 'normal', 'purple_gift'];
-        const names = Object.keys(data).filter(id => !known.includes(id) && !id.startsWith('custom:') && !id.startsWith('__'));
-        if (names.length === 0) {
-            await e.reply('没有已配置的联动池');
-            return true;
-        }
-        // 标注当前开启的联动（开放标记 或 全局池指向）
-        let globalPool = null;
-        try {
-            globalPool = getSetting('globalpool');
-        } catch {}
-        const lines = names.map(id => {
-            const open = id === globalPool || getSetting(`collabopen:${id}`) === '1';
-            return `${open ? '【开启中】' : ''}${this.gachaCore.getPoolName(id)}（${id}）：UP雀士 ${(data[id] || []).join('、')}`;
-        });
-        await e.reply(lines.join('\n'));
         return true;
     }
 
@@ -998,23 +1052,31 @@ export class MajsoulGacha extends plugin {
             return true;
         }
         const now = Date.now();
-        const lines = rows.map(r => {
+        const items = rows.map(r => {
             const name = this.gachaCore.getPoolName(r.poolId);
-            const endText = r.endAt != null ? `，${this._fmtTime(r.endAt)} 自动关闭` : '';
+            let status = 'open';
+            // 联动池可能已被手动提前开启（#开启联动 立即生效），排期状态需反映真实开放状态
             if (r.startAt != null && now < r.startAt) {
-                // 联动池可能已被手动提前开启（#开启联动 立即生效），排期状态需反映真实开放状态
                 let openedEarly = false;
                 try {
                     openedEarly = getSetting(`collabopen:${r.poolId}`) === '1' || getSetting('globalpool') === r.poolId;
                 } catch {}
-                return openedEarly
-                    ? `「${name}」已提前开启（手动），${this._fmtTime(r.startAt)} 的定时开启将自动跳过${endText}`
-                    : `「${name}」未开启：${this._fmtTime(r.startAt)} 自动开启${endText}`;
+                status = openedEarly ? 'early' : 'pending';
             }
-            const endTextRunning = r.endAt != null ? `（${this._fmtTime(r.endAt)} 自动关闭）` : '（未设关闭时间）';
-            return `「${name}」开启中${endTextRunning}`;
+            // 时间文本：尚未开启显示「开 → 关」，已开启只显示关闭时间
+            const endPart = r.endAt != null ? `关闭 ${this._fmtTime(r.endAt)}` : '未设关闭时间';
+            const timeText = status === 'pending'
+                ? `${this._fmtTime(r.startAt)} 开启 · ${endPart}`
+                : (status === 'early'
+                    ? `已手动开启 · ${endPart}`
+                    : endPart);
+            return { name, status, timeText };
         });
-        await e.reply(`卡池排期：\n${lines.join('\n')}`, true);
+        const image = await renderPoolScheduleCard({
+            rows: items,
+            footer: '设置：#设置卡池开启/关闭 <池名> <YYYY-MM-DD HH:mm>'
+        });
+        await e.reply(segment.image(image), false);
         return true;
     }
 

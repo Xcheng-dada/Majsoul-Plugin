@@ -1,7 +1,9 @@
 // plugins/Majsoul-Plugin/apps/MajsoulSubscribe.js
 import plugin from "../../../lib/plugins/plugin.js";
+import { segment } from "oicq";
 import MajsoulSubscribeCore, { getSubscribeCoreInstance } from '../utils/MajsoulSubscribeCore.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
+import { renderSubscribeCard } from '../utils/SubscribeCard.js';
 
 export class MajsoulSubscribe extends plugin {
     constructor() {
@@ -221,14 +223,40 @@ export class MajsoulSubscribe extends plugin {
     // 查看订阅状态
     async checkSubscribeStatus(e) {
         const result = await this.core.getGroupSubscriptions(e.group_id, 4);
-        await e.reply(result.message);
+        await this._replyStatusCard(e, result, 4);
         return true;
     }
     
     async checkTriSubscribeStatus(e) {
         const result = await this.core.getGroupSubscriptions(e.group_id, 3);
-        await e.reply(result.message);
+        await this._replyStatusCard(e, result, 3);
         return true;
+    }
+
+    /**
+     * 订阅状态出图；渲染失败或数据缺失时退回原文字
+     * @param {object} e 事件
+     * @param {{success:boolean, message:string, subs?:Array}} result
+     * @param {number} mode 4 / 3
+     */
+    async _replyStatusCard(e, result, mode) {
+        if (!result?.success) {
+            await e.reply(result?.message || '查询失败，请稍后重试。');
+            return;
+        }
+        try {
+            const subs = Array.isArray(result.subs) ? result.subs : [];
+            // 群级信息，不显示查看者头像昵称
+            const image = await renderSubscribeCard({
+                subs,
+                mode,
+                footer: `临时关闭：#关闭${mode === 4 ? '' : '三麻'}订阅 <昵称>`
+            });
+            await e.reply(segment.image(image), false);
+        } catch (error) {
+            console.error(`[MajsoulSubscribe] 订阅卡片渲染失败: ${error.message}`);
+            await e.reply(result.message);
+        }
     }
     
     // 添加 handle 方法用于指令路由

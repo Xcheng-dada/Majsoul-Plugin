@@ -8,9 +8,12 @@ import GachaSign from '../utils/GachaSign.js';
 import GachaRedpacket from '../utils/GachaRedpacket.js';
 import GachaMail from '../utils/GachaMail.js';
 import GachaCore from '../utils/GachaCore.js';
-import { renderCurrencyCard, CURRENCY_ICONS } from '../utils/CurrencyCard.js';
+import { CURRENCY_ICONS } from '../utils/CurrencyCard.js';
 import { renderPacketCover, renderGrabCard } from '../utils/RedpacketCard.js';
 import { renderExchangeCard } from '../utils/ExchangeCard.js';
+import { renderSignCard } from '../utils/SignCard.js';
+import { renderWarehouseCard } from '../utils/WarehouseCard.js';
+import { renderMailCard } from '../utils/MailCard.js';
 import { getSetting } from '../utils/SettingsStore.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 
@@ -29,7 +32,7 @@ export class MajsoulEconomy extends plugin {
     constructor() {
         super({
             name: '雀魂经济系统',
-            dsc: '雀魂签到/钱包/图鉴/兑换/红包/邮件',
+            dsc: '雀魂签到/仓库/寮舍/兑换/红包/邮件',
             event: 'message',
             priority: 500,
             rule: [
@@ -38,11 +41,13 @@ export class MajsoulEconomy extends plugin {
                     fnc: 'sign'
                 },
                 {
-                    reg: '^#?雀魂钱包$',
+                    // 雀魂仓库
+                    reg: '^#?雀魂仓库$',
                     fnc: 'wallet'
                 },
                 {
-                    reg: '^#?雀魂图鉴(\\s+(角色|装扮))?(\\s+\\d+)?\\s*(\\[\\@.*\\])?$',
+                    // 雀魂寮舍
+                    reg: '^#?雀魂寮舍(\\s+(角色|装扮))?(\\s+\\d+)?\\s*(\\[\\@.*\\])?$',
                     fnc: 'collection'
                 },
                 {
@@ -127,11 +132,19 @@ export class MajsoulEconomy extends plugin {
         }
     }
 
-    // #雀魂签到：奖励图片输出（含用户名/头像/连签信息，不附文字）
+    // #雀魂签到：官方木质公告栏卡片（不引用回复）
     async sign(e) {
         const result = await this.signer.sign(e.user_id);
+        // 今天已签到：用 bg1 模板（右侧自带「明天再来吧」文案），左侧仍显示头像昵称
         if (result.already) {
-            await e.reply(`今天已经签到过啦~ 已连续签到 ${result.streak} 天，明天再来吧`);
+            const image = await renderSignCard({
+                nickname: this._displayName(e),
+                avatar: this._avatarUrl(e),
+                streak: result.streak,
+                totalDays: result.totalDays,
+                alreadySigned: true
+            });
+            await e.reply(segment.image(image), false);
             return true;
         }
 
@@ -142,7 +155,7 @@ export class MajsoulEconomy extends plugin {
             ticket10: result.ticket10
         });
 
-        // 渲染奖励卡片：标题带用户名和头像，签到天数直接写在图里
+        // 奖励图标：暴击/欢迎礼包/连签十连卷轴
         const items = [
             { icon: '辉玉', count: result.jade, extra: result.crit ? '暴击×2' : undefined },
             { icon: '寻觅卷轴', count: result.ticket, extra: result.welcome ? '欢迎礼包' : undefined }
@@ -150,39 +163,48 @@ export class MajsoulEconomy extends plugin {
         if (result.ticket10 > 0) {
             items.push({ icon: '十连寻觅卷轴', count: result.ticket10, extra: `连签${result.streak}天` });
         }
-        const footer = `已连续签到 ${result.streak} 天 · 累计签到 ${result.totalDays} 天`
-            + (converted.length > 0 ? ` · 自动兑换：${converted.join('；')}` : '');
-        const image = await renderCurrencyCard({
-            title: `${this._displayName(e)}的签到`,
+        // 自动兑换提示作为附加说明补在末尾（如星之粉尘兑换成卷轴）
+        if (converted.length > 0) {
+            items.push({ icon: '信仰', count: result.streak, extra: converted.join('；') });
+        }
+
+        const image = await renderSignCard({
+            nickname: this._displayName(e),
             avatar: this._avatarUrl(e),
-            items,
-            footer
+            streak: result.streak,
+            totalDays: result.totalDays,
+            items
         });
-        await e.reply(segment.image(image));
+        await e.reply(segment.image(image), false);
         return true;
     }
 
-    // #雀魂钱包：余额图片输出（标题显示群名片）
+    // #雀魂仓库：indoor 背景 + 金框（不引用回复）
     async wallet(e) {
         const w = await this.walletMgr.get(e.user_id);
         // 许愿石入账即 1:1 全额转粉尘，余额恒为 0，不展示（数据层与兑换链保留）
+        const NAMES = {
+            jade: '辉玉', ticket: '寻觅卷轴', ticket10: '十连寻觅卷轴',
+            dust: '星之粉尘', stone: '星之石', faith: '信仰'
+        };
         const items = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'faith'].map(key => ({
             icon: CURRENCY_ICONS[key],
-            count: w[key]
+            count: w[key],
+            name: NAMES[key]
         }));
-        const image = await renderCurrencyCard({
-            title: `${this._displayName(e)}的钱包`,
+        const image = await renderWarehouseCard({
+            title: `${this._displayName(e)}的仓库`,
             avatar: this._avatarUrl(e),
             items,
             footer: '许愿石 1:1、星之石每10→5 星之粉尘、粉尘每50→1 寻觅卷轴，获得后自动兑换'
         });
-        await e.reply(segment.image(image));
+        await e.reply(segment.image(image), false);
         return true;
     }
 
-    // #雀魂图鉴 [角色/装扮] [页码]（可 @）：标题显示被查用户的群名片，不引用回复
+    // #雀魂寮舍 [角色/装扮] [页码]（可 @）：标题显示被查用户的群名片，不引用回复
     async collection(e) {
-        const match = e.msg.match(/^#?雀魂图鉴(?:\s+(角色|装扮))?(?:\s+(\d+))?\s*(?:\[@.*\])?$/);
+        const match = e.msg.match(/^#?雀魂寮舍(?:\s+(角色|装扮))?(?:\s+(\d+))?\s*(?:\[@.*\])?$/);
         const kind = (match && match[1] === '装扮') ? 'decorations' : 'characters';
         const page = match && match[2] ? parseInt(match[2]) : 1;
         // @某人 时渲染对方图鉴（@全体成员视为未@）
@@ -210,8 +232,8 @@ export class MajsoulEconomy extends plugin {
             const image = await this.collectionMgr.renderImage(targetId, kind, page, name);
             await e.reply(segment.image(image));
         } catch (error) {
-            logger.error('[雀魂经济] 图鉴渲染失败:', error);
-            await e.reply('图鉴渲染失败，请联系维护者。');
+            logger.error('[雀魂经济] 寮舍渲染失败:', error);
+            await e.reply('寮舍渲染失败，请联系维护者。');
         }
         return true;
     }
@@ -250,30 +272,84 @@ export class MajsoulEconomy extends plugin {
         }
         openNames = [...new Set(openNames)];
 
-        if (!openNames.includes(name)) {
-            await e.reply(`「${name}」当前不在开放池中，无法兑换。\n当前可兑换：竹林之路 / 樱花之路 / 当前UP池与联动池雀士`, true);
-            return true;
-        }
-
-        // 已拥有的角色不能兑换（图鉴里已有该雀士）
-        // 注：不显示拥有数量 —— 雀士不可重复拥有，count 恒为 1；
-        // 旧库中残留的 count>1 是历史 bug 产物（add 曾对雀士累加），无展示意义。
-        try {
-            const coll = await this.collectionMgr.get(e.user_id);
-            if (coll?.characters?.[name]) {
-                await e.reply(`「${name}」已经在你的图鉴里啦，无需兑换`, true);
-                return true;
-            }
-        } catch { }
-
+        // 立绘是否存在 == 该雀士名是否有效（找不到图就是名字写错了/不存在）
+        const portraitPath = await this.collectionMgr.getCharacterPortrait(name).catch(() => null);
         const isLimited = await this.collectionMgr.isLimitedCharacter(name);
         const cost = isLimited
             ? Math.max(1, Number(getFeatureConfigItem('faithLimitedCost')) || 300)
             : Math.max(1, Number(getFeatureConfigItem('faithNormalCost')) || 150);
 
+        // ① 雀士名不匹配：只在头像位置显示「雀士未找到」
+        if (!portraitPath) {
+            try {
+                const image = await renderExchangeCard({ name, state: 'notfound' });
+                await e.reply(segment.image(image), false);
+            } catch {
+                await e.reply(`未找到雀士「${name}」，请检查名字是否正确`, true);
+            }
+            return true;
+        }
+
+        // ② 雀士存在但当前池未开启：灰度头像 + 「未开启兑换」
+        if (!openNames.includes(name)) {
+            try {
+                const w = await this.walletMgr.get(e.user_id);
+                const image = await renderExchangeCard({
+                    name,
+                    isLimited,
+                    cost,
+                    faith: w.faith,
+                    portraitPath,
+                    state: 'unopened'
+                });
+                await e.reply(segment.image(image), false);
+            } catch {
+                await e.reply(`「${name}」当前不在开放池中，无法兑换。\n当前可兑换：竹林之路 / 樱花之路 / 当前UP池与联动池雀士`, true);
+            }
+            return true;
+        }
+
+        // ③ 已拥有的角色不能兑换（图鉴里已有该雀士）
+        // 注：不显示拥有数量 —— 雀士不可重复拥有，count 恒为 1；
+        // 旧库中残留的 count>1 是历史 bug 产物（add 曾对雀士累加），无展示意义。
+        try {
+            const coll = await this.collectionMgr.get(e.user_id);
+            if (coll?.characters?.[name]) {
+                // 已拥有：灰色按钮 + 「已拥有」印章
+                try {
+                    const w = await this.walletMgr.get(e.user_id);
+                    const image = await renderExchangeCard({
+                        name,
+                        isLimited,
+                        cost,
+                        faith: w.faith,
+                        portraitPath,
+                        state: 'owned'
+                    });
+                    await e.reply(segment.image(image), false);
+                } catch {
+                    await e.reply(`「${name}」已经在你的寮舍里啦，无需兑换`, true);
+                }
+                return true;
+            }
+        } catch { }
+
         const spendResult = await this.walletMgr.spend(e.user_id, { faith: cost });
         if (!spendResult.ok) {
-            await e.reply(`信仰不足（需要 ${cost}，当前 ${spendResult.wallet.faith}）。\n每次寻觅可获得 1 点信仰，继续寻觅攒攒吧~`, true);
+            // 信仰不足：灰色按钮，数字红色
+            try {
+                const image = await renderExchangeCard({
+                    name,
+                    isLimited,
+                    cost,
+                    faith: spendResult.wallet.faith,
+                    portraitPath,
+                    state: 'insufficient'
+                });
+                await e.reply(segment.image(image), false);
+            } catch {
+                await e.reply(`信仰不足（需要 ${cost}，当前 ${spendResult.wallet.faith}）。\n每次寻觅可获得 1 点信仰，继续寻觅攒攒吧~`, true);
+            }
             return true;
         }
 
@@ -292,7 +368,7 @@ export class MajsoulEconomy extends plugin {
         } catch (error) {
             // 图片渲染失败退回文字，不影响兑换本身（雀士已入图鉴）
             logger.error('[雀魂经济] 兑换卡片渲染失败:', error);
-            await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」，快去图鉴看看吧`);
+            await e.reply(`兑换成功！消耗信仰 ${cost}，获得${limitedText}「${name}」，快去寮舍看看吧`);
         }
         return true;
     }
@@ -354,7 +430,25 @@ export class MajsoulEconomy extends plugin {
 
         const mail = await this.mailMgr.send(e.group_id, parsed.rewards, parsed.title, parsed.ttlDays);
         const days = Math.round((mail.expireAt - mail.createdAt) / 86400000);
-        await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(parsed.rewards)}\n成员发送"雀魂邮件"即可领取（${days} 天内有效）`);
+        // 发放回执出图：单个邮件 + 奖励明细（复用邮件卡风格）
+        const items = Object.entries(parsed.rewards || {})
+            .filter(([, v]) => Number(v) > 0)
+            .map(([k, v]) => ({ icon: CURRENCY_ICONS[k] || k, count: Number(v) }));
+        try {
+            const image = await renderMailCard({
+                mails: [{ title: mail.title, expireAt: mail.expireAt }],
+                items,
+                // 发送回执：不显示操作者头像昵称；右栏用自绘「奖励一览」金字；信封用未读态
+                rewardTitle: 'rewardlist',
+                unread: true,
+                hideUser: true,
+                footerHint: `已发放到本群　·　${days} 天内有效　·　成员发送 #雀魂邮件 领取`
+            });
+            await e.reply(segment.image(image), false);
+        } catch (error) {
+            logger.error('[雀魂经济] 发送邮件回执渲染失败:', error);
+            await e.reply(`已向本群发放奖励邮件「${mail.title}」：${GachaMail.formatRewards(parsed.rewards)}\n成员发送"雀魂邮件"即可领取（${days} 天内有效）`);
+        }
         return true;
     }
 
@@ -365,8 +459,12 @@ export class MajsoulEconomy extends plugin {
             return true;
         }
         const { mails, totals } = await this.mailMgr.claimAll(e.group_id, e.user_id);
+        const nickname = this._displayName(e);
+        const avatar = this._avatarUrl(e);
+        // 没有可领取的邮件：出官方空状态图（「暂无邮件」/「什么都没有...」）
         if (mails.length === 0) {
-            await e.reply('暂无可领取的邮件奖励', true);
+            const image = await renderMailCard({ mails: [], items: [], nickname, avatar });
+            await e.reply(segment.image(image), false);
             return true;
         }
 
@@ -382,9 +480,14 @@ export class MajsoulEconomy extends plugin {
             return true;
         }
 
-        // 图片已含标题（邮件奖励 X 封）与奖励明细，不再重复发文字
-        const image = await renderCurrencyCard({ title: `邮件奖励（${mails.length} 封）`, items });
-        await e.reply(segment.image(image), true);
+        // 图片已含邮件标题列表与奖励明细，左下角带头像与昵称，因此不引用回复
+        const image = await renderMailCard({
+            mails,
+            items,
+            nickname: this._displayName(e),
+            avatar: this._avatarUrl(e)
+        });
+        await e.reply(segment.image(image), false);
         return true;
     }
 
@@ -446,7 +549,7 @@ export class MajsoulEconomy extends plugin {
     async saveData(e) {
         try {
             await redis.sendCommand(['BGSAVE']);
-            await e.reply('已请求 Redis 存盘（临时数据快照）。钱包/图鉴/绑定等业务数据实时写入 SQLite，无需手动保存');
+            await e.reply('已请求 Redis 存盘（临时数据快照）。仓库/寮舍/绑定等业务数据实时写入 SQLite，无需手动保存');
         } catch (error) {
             logger.error('[雀魂经济] 手动存盘失败:', error);
             await e.reply('存盘失败，系统异常', true);

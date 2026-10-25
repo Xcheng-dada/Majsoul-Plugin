@@ -1,5 +1,6 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { loadResImage, drawText, drawRoundRect, applyMask } from './canvas.js'
+import { FONT } from './fonts.js'
 import MajsoulApi from '../utils/MajsoulApi.js'
 import { PlayerLevel, playerStatsZero, playerExtendZero } from '../utils/PlayerLevel.js'
 import { buildPlayerTags, drawTags, RANK_WINDOW } from '../utils/PlayerTags.js'
@@ -1080,13 +1081,15 @@ async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null
   // 段位名与分数：新素材（rank_bg2）方框中心 y=62，旧素材（rank_bg）中心 y=78。
   // 旧素材无安定段位槽，沿用原坐标。
   const nameY = hasStableSlot ? 62 : 78
+  // 段位名：微软雅黑（恢复）
   drawText(ctx, level.full_tag, 296, nameY, 44, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, level.real_display_score, 461, nameY, 28, '#C1C1C1', 'center')
+  // 段位分：数字 → 汉仪文黑75W
+  drawText(ctx, level.real_display_score, 461, nameY, 28, '#C1C1C1', 'center', 'normal', FONT.hei)
 
-  // 场次/均顺位：新素材标签中心 y=121，旧素材 y=146。
+  // 场次/均顺位：新素材标签中心 y=121，旧素材 y=146。（统计数字 → 汉仪文黑75W）
   const rowY = hasStableSlot ? 121 : 146
-  drawText(ctx, String(stats.count), 282, rowY, 32, '#FFFFFF', 'left', 'bold')
-  drawText(ctx, avgRank, 458, rowY, 32, '#FFFFFF', 'left', 'bold')
+  drawText(ctx, String(stats.count), 282, rowY, 32, '#FFFFFF', 'left', 'bold', FONT.hei)
+  drawText(ctx, avgRank, 458, rowY, 32, '#FFFFFF', 'left', 'bold', FONT.hei)
 
   // 安定段：素材自带「安定段」标签（中心 y=163，x 232~294），数值紧随其后。
   // 只显示安定段位与预计战数，**不显示期望值**（E[PT] 对玩家无意义）。
@@ -1110,6 +1113,7 @@ async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null
         if (w1 + (promo ? 16 + w2 : 0) <= AVAIL) { chosen = [s1, s2]; break }
       }
       const [s1, s2] = chosen
+      // 安定段文字：微软雅黑（恢复）
       drawText(ctx, stableInfo.text, LEFT_X, ROW_Y, s1, '#FFFFFF', 'left', 'bold')
       if (promo) drawText(ctx, promo, RIGHT_X, ROW_Y, s2, '#FFFFFF', 'right', 'bold')
     } else {
@@ -1117,9 +1121,10 @@ async function getRankIcon(level, stats, extended, mode = '4', stableInfo = null
     }
   }
 
-  drawText(ctx, firstRate, 155, 239, 32, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, rongRate, 300, 239, 32, '#FFFFFF', 'center', 'bold')
-  drawText(ctx, chongRate, 445, 239, 32, '#FFFFFF', 'center', 'bold')
+  // 一位率/和牌率/放铳率：统计数字 → 汉仪文黑75W
+  drawText(ctx, firstRate, 155, 239, 32, '#FFFFFF', 'center', 'bold', FONT.hei)
+  drawText(ctx, rongRate, 300, 239, 32, '#FFFFFF', 'center', 'bold', FONT.hei)
+  drawText(ctx, chongRate, 445, 239, 32, '#FFFFFF', 'center', 'bold', FONT.hei)
 
   return canvas
 }
@@ -1445,7 +1450,66 @@ async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null, top = L
 
   // 整体缩放到趋势区（y=140 至卡片底部），水平居中，使走势图尽量贴近牌谱屋原生大小
   ctx.drawImage(rc, drawX, top, newW, newH)
-  drawText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 34, '#FFFFFF', 'center', 'bold')
+  // 混排：汉字用文鼎特毛楷，数字「16」用汉仪文黑
+  drawMixedText(ctx, `${roomLabel ? roomLabel : ''}最近16场对局记录走势`, 435, top + 34 * scale, 34, '#FFFFFF', 'center', FONT.kai, FONT.hei)
+}
+
+/**
+ * 中英数字混排绘制：中文用 cjkFont，数字/字母用 numFont。
+ *
+ * 场景：标题形如「最近16场对局记录走势」，其中「16」需用汉仪文黑，
+ * 其余汉字用文鼎特毛楷。整行按 align 对齐（支持 center/left/right）。
+ *
+ * 实现：把文本按「数字/字母」与「其他」切段，逐段测量后整体偏移绘制。
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {string} text    待绘制文本
+ * @param {number} x       对齐基准点（center 时为中线）
+ * @param {number} y       基线（textBaseline 为 middle）
+ * @param {number} size    字号
+ * @param {string} color   颜色
+ * @param {'center'|'left'|'right'} align 对齐方式
+ * @param {string} cjkFont 中文段字体族
+ * @param {string} numFont 数字/字母段字体族
+ * @param {string} [weight] 字重
+ */
+function drawMixedText (ctx, text, x, y, size, color, align, cjkFont, numFont, weight = 'bold') {
+  const s = String(text ?? '')
+  if (!s) return
+  // 按字符类型切段：数字与 ASCII 字母算一段，其余算另一段
+  const isNum = (c) => /[0-9A-Za-z]/.test(c)
+  const segs = []
+  let cur = '', curIsNum = null
+  for (const ch of s) {
+    const n = isNum(ch)
+    if (curIsNum === null || n === curIsNum) { cur += ch; curIsNum = n }
+    else { segs.push({ text: cur, isNum: curIsNum }); cur = ch; curIsNum = n }
+  }
+  if (cur) segs.push({ text: cur, isNum: curIsNum })
+
+  // 逐段测量宽度
+  let total = 0
+  for (const seg of segs) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`
+    seg.w = ctx.measureText(seg.text).width
+    total += seg.w
+  }
+
+  // 起始 x
+  let sx = x
+  if (align === 'center') sx = x - total / 2
+  else if (align === 'right') sx = x - total
+
+  const prevAlign = ctx.textAlign
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = color
+  for (const seg of segs) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`
+    ctx.fillText(seg.text, sx, y)
+    sx += seg.w
+  }
+  ctx.textAlign = prevAlign
 }
 
 /**
@@ -1466,19 +1530,34 @@ async function drawLocalTrend (ctx, recentGames, mode, roomLabel = null, top = L
 function drawStatusDot (ctx, playerState, centerX, baselineY, name, sub) {
   const FONT_SIZE = 30
   const SEP = ' · '
-  ctx.font = `bold ${FONT_SIZE}px "Microsoft YaHei"`
 
   // 仅在确定在线时染绿；离线或未知都保持白色（避免把"查不到"误显示成离线）
   const nameColor = playerState?.online ? '#4ADE80' : '#FFFFFF'
 
+  // 分段测量：昵称用红豆大黑体，UID 数字用汉仪文黑，其余（分隔符/房间筛选名）保持微软雅黑
+  ctx.font = `bold ${FONT_SIZE}px ${FONT.name}`
   const nw = ctx.measureText(name).width
+  ctx.font = `bold ${FONT_SIZE}px "Microsoft YaHei"`
   const sw = ctx.measureText(SEP).width
-  const uw = ctx.measureText(sub).width
+  // sub 形如「UID 16371840」或房间筛选名「金之间」：
+  //   前者标签雅黑 + 数字汉仪文黑，后者整体雅黑
+  const m = String(sub ?? '').match(/^(UID\s+)(.+)$/i)
+  const uidLabel = m ? m[1] : ''
+  const uidDigits = m ? m[2] : String(sub ?? '')
+  const uwLabel = m ? ctx.measureText(uidLabel).width : 0
+  ctx.font = `bold ${FONT_SIZE}px ${m ? FONT.hei : 'Microsoft YaHei'}`
+  const uwDigits = ctx.measureText(uidDigits).width
+  const uw = uwLabel + uwDigits
 
   const x0 = centerX - (nw + sw + uw) / 2
-  drawText(ctx, name, x0, baselineY, FONT_SIZE, nameColor, 'left', 'bold')
+  drawText(ctx, name, x0, baselineY, FONT_SIZE, nameColor, 'left', 'bold', FONT.name)
   drawText(ctx, SEP, x0 + nw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
-  drawText(ctx, sub, x0 + nw + sw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
+  if (m) {
+    drawText(ctx, uidLabel, x0 + nw + sw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
+    drawText(ctx, uidDigits, x0 + nw + sw + uwLabel, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold', FONT.hei)
+  } else {
+    drawText(ctx, uidDigits, x0 + nw + sw, baselineY, FONT_SIZE, '#FFFFFF', 'left', 'bold')
+  }
 }
 
 export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFilter = null, playerName = null, scope = null, playerState = undefined) {
@@ -2018,7 +2097,8 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   texts.forEach((text, i) => {
     const x = 151 + 138 * (i % 6)
     const y = 65 + 86 * Math.floor(i / 6)
-    drawText(detailCtx, text, x, y, 30, '#FFFFFF', 'center', 'bold')
+    // 详情区 12 项统计数字 → 汉仪文黑75W
+    drawText(detailCtx, text, x, y, 30, '#FFFFFF', 'center', 'bold', FONT.hei)
   })
   
   // 生成三个进度条
@@ -2098,7 +2178,8 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
 
   detailCtx.drawImage(recordCanvas, 0, 558)
   const recordTitle = roomFilter ? `${roomFilter.name}最近16场对局记录走势` : '最近16场对局记录走势'
-  drawText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', 'bold')
+  // 混排：汉字用文鼎特毛楷，数字「16」用汉仪文黑
+  drawMixedText(detailCtx, recordTitle, 500, 590, 34, '#FFFFFF', 'center', FONT.kai, FONT.hei)
   } else {
     // 本地数据卡片（details_bg_3/4.png）：顶部数据（画在标签上方）+ 牌风带 + 下方对局走势区
     // 标签：三麻「自摸率|荣和率|二位率|三位率」，四麻「自摸率|二位率|三位率|四位率」。
@@ -2111,15 +2192,15 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
     const slotX = [152, 291, 566, 705]
     const valueY = 86
     if (mode === '3') {
-      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate(localEntry?.ronRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate(localEntry?.ronRate || 0), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
     } else {
-      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold')
-      drawText(detailCtx, getRate((fpc[3] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold')
+      drawText(detailCtx, getRate(localEntry?.tsumoRate || 0), slotX[0], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate((fpc[1] || 0) / fpcTotal), slotX[1], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate((fpc[2] || 0) / fpcTotal), slotX[2], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
+      drawText(detailCtx, getRate((fpc[3] || 0) / fpcTotal), slotX[3], valueY, 34, '#FFFFFF', 'center', 'bold', FONT.hei)
     }
     // 牌风标题与牌风下线由 details_bg_3/4 自带（x45~86 / y179~199 与 y224~227），
     // 无需代码补画；标签直接画在牌风带 y156~223 内即可。
@@ -2155,7 +2236,7 @@ export async function drawMajsInfoImg(uid, mode = '4', realtimePT = null, roomFi
   // 拼接整体画面
   ctx.drawImage(detailCanvas, useLocalDetail ? Math.floor((bg.width - detailCanvas.width) / 2) : 0, 1188)
   ctx.drawImage(mid, 0, 1161)
-  drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold')
+  drawText(ctx, _mode, 500, 1161 + 40, 30, '#FFFFFF', 'center', 'bold', FONT.kai)
   // 页脚：本地卡片较短，页脚上移到卡片下方（距卡片底部 43px），标准卡保持原位置
   // 本地卡为原生 JS 实现（数据来自本地 API/雀魂官方），无 Python→JS 移植署名；标准卡保留移植署名
   const footerY = (useLocalDetail ? detailBottom + 43 : 2151 + 30) + tagExtra
@@ -2267,10 +2348,19 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     const realtime = realtimeData[uid]
     
     // 昵称染色：仅"确定在线"染绿，离线/未知保持白色（非好友查不到时不会误显示）
+    // 序号用汉仪文黑，昵称用红豆大黑体
     const onlineColor = realtime?.online ? '#4ADE80' : '#FFFFFF'
-    drawText(ctx, `${i + 1}. ${player.nickname}`, PADDING + 25, y + 35, 28, onlineColor, 'left', 'bold')
+    drawMixedText(ctx, `${i + 1}. ${player.nickname}`, PADDING + 25, y + 35, 28, onlineColor, 'left', FONT.name, FONT.hei)
     
-    drawText(ctx, `UID: ${player.id}`, PADDING + 25, y + 65, 18, '#999999', 'left')
+    // 「UID:」标签保持微软雅黑，后面的数字用汉仪文黑75W
+    {
+      const uidLabel = 'UID: '
+      const uidSize = 18
+      ctx.font = `normal ${uidSize}px Microsoft YaHei`
+      const labelW = ctx.measureText(uidLabel).width
+      drawText(ctx, uidLabel, PADDING + 25, y + 65, uidSize, '#999999', 'left')
+      drawText(ctx, String(player.id), PADDING + 25 + labelW, y + 65, uidSize, '#999999', 'left', 'normal', FONT.hei)
+    }
     
     const has4 = player.level4 || (realtime && realtime.fourPlayer)
     const has3 = player.level3 || (realtime && realtime.threePlayer)
@@ -2348,7 +2438,8 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       const textX4 = iconX4 + iconSize + 20
       drawText(ctx, '四麻', textX4, iconY4 + 18, 16, '#CCCCCC', 'left')
       drawText(ctx, level4.getTag(), textX4, iconY4 + 42, 20, '#FFFFFF', 'left', 'bold')
-      drawText(ctx, level4.formatAdjustedScore(), textX4, iconY4 + 65, 16, '#FFD700', 'left')
+      // 点数用汉仪文黑（数字）
+      drawText(ctx, level4.formatAdjustedScore(), textX4, iconY4 + 65, 16, '#FFD700', 'left', 'normal', FONT.hei)
       
       if (realtime && realtime.fourPlayer && realtime.isRealTime) {
         drawText(ctx, '实时', iconX4 + iconSize / 2, iconY4 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
@@ -2374,7 +2465,8 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
       const textX3 = iconX3 + iconSize + 20
       drawText(ctx, '三麻', textX3, iconY3 + 18, 16, '#CCCCCC', 'left')
       drawText(ctx, level3.getTag(), textX3, iconY3 + 42, 20, '#FFFFFF', 'left', 'bold')
-      drawText(ctx, level3.formatAdjustedScore(), textX3, iconY3 + 65, 16, '#FFD700', 'left')
+      // 点数用汉仪文黑（数字）
+      drawText(ctx, level3.formatAdjustedScore(), textX3, iconY3 + 65, 16, '#FFD700', 'left', 'normal', FONT.hei)
       
       if (realtime && realtime.threePlayer && realtime.isRealTime) {
         drawText(ctx, '实时', iconX3 + iconSize / 2, iconY3 + iconSize + 18, 12, '#00FF00', 'center', 'bold')
@@ -2387,7 +2479,8 @@ export async function drawSearchResultImg(players, realtimeData = {}) {
     
     const lastActive = formatTimestamp(player.latest_timestamp)
     if (lastActive) {
-      drawText(ctx, '最后活跃: ' + lastActive, width / 2, y + PLAYER_CARD_HEIGHT - 20, 14, '#666666', 'center')
+      // 「最后活跃: 时间」——汉字与时间数字混排
+      drawMixedText(ctx, '最后活跃: ' + lastActive, width / 2, y + PLAYER_CARD_HEIGHT - 20, 14, '#666666', 'center', FONT.hei, FONT.hei, 'normal')
     }
     
     y += PLAYER_CARD_HEIGHT + CARD_GAP
@@ -2544,9 +2637,10 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
 
   // 玩家名 (355,80) lm；段位文字 (653,80) mm；段位分 (817,80) mm
   // 段位名 / 段位分已优先使用牌谱自身数据（mortalLog.dan / mortalLog.rate，对应牌谱 26508~26518 行）
-  drawText(barCtx, name, 355, 80, 34, '#FFFFFF', 'left', 'bold', 'Microsoft YaHei')
+  // 字体规则：玩家名用红豆大黑体，段位分（数字）用汉仪文黑，段位名保持微软雅黑
+  drawText(barCtx, name, 355, 80, 34, '#FFFFFF', 'left', 'bold', FONT.name)
   drawText(barCtx, danText || '未知段位', 653, 80, 44, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
-  drawText(barCtx, rateText || '-', 817, 80, 24, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
+  drawText(barCtx, rateText || '-', 817, 80, 24, '#FFFFFF', 'center', 'bold', FONT.hei)
 
   // 整体缩放 bar 到 1450x222 并贴入 actorFile 的 (-27,106)
   actorCtx.drawImage(barCanvas, -27, 106, 1450, 222)
@@ -2624,8 +2718,9 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
     [totalStr, totalColor]
   ]
   
+  // dataMap 里的值全是数字或含数字的串（分数、百分比、`12 / 30`），统一用汉仪文黑
   dataMap.forEach((item, index) => {
-    drawText(riCtx, item[0], Math.floor(170 + index * 209.4), 200, 40, item[1], 'center', 'bold', 'Microsoft YaHei')
+    drawText(riCtx, item[0], Math.floor(170 + index * 209.4), 200, 40, item[1], 'center', 'bold', FONT.hei)
   })
   
   finalCtx.drawImage(riCanvas, 1390, titleHeight)
@@ -2633,6 +2728,7 @@ export async function drawReviewInfoImg(mortalLog, data, kyokuId = 0, meguruId =
   const sCanvas = createCanvas(spliter.width, spliter.height)
   const sCtx = sCanvas.getContext('2d')
   sCtx.drawImage(spliter, 0, 0)
+  // 局数标题「东1局 0本场」保持原样，不做字体/颜色改动
   drawText(sCtx, `【${kh}】`, 1400, 35, 50, '#FFFFFF', 'center', 'bold', 'Microsoft YaHei')
   finalCtx.drawImage(sCanvas, 0, spliterY)
   
@@ -2687,13 +2783,13 @@ const HELP_DATA = {
     ]
   },
   "抽卡娱乐": {
-    desc: "签到攒辉玉，寻觅集雀士，带图鉴收集玩法",
+    desc: "签到攒辉玉，寻觅集雀士，带寮舍收集玩法",
     items: [
       { name: "雀魂签到", desc: "每日签到领辉玉和寻觅卷轴", eg: "雀魂签到", icon: "抽卡" },
       { name: "雀魂寻觅", desc: "消耗1卷轴或200辉玉单抽", eg: "雀魂寻觅", icon: "抽卡" },
       { name: "雀魂十连", desc: "消耗1800辉玉或1张十连卷轴", eg: "雀魂十连", icon: "抽卡" },
-      { name: "雀魂钱包", desc: "查看七种货币余额", eg: "雀魂钱包", icon: "抽卡" },
-      { name: "雀魂图鉴", desc: "查看雀士/装扮收集进度", eg: "雀魂图鉴 [角色/装扮] [页码]", icon: "抽卡" },
+      { name: "雀魂仓库", desc: "查看六种货币余额", eg: "雀魂仓库", icon: "抽卡" },
+      { name: "雀魂寮舍", desc: "查看雀士/装扮收集进度", eg: "雀魂寮舍 [角色/装扮] [页码]", icon: "抽卡" },
       { name: "雀魂兑换", desc: "用信仰兑换雀士（150/300）", eg: "雀魂兑换 四宫辉夜", icon: "抽卡" },
       { name: "雀魂邮件", desc: "领取奖励邮件", eg: "雀魂邮件", icon: "抽卡" },
       { name: "切换竹林/樱花", desc: "切换个人卡池，仅对自己生效", eg: "切换樱花", icon: "抽卡" },

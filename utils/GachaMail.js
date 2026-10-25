@@ -119,7 +119,7 @@ export default class GachaMail {
         for (const mail of mails) {
           if (hasClaim.get(mail.id, uid)) continue;
           markClaim.run(mail.id, uid, Date.now());
-          mailsOut.push({ title: mail.title, rewards: mail.rewards });
+          mailsOut.push({ title: mail.title, rewards: mail.rewards, expireAt: mail.expireAt });
           for (const [key, value] of Object.entries(mail.rewards || {})) {
             totals[key] = (totals[key] || 0) + (Number(value) || 0);
           }

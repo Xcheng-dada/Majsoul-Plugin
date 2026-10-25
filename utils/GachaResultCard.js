@@ -5,6 +5,8 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { drawText } from '../components/canvas.js';
+import { FONT } from '../components/fonts.js';
+import { findPoolTitleArt } from './PoolTitleArt.js';
 import { CURRENCY_ICONS } from './CurrencyCard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -12,9 +14,12 @@ const RESOURCES_ROOT = path.join(__dirname, '..', 'resources');
 const GACHA_DIR = path.join(RESOURCES_ROOT, 'gacha');
 const ECONOMY_DIR = path.join(RESOURCES_ROOT, 'economy');
 
-// UP 角标（官方素材 47×28，缩放后贴在雀士头像右下角）
+// UP 角标（官方素材 47×28，缩放后贴在图标右下角）
 const UP_BADGE_W = 72;
 const UP_BADGE_H = 43;
+// 限定角标（官方素材 99×68，贴在图标左上角）
+const LIMIT_BADGE_W = 92;
+const LIMIT_BADGE_H = 63;
 
 // 官方素材尺寸
 const W = 1920;
@@ -36,6 +41,56 @@ const EXT_LIST = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 async function loadRes (p) {
   const buf = await fs.promises.readFile(p);
   return loadImage(buf);
+}
+
+/** 按「数字/字母」与「中日文」拆段，数字段用 numFont 绘制 */
+function splitByScript (text) {
+  const s = String(text ?? '');
+  const isNum = (c) => /[0-9A-Za-z.]/.test(c);
+  const segs = [];
+  let cur = '', curIsNum = null;
+  for (const ch of s) {
+    const n = isNum(ch);
+    if (curIsNum === null || n === curIsNum) { cur += ch; curIsNum = n; }
+    else { segs.push({ text: cur, isNum: curIsNum }); cur = ch; curIsNum = n; }
+  }
+  if (cur) segs.push({ text: cur, isNum: curIsNum });
+  return segs;
+}
+
+/** 混排文本总宽度 */
+function measureMixed (ctx, text, size, cjkFont, numFont, weight = 'bold') {
+  let total = 0;
+  for (const seg of splitByScript(text)) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`;
+    total += ctx.measureText(seg.text).width;
+  }
+  return total;
+}
+
+/** 混排绘制：中文用 cjkFont，数字/字母用 numFont */
+function drawMixedFont (ctx, text, x, y, size, color, align, cjkFont, numFont, weight = 'bold') {
+  const segs = splitByScript(text);
+  let total = 0;
+  for (const seg of segs) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`;
+    seg.w = ctx.measureText(seg.text).width;
+    total += seg.w;
+  }
+  let sx = x;
+  if (align === 'center') sx = x - total / 2;
+  else if (align === 'right') sx = x - total;
+
+  const prevAlign = ctx.textAlign;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = color;
+  for (const seg of segs) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`;
+    ctx.fillText(seg.text, sx, y);
+    sx += seg.w;
+  }
+  ctx.textAlign = prevAlign;
 }
 
 /** 本地查找物品图片（雀士/装扮/礼物），与 GachaCore.resolveItemImage 同规则 */
@@ -76,12 +131,14 @@ function findItemImage (name, kind, poolName) {
  *   底部货币行；delta 为本次增量（如卷轴 +10），有则显示为「43（+10）」
  * @param {string[]} [options.lines] 附加摘要行
  * @param {string} [options.poolName] 卡池名（装扮定位用）
- * @param {string[]} [options.upNames] UP 雀士名单（命中则在头像右下角贴 UP! 角标）
+ * @param {string[]} [options.upNames] UP 雀士名单（命中则在图标右下角贴 UP! 角标）
+ * @param {string[]} [options.upDecorNames] UP 装扮名单（联动池）
+ * @param {string[]} [options.limitedNames] 限定名单（贵人雀士 + 联动雀士/装扮），命中贴「限定」
  * @param {string} [options.nickname] 用户名（画在左上角头像旁）
  * @param {string} [options.avatar] 头像 URL/路径
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderGachaResultCard ({ title, items, wallet, lines, poolName, upNames, nickname, avatar }) {
+export async function renderGachaResultCard ({ title, items, wallet, lines, poolName, upNames, upDecorNames, limitedNames, nickname, avatar }) {
   if ((!items || items.length === 0) && (!lines || lines.length === 0) && (!wallet || !wallet.length)) {
     throw new Error('GachaResultCard: items / lines / wallet 不能同时为空');
   }
@@ -92,10 +149,15 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
     loadRes(path.join(GACHA_DIR, 'title_result.png'))
   ]);
 
-  // UP 角标（延迟加载：只有传入 upNames 才需要）
+  // UP / 限定角标（延迟加载：只有传入名单才需要）
   const upSet = new Set((upNames || []).filter(Boolean));
-  const upBadge = upSet.size > 0
+  const upDecorSet = new Set((upDecorNames || []).filter(Boolean));
+  const limitedSet = new Set((limitedNames || []).filter(Boolean));
+  const upBadge = (upSet.size > 0 || upDecorSet.size > 0)
     ? await loadRes(path.join(GACHA_DIR, 'up_badge.png')).catch(() => null)
+    : null;
+  const limitBadge = limitedSet.size > 0
+    ? await loadRes(path.join(GACHA_DIR, 'limit_badge.png')).catch(() => null)
     : null;
 
   const canvas = createCanvas(W, H);
@@ -113,10 +175,13 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
   const tH = Math.round(titleImg.height * TITLE_W / titleImg.width);
   ctx.drawImage(titleImg, (W - TITLE_W) / 2, TITLE_Y, TITLE_W, tH);
 
-  // ---- 左上角：头像 + 昵称（头像在上，昵称在正下方） ----
+  // ---- 左上角：头像 + 昵称（头像在上、昵称在正下方，头像水平居中于昵称）
+  //      整块限制在内容区之上（y < CONTENT_TOP），不侵入抽卡结果区域
   if (nickname || avatar) {
-    const AV = 108;
-    const ax = 64, ay = 196;
+    const AV = 96;
+    const CX = 214;                       // 整块的垂直中轴（昵称与头像共用）
+    const ax = Math.round(CX - AV / 2);
+    const ay = 30;                        // 顶部留白
     if (avatar) {
       try {
         let buf;
@@ -132,14 +197,14 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
           const cx = c.getContext('2d');
           cx.save();
           cx.beginPath();
-          if (typeof cx.roundRect === 'function') cx.roundRect(0, 0, AV, AV, 20);
+          if (typeof cx.roundRect === 'function') cx.roundRect(0, 0, AV, AV, 18);
           else cx.rect(0, 0, AV, AV);
           cx.clip();
           const side = Math.min(img.width, img.height);
           cx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, AV, AV);
           cx.restore();
           cx.beginPath();
-          if (typeof cx.roundRect === 'function') cx.roundRect(1, 1, AV - 2, AV - 2, 20);
+          if (typeof cx.roundRect === 'function') cx.roundRect(1, 1, AV - 2, AV - 2, 18);
           else cx.rect(0, 0, AV, AV);
           cx.strokeStyle = '#F0D9A8';
           cx.lineWidth = 3;
@@ -152,14 +217,58 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
       ctx.fillRect(ax, ay, AV, AV);
     }
     if (nickname) {
-      drawText(ctx, nickname, ax + AV / 2, ay + AV + 38, 34, '#FFE9B8', 'center', 'bold');
+      // 昵称：红豆大黑体，居中画在头像正下方
+      const name = String(nickname);
+      // 可用宽度：以 CX 为中轴，左右各留 40px 安全边距
+      const availW = Math.min(420, (CX - 40) * 2);
+      let size = 34;
+      ctx.font = `bold ${size}px ${FONT.name}`;
+      while (size > 18 && ctx.measureText(name).width > availW) {
+        size -= 2;
+        ctx.font = `bold ${size}px ${FONT.name}`;
+      }
+      let out = name;
+      if (ctx.measureText(out).width > availW) {
+        while (out.length > 1 && ctx.measureText(out + '…').width > availW) out = out.slice(0, -1);
+        out += '…';
+      }
+      drawText(ctx, out, CX, ay + AV + 40, size, '#FFE9B8', 'center', 'bold', FONT.name);
     }
   }
 
   let y = CONTENT_TOP;
 
+  // ---- 标题区：卡池名用官方艺术字素材 + 次数/含保底用文鼎特毛楷 ----
   if (title) {
-    drawText(ctx, title, W / 2, y, 44, '#FFE9B8', 'center', 'bold');
+    // title 形如「樱花烂漫｜累计寻觅 108 次｜含保底」，拆出卡池名与后缀
+    const parts = String(title).split('｜');
+    const poolTitle = parts[0] || '';
+    const suffix = parts.slice(1).join('｜');
+
+    // 查官方艺术字素材（映射见 utils/PoolTitleArt.js）
+    const artPath = findPoolTitleArt(poolTitle);
+    const poolArt = artPath ? await loadRes(artPath).catch(() => null) : null;
+
+    if (poolArt) {
+      // 艺术字高度约 76px，与后缀文字基线对齐
+      const artH = 76;
+      const artW = Math.round(poolArt.width * artH / poolArt.height);
+      // 后缀「累计寻觅 108 次｜含保底」：中文用文鼎特毛楷，数字用汉仪文黑75W
+      const SUF_SIZE = 40;
+      const sufW = suffix ? measureMixed(ctx, suffix, SUF_SIZE, FONT.kai, FONT.hei) : 0;
+      const gap = suffix ? 24 : 0;
+      const totalW = artW + gap + sufW;
+      const startX = Math.round((W - totalW) / 2);
+      ctx.drawImage(poolArt, startX, y - artH / 2 - 4, artW, artH);
+      if (suffix) {
+        drawMixedFont(ctx, suffix, startX + artW + gap, y, SUF_SIZE, '#FFE9B8',
+          'left', FONT.kai, FONT.hei);
+      }
+    } else {
+      // 无艺术字素材：整串混排（中文文鼎特毛楷 / 数字汉仪文黑75W）
+      drawMixedFont(ctx, String(title), W / 2, y, 44, '#FFE9B8',
+        'center', FONT.kai, FONT.hei);
+    }
     y += 84;
   }
 
@@ -183,9 +292,18 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
       const rowW = row.length * ICON + (row.length - 1) * GAP;
       let x = Math.round((W - rowW) / 2);
       for (const it of row) {
-        // 雀士名（文件名去后缀）是否在 UP 名单中
+        // 雀士/装扮名（文件名去后缀）
         const base = path.basename(it.name, path.extname(it.name));
-        const isUp = upBadge && it.kind === 'character' && upSet.has(base);
+        // UP 判定：雀士查 upNames，装扮查 upDecorNames（联动池可同时有 UP 雀士与 UP 装扮）
+        const isUp = upBadge && (
+          (it.kind === 'character' && upSet.has(base)) ||
+          (it.kind === 'decoration' && upDecorSet.has(base))
+        );
+        // 限定判定：贵人雀士恒为限定；联动池的雀士/装扮也标限定
+        const isLimited = limitBadge && (
+          (it.kind === 'character' && limitedSet.has(base)) ||
+          (it.kind === 'decoration' && limitedSet.has(base))
+        );
         const p = findItemImage(it.name, it.kind, poolName);
         if (p) {
           try {
@@ -195,10 +313,15 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
             const ix = x + (ICON - dw) / 2;
             const iy = y + (ICON - dh) / 2;
             ctx.drawImage(icon, ix, iy, dw, dh);
-            // UP! 角标贴在图标右下角（仅 UP 雀士）
+            // UP! 贴右下角
             if (isUp) {
-              ctx.drawImage(upBadge, ix + dw - UP_BADGE_W * 0.72, iy + dh - UP_BADGE_H * 0.72,
-                UP_BADGE_W * 0.72, UP_BADGE_H * 0.72);
+              const w = UP_BADGE_W * 0.72, h = UP_BADGE_H * 0.72;
+              ctx.drawImage(upBadge, ix + dw - w, iy + dh - h, w, h);
+            }
+            // 限定贴左上角
+            if (isLimited) {
+              const w = LIMIT_BADGE_W * 0.72, h = LIMIT_BADGE_H * 0.72;
+              ctx.drawImage(limitBadge, ix, iy, w, h);
             }
           } catch {
             ctx.fillStyle = 'rgba(255,255,255,0.14)';
@@ -209,11 +332,11 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
           ctx.fillRect(x, y, ICON, ICON);
         }
 
-        // 名称：雀士名即文件名去后缀（characterFileMap 的 key 同规则）
+        // 名称：红豆大黑体
         const label = it.count > 1 ? `${base}x${it.count}` : base;
-        drawText(ctx, label, x + ICON / 2, y + ICON + 32, 26, '#FFF3D6', 'center', 'bold');
+        drawText(ctx, label, x + ICON / 2, y + ICON + 32, 26, '#FFF3D6', 'center', 'bold', FONT.name);
         if (it.tag) {
-          drawText(ctx, it.tag, x + ICON / 2, y + ICON + 64, 22, '#FFC97A', 'center', 'bold');
+          drawText(ctx, it.tag, x + ICON / 2, y + ICON + 64, 22, '#FFC97A', 'center', 'bold', FONT.name);
         }
         x += ICON + GAP;
       }

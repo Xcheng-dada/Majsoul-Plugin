@@ -92,7 +92,7 @@ export class majsoul extends plugin {
           permission: 'master'
         },
         {
-          reg: '^#?(开启联动|关闭联动|查看联动池)',
+          reg: '^#?(开启联动|关闭联动)',
           fnc: 'majsoulGacha',
           permission: 'master'
         },
@@ -113,12 +113,14 @@ export class majsoul extends plugin {
           permission: 'all'
         },
         {
-          reg: '^#?雀魂钱包$',
+          // 雀魂仓库
+          reg: '^#?雀魂仓库$',
           fnc: 'majsoulEconomy',
           permission: 'all'
         },
         {
-          reg: '^#?雀魂图鉴',
+          // 雀魂寮舍
+          reg: '^#?雀魂寮舍',
           fnc: 'majsoulEconomy',
           permission: 'all'
         },

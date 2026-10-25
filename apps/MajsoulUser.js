@@ -3,13 +3,15 @@ import plugin from "../../../lib/plugins/plugin.js";
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { getPlayerBrief, resolveFriendId, getPlayerState } from '../utils/MajsoulProtocolClient.js';
 import { drawSearchResultImg } from '../components/render.js';
+import { renderBindingsCard } from '../utils/BindingsCard.js';
 import {
   getUserBindings as lookupUserBindings,
   addUserBinding as saveUserBinding,
   removeUserBinding as deleteUserBinding,
   clearUserBindings as wipeUserBindings,
   setMainUid,
-  getMainUid as lookupMainUid
+  getMainUid as lookupMainUid,
+  getUserBindingsDetailed
 } from '../utils/MajsoulBindings.js';
 
 export class MajsoulUser extends plugin {
@@ -362,11 +364,34 @@ export class MajsoulUser extends plugin {
             
             let message = '📋 您的雀魂绑定：\n\n';
             const mainUid = await this.getMainUid(qid); // 修正为调用新的 getMainUid
-            
+
+            // 出图：绑定列表（主账号高亮）+ 头像昵称 + 指令提示
+            let cardList = null;
+            try {
+                const list = bindings.map(uid => ({ uid, isMain: String(uid) === String(mainUid) }));
+                // 补雀魂昵称：DB 里存过就直接用，否则按 UID 现查（并发 + 超时保护，查不到就只显示 UID）
+                await this._fillMajsoulNames(list, qid);
+                cardList = list;
+                const nickname = (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
+                    .toString().trim().slice(0, 16);
+                const image = await renderBindingsCard({
+                    bindings: list,
+                    nickname,
+                    avatar: `https://q1.qlogo.cn/g?b=qq&nk=${String(qid).replace(/[^\d]/g, '')}&s=640`,
+                    footer: '切换：#雀魂切换 <UID>　解绑：#雀魂解绑 [UID]'
+                });
+                await e.reply(segment.image(image), false);
+                return true;
+            } catch (error) {
+                // 渲染失败退回文字，不影响功能
+                logger.error('[MajsoulUser] 绑定卡片渲染失败:', error);
+            }
+
             for (let i = 0; i < bindings.length; i++) {
                 const uid = bindings[i];
                 const isMain = uid === mainUid;
-                message += `${isMain ? '⭐ ' : '  '}${i + 1}. UID: ${uid}`;
+                const name = cardList?.[i]?.name;
+                message += `${isMain ? '⭐ ' : '  '}${i + 1}. ${name ? `${name}（UID: ${uid}）` : `UID: ${uid}`}`;
                 if (isMain) message += ' (主账号)';
                 message += '\n';
             }
@@ -384,7 +409,36 @@ export class MajsoulUser extends plugin {
         }
         return true;
     }
-    
+
+    /**
+     * 给绑定列表补上雀魂昵称：DB 里存过就直接用，否则按 UID 现查。
+     * 并发查询 + 单个 2.5s 超时，查不到就保持只有 UID，不影响出图。
+     * @param {Array<{uid:string, name?:string, isMain?:boolean}>} list
+     * @param {string|number} qid
+     */
+    async _fillMajsoulNames(list, qid) {
+        if (!Array.isArray(list) || list.length === 0) return;
+        const stored = new Map();
+        try {
+            const rows = await getUserBindingsDetailed(qid);
+            for (const r of rows) if (r.nickname) stored.set(String(r.uid), r.nickname);
+        } catch { }
+
+        await Promise.all(list.map(async (b) => {
+            const uid = String(b.uid);
+            if (stored.has(uid)) { b.name = stored.get(uid); return; }
+            // 未登录雀魂时不做现查，避免无谓等待
+            if (!this.api?.token) return;
+            try {
+                const brief = await Promise.race([
+                    getPlayerBrief(uid),
+                    new Promise(resolve => setTimeout(() => resolve(null), 2500))
+                ]);
+                if (brief?.nickname) b.name = String(brief.nickname);
+            } catch { }
+        }));
+    }
+
     // ========== 数据库操作方法（委托 utils/MajsoulBindings.js，SQLite 持久化） ==========
 
     // 获取用户的所有绑定

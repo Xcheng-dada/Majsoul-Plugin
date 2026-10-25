@@ -47,6 +47,25 @@ export async function getUserBindings(qid) {
 }
 
 /**
+ * 获取用户绑定的完整信息（含已存昵称与主账号标记）
+ * @param {string|number} qid QQ号
+ * @returns {Promise<Array<{uid:string, nickname:string, isMain:boolean}>>}
+ */
+export async function getUserBindingsDetailed(qid) {
+  try {
+    const rows = getStmts(getDatabase()).list.all(String(qid));
+    return rows.map(r => ({
+      uid: String(r.uid),
+      nickname: r.nickname || '',
+      isMain: Number(r.is_main) === 1
+    }));
+  } catch (error) {
+    logger.error('[MajsoulBindings] 获取用户绑定详情失败:', error);
+    return [];
+  }
+}
+
+/**
  * 添加绑定（已存在时不做任何修改，与旧版一致）
  * @param {string|number} qid QQ号
  * @param {string} uid 雀魂UID

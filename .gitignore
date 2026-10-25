@@ -30,3 +30,9 @@ Thumbs.db
 # 本地 API 程序（第三方协议登录二进制，体积大且不可版本化，不入库；仅保留 api/.gitkeep 占位）
 api/*
 !api/.gitkeep
+
+# 字体文件（红豆大黑体 / 文鼎特毛楷简繁 / 汉仪文黑75W 均为商业字体，
+# 版权限制不允许随仓库分发；请自行获取后放入 resources/fonts/，
+# 缺失时自动回退系统字体，地图仍可正常出图。详见 resources/fonts/README.md）
+resources/fonts/*
+!resources/fonts/README.md

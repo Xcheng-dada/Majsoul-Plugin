@@ -636,22 +636,31 @@ export default class GachaCore {
     }
 
     // 获取当前可用池列表（群友可见）：性别池 + 窗口内的自定义UP池 + 已开放的联动池（樱花/竹林双变体）
-    async getAvailablePools() {
+    async getAvailablePools(includePending = false) {
         const data = await this.gachaLoader();
         const pools = [
             { id: 'male', name: '竹林之路' },
             { id: 'female', name: '樱花之路' }
         ];
         // 自定义UP池（贵人/限时UP，带挂靠标注）：排期窗口外的（未到开启时间/已过期）不显示
+        // includePending=true 时（主人视图）把「尚未到开启时间」的池也列出，并标记 pending
         const custom = await this.customPoolLoader();
         if (custom) {
+            const now = Date.now();
             for (const [name, info] of Object.entries(custom)) {
                 if (!Array.isArray(info?.characters) || info.characters.length === 0) continue;
                 const poolId = `custom:${name}`;
-                if (!this._isScheduleOpen(this._getSchedule(poolId))) continue;
+                const sched = this._getSchedule(poolId);
+                const open = this._isScheduleOpen(sched);
+                const pending = !!sched && sched.start_at != null && now < sched.start_at;
+                if (!open && !(includePending && pending)) continue;
                 const base = info.base === 'male' ? '竹林' : '樱花';
                 const tag = Number(info.upRate) === 20 ? '贵人' : 'UP';
-                pools.push({ id: poolId, name: `${name}（${base}·${tag}）` });
+                pools.push({
+                    id: poolId,
+                    name: `${name}（${base}·${tag}）`,
+                    pending: !open && pending
+                });
             }
         }
         // 已开放的联动池：collabopen 标记集合 ∪ 当前全局池指向的联动池（兼容），变体命名逻辑不变

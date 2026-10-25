@@ -3,7 +3,8 @@ import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import { createCanvas } from '@napi-rs/canvas';
 import { loadResImage, drawText, drawRoundRect, drawPartialRoundRect } from '../components/canvas.js';
-import { getRankImg } from '../components/render.js';
+import { FONT } from '../components/fonts.js';
+import { drawRankBadge, drawRankLabel, numFontSize, drawNumText, drawPtChange } from '../utils/RankBadge.js';
 import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
@@ -24,6 +25,7 @@ export const ROOM_FILTERS = {
 // 注意：铜之间/银之间定义保留以备后续牌谱屋支持，但当前受 API 限制不允许作为查询筛选条件
 // 仅禁用段位筛选匹配，玩家昵称中若本身含有“铜”/“银”字样不受影响，不会被过滤或剔除
 const DISABLED_ROOM_FILTERS = new Set(['铜之间', '银之间']);
+
 export function matchRoomFilter(text) {
   for (const rf of Object.values(ROOM_FILTERS)) {
     // 跳过当前禁用的段位（铜/银之间）
@@ -37,6 +39,7 @@ export function matchRoomFilter(text) {
   }
   return { roomFilter: null, matched: null };
 }
+
 
 export class MajsoulRecords extends plugin {
     constructor() {
@@ -356,23 +359,31 @@ export class MajsoulRecords extends plugin {
         const CARD_WIDTH = 720;
         const PADDING = 16;
         const CONTENT_WIDTH = CARD_WIDTH - PADDING * 2;
-        const CARD_HEADER_HEIGHT = 60;
-        const TABLE_HEADER_HEIGHT = 36;
-        const PLAYER_ROW_HEIGHT = 56;
+        // 行内布局（底板不拉伸，按原生比例绘制，故行高压缩得更紧凑）
+        const TABLE_HEADER_HEIGHT = 26;
+        const PLAYER_ROW_HEIGHT = 32;
+        const CARD_BOTTOM = 8;          // 末行与底板下沿的留白
         const CARD_GAP = 16;
         const HEADER_CARD_GAP = 0;
         const FOOTER_HEIGHT = 30;
         
-        const LEVEL_COL_CENTER = PADDING + 475;
-        const LEVEL_ICON_SIZE = 40;
-        const LEVEL_TEXT_OFFSET = LEVEL_ICON_SIZE + 8;
+        const LEVEL_ICON_SIZE = 32;
+        // 字号层级：昵称（最大）> 数字 > 时间 > 表头
+        // ⚠️ 汉仪文黑数字墨迹仅占字号约 73%（15px→11px），与汉字同字号会小一圈，
+        //    故数字一律走 numFontSize() 做等视觉高补偿。
+        const NAME_SIZE = 16;                 // 昵称（红豆大黑体，主信息）
+        const NUM_SIZE = 14;                  // 数字的「视觉」字号基准
+        const NUM_FONT = numFontSize(NUM_SIZE);
+        const TIME_FONT = numFontSize(12);        // 时间
+        const HEAD_SIZE = 12;                 // 表头
         
+        // 列位置（四列：位次 / 玩家 / 段位 / PT变动 / 点数，PT 独立成列便于对齐）
         const COL_X = {
-            rank: PADDING + 30,
-            name: PADDING + 100,
-            level: LEVEL_COL_CENTER,
-            score: PADDING + 590,
-            pt: PADDING + 650
+            rank: PADDING + 16,         // 名次素材左边缘
+            name: PADDING + 78,         // 昵称左对齐
+            levelIcon: PADDING + 300,   // 段位图左边缘
+            pt: PADDING + 470,          // PT 变动左对齐（固定列，不随段位宽度浮动）
+            score: PADDING + 600        // 点数左对齐
         };
         
         let titleImage = null;
@@ -385,9 +396,20 @@ export class MajsoulRecords extends plugin {
             HEADER_HEIGHT = titleHeight - CROP_BOTTOM;
         } catch(e) {}
         
+        // 底板按宽度等比缩放（不拉伸），卡片高度由底板比例决定
+        const cardBg = await loadResImage(mode === '4' ? 'ui/paipu_bg4.png' : 'ui/paipu_bg3.png').catch(() => null);
+        // 行高亮阴影：官方 list_at_the_bottom（150x46，左纯深蓝向右渐隐）
+        const rowShadow = await loadResImage('ui/paipu_row_shadow.png').catch(() => null);
+        const bgH = cardBg ? Math.round(cardBg.height * CONTENT_WIDTH / cardBg.width) : 0;
+        const cardHeight = bgH || (34 + TABLE_HEADER_HEIGHT + PLAYER_ROW_HEIGHT * 4 + CARD_BOTTOM);
+        // 底板缩放比例：暗色带在原图 y=4~52（高 48、中心 24），按此比例换算到当前卡片
+        const bgScale = cardBg ? cardHeight / cardBg.height : 1;
+        const BAND_TOP = Math.round(4 * bgScale);          // 暗色带上沿
+        const BAND_H = Math.round(48 * bgScale);            // 暗色带高度
+        const BAND_CY = BAND_TOP + BAND_H / 2;              // 暗色带垂直中心（标题/时间基线）
+        
         const totalHeight = HEADER_HEIGHT + HEADER_CARD_GAP +
-            records.reduce((sum, record) => sum + CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT, 0) + 
-            (records.length - 1) * CARD_GAP + FOOTER_HEIGHT;
+            records.length * cardHeight + (records.length - 1) * CARD_GAP + FOOTER_HEIGHT;
         
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
         const ctx = canvas.getContext('2d');
@@ -418,97 +440,94 @@ export class MajsoulRecords extends plugin {
         
         for (let i = 0; i < records.length; i++) {
             const record = records[i];
-            const cardHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + record.players.length * PLAYER_ROW_HEIGHT;
             
-            drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, cardHeight, 12, '#1c2128');
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = '#30363d';
-            ctx.stroke();
-            
-            const headerGradient = ctx.createLinearGradient(PADDING, currentY, CARD_WIDTH - PADDING, currentY + CARD_HEADER_HEIGHT);
-            headerGradient.addColorStop(0, '#1e3a5f');
-            headerGradient.addColorStop(1, '#0d1b2a');
-            ctx.fillStyle = headerGradient;
-            
-            ctx.save();
-            drawPartialRoundRect(ctx, PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2, 11, true, true, false, false, null);
-            ctx.clip();
-            ctx.fillRect(PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2);
-            ctx.restore();
-            
-            drawRoundRect(ctx, PADDING + 20, currentY + 15, 60, 30, 4, '#ffd700');
-            ctx.fillStyle = '#1a1a2e';
-            ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('段位场', PADDING + 50, currentY + 30);
-            
-            drawText(ctx, record.roomName, PADDING + 100, currentY + 30, 14, '#e6edf3', 'left', '500');
-            
-            drawText(ctx, record.startTime, CARD_WIDTH - PADDING - 20, currentY + 22, 11, '#8b949e', 'right');
-            drawText(ctx, record.endTime, CARD_WIDTH - PADDING - 20, currentY + 38, 11, '#58a6ff', 'right');
-            
-            currentY += CARD_HEADER_HEIGHT;
-            
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-            
-            ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT);
-            
-            drawText(ctx, '排名', COL_X.rank, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-            drawText(ctx, '参赛玩家', COL_X.name, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'left', '500');
-            drawText(ctx, '段位', LEVEL_COL_CENTER + 20, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-            drawText(ctx, '点数', COL_X.score, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-            drawText(ctx, 'PT', COL_X.pt, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-            
-            currentY += TABLE_HEADER_HEIGHT;
-            
-            for (const player of record.players) {
-                if (player.isTarget) {
-                    ctx.fillStyle = 'rgba(255, 215, 0, 0.06)';
-                    ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, PLAYER_ROW_HEIGHT);
-                    
-                    ctx.fillStyle = '#ffd700';
-                    ctx.fillRect(PADDING, currentY + 4, 3, PLAYER_ROW_HEIGHT - 8);
-                }
-                
-                const rankColors = {
-                    1: ['#ffd700', '#ffaa00'],
-                    2: ['#c0c0c0', '#a0a0a0'],
-                    3: ['#cd7f32', '#b87333'],
-                    4: ['#4a5568', '#2d3748']
-                };
-                const rc = rankColors[player.rank] || rankColors[4];
-                const rankGradient = ctx.createRadialGradient(COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 0, COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 14);
-                rankGradient.addColorStop(0, rc[0]);
-                rankGradient.addColorStop(1, rc[1]);
-                drawRoundRect(ctx, COL_X.rank - 14, currentY + PLAYER_ROW_HEIGHT / 2 - 14, 28, 28, 14, rankGradient);
-                
-                drawText(ctx, player.rank.toString(), COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#ffffff', 'center', 'bold');
-                
-                drawText(ctx, player.nickname, COL_X.name, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#e6edf3', 'left', '500');
-                
-                const LEVEL_IMG_SIZE = 46;
-                let levelImg = null;
-                try {
-                    levelImg = await getRankImg(player.majorRank, player.minorRank, mode, LEVEL_IMG_SIZE, 0);
-                } catch (e) {}
-                if (levelImg) {
-                    ctx.drawImage(levelImg, LEVEL_COL_CENTER - LEVEL_IMG_SIZE / 2, currentY + (PLAYER_ROW_HEIGHT - LEVEL_IMG_SIZE) / 2);
-                    drawText(ctx, player.level, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
-                } else {
-                    drawText(ctx, player.level, LEVEL_COL_CENTER, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'center', '500');
-                }
-                
-                drawText(ctx, player.score.toString(), COL_X.score, currentY + PLAYER_ROW_HEIGHT / 2, 14, '#e6edf3', 'center', 'bold');
-                
-                let ptColor = '#6e7681';
-                if (player.pt > 0) ptColor = '#3fb950';
-                else if (player.pt < 0) ptColor = '#f85149';
-                drawText(ctx, player.ptText, COL_X.pt, currentY + PLAYER_ROW_HEIGHT / 2, 12, ptColor, 'center', '500');
-                
-                currentY += PLAYER_ROW_HEIGHT;
+            if (cardBg) {
+                // 等比绘制：宽度贴合 CONTENT_WIDTH，高度按原生比例（不拉伸变形）
+                ctx.drawImage(cardBg, PADDING, currentY, CONTENT_WIDTH, cardHeight);
+            } else {
+                drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, cardHeight, 12, '#1c2128');
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#30363d';
+                ctx.stroke();
             }
             
+            // 标题带：仿官方「段位场 · 比赛场 · 四人南」，整行金色
+            // 注：roomName 本身已是「比赛场 · 四人南」，只补「段位场 · 」前缀（含尾空格，间距即 1 个空格）
+            // 暗色带在原图 y=4~52，等比缩放后落在 y≈3~37、中心 y≈20，标题与时间都按此居中
+            const bandCy = currentY + BAND_CY;
+            const prefix = '段位场 · ';
+            ctx.font = `normal 17px ${FONT.name}`;
+            const prefixW = ctx.measureText(prefix).width;
+            drawText(ctx, prefix, PADDING + 22, bandCy, 17, '#E8C87E', 'left', 'normal', FONT.name);
+            drawText(ctx, record.roomName || '', PADDING + 22 + prefixW, bandCy, 17, '#E8C87E', 'left', 'normal', FONT.name);
+            // 时间为数字，用汉仪文黑；与标题同一基线
+            drawNumText(ctx, record.startTime, Math.round(CARD_WIDTH / 2) + 30, bandCy, TIME_FONT, '#DCE7F7', 'center');
+            drawNumText(ctx, record.endTime, CARD_WIDTH - PADDING - 20, bandCy, TIME_FONT, '#7E93B4', 'right');
+            
+            // 表头（四列：玩家 / 段位 / PT变动 / 点数）
+            let headerCy = currentY + BAND_TOP + BAND_H + TABLE_HEADER_HEIGHT / 2;
+            drawText(ctx, '玩家', COL_X.name, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+            drawText(ctx, '段位', COL_X.levelIcon, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+            drawText(ctx, 'PT变动', COL_X.pt, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+            drawText(ctx, '点数', COL_X.score, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+            
+            let rowY = currentY + BAND_TOP + BAND_H + TABLE_HEADER_HEIGHT;
+            
+            for (const player of record.players) {
+                const rowCy = rowY + PLAYER_ROW_HEIGHT / 2;
+                
+                // 目标玩家整行高亮：官方 list_at_the_bottom 阴影（左侧实心向右渐隐）
+                if (player.isTarget) {
+                    if (rowShadow) {
+                        // 左端实心区按原比例绘制（不被横拉），其余渐隐段横向拉伸到行尾
+                        const sx = PADDING + 6;
+                        const sw = CONTENT_WIDTH - 12;
+                        const sh = PLAYER_ROW_HEIGHT;
+                        const SOLID_SRC = 40;                      // 原图左侧 40px 为实心区
+                        const SOLID_DST = Math.round(SOLID_SRC * sh / rowShadow.height); // 等比宽度
+                        ctx.drawImage(rowShadow, 0, 0, SOLID_SRC, rowShadow.height, sx, rowY, SOLID_DST, sh);
+                        ctx.drawImage(rowShadow, SOLID_SRC, 0, rowShadow.width - SOLID_SRC, rowShadow.height,
+                            sx + SOLID_DST, rowY, sw - SOLID_DST, sh);
+                    } else {
+                        ctx.fillStyle = 'rgba(10, 18, 40, 0.55)';
+                        ctx.fillRect(PADDING + 6, rowY, CONTENT_WIDTH - 12, PLAYER_ROW_HEIGHT);
+                    }
+                }
+                
+                // 名次：官方艺术字素材「1位」~「4位」（不用文字排版）
+                await drawRankLabel(ctx, player.rank, COL_X.rank, rowCy, 18);
+                
+                // 昵称（红豆大黑体，主信息用最大字号）
+                const nameColor = player.isTarget ? '#FFFFFF' : '#C5D2E8';
+                const nameMaxW = COL_X.levelIcon - COL_X.name - 16;
+                ctx.font = `normal ${NAME_SIZE}px ${FONT.name}`;
+                let nick = String(player.nickname || '');
+                while (nick.length > 1 && ctx.measureText(nick).width > nameMaxW) nick = nick.slice(0, -1);
+                if (nick !== player.nickname) nick = nick.slice(0, -1) + '…';
+                drawText(ctx, nick, COL_X.name, rowCy, NAME_SIZE, nameColor, 'left', 'normal', FONT.name);
+                
+                // 段位：段位图本体 + 右侧星级 / LvN（不含 PT，PT 独立成列）
+                try {
+                    await drawRankBadge(ctx, player, mode, COL_X.levelIcon, rowCy, LEVEL_ICON_SIZE, nameColor);
+                } catch (e) {
+                    drawText(ctx, player.level || '-', COL_X.levelIcon, rowCy, HEAD_SIZE, nameColor, 'left', 'normal', FONT.name);
+                }
+                
+                // PT 变动（独立列，左对齐，正绿负红）
+                // 魂天段的 PT 实际是「魂珠变化」，用亮起的魂珠图标 + 数值表示
+                let ptColor = '#8FA9CC';
+                if (player.pt > 0) ptColor = '#4ADE80';
+                else if (player.pt < 0) ptColor = '#F87171';
+                await drawPtChange(ctx, player, COL_X.pt, rowCy, NUM_FONT, ptColor);
+                
+                // 点数：全部金色，高亮行（阴影条内）用亮金，其余用暗金
+                const scoreColor = player.isTarget ? '#F2D89A' : '#A8894F';
+                drawNumText(ctx, String(player.score), COL_X.score, rowCy, NUM_FONT, scoreColor, 'left');
+                
+                rowY += PLAYER_ROW_HEIGHT;
+            }
+            
+            currentY += cardHeight;
             if (i < records.length - 1) {
                 currentY += CARD_GAP;
             }
@@ -528,3 +547,9 @@ export class MajsoulRecords extends plugin {
         return lookupMainUid(qid);
     }
 }
+
+
+
+
+
+

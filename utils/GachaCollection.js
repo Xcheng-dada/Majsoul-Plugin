@@ -3,7 +3,11 @@
 import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { fileURLToPath } from 'url';
+import { drawText } from '../components/canvas.js';
+import { FONT } from '../components/fonts.js';
+import { drawUiChrome } from './UiFrame.js';
 import { ITEM_TYPE } from './GachaCore.js';
 import { getDatabase } from './MajsoulDatabase.js';
 
@@ -32,12 +36,13 @@ const LIMITED_CHARACTERS = ['西园寺一羽', '东城玄音', '北原莉莉', '
 
 // 网格渲染常量
 const COLS = 6;            // 每行格数
-const PER_PAGE = 48;       // 6列 × 8行 = 48格/页
+const PER_PAGE = 30;       // 6列 × 5行 = 30格/页（最多5行，避免画布过高）
 const CELL = 160;          // 格子尺寸
 const IMG = 150;           // 格内图片尺寸
 const GAP = 8;             // 格间距
-const MARGIN = 12;         // 画布边距
-const TITLE_H = 72;        // 标题栏高度
+const TITLE_H = 72;        // 标题栏最小高度（网格起点下限）
+const TITLE_Y = 52;        // 标题文字中心 y
+const TITLE_GAP = 20;      // 标题文字下沿与网格顶部的间距
 
 const NEW_DAYS = 1;        // 获得后 1 天内显示 NEW 角标
 
@@ -214,21 +219,17 @@ export default class GachaCollection {
     return buf;
   }
 
-  // NEW 角标 SVG buffer
-  _newBadge() {
-    const svg = `<svg width="56" height="28" xmlns="http://www.w3.org/2000/svg">
-      <rect width="56" height="28" rx="7" fill="#EF4444"/>
-      <text x="28" y="20" font-size="17" font-family="Microsoft YaHei, sans-serif" font-weight="bold" fill="#FFFFFF" text-anchor="middle">NEW</text>
-    </svg>`;
-    return Buffer.from(svg);
-  }
-
-  // 标题栏 SVG buffer（长标题自动缩小字号避免溢出）
-  _titleSvg(width, text) {
-    const svg = `<svg width="${width}" height="${TITLE_H}" xmlns="http://www.w3.org/2000/svg">
-      <text x="${width / 2}" y="${TITLE_H / 2 + 13}" font-size="${text.length > 24 ? 32 : 38}" font-family="Microsoft YaHei, sans-serif" font-weight="bold" fill="#1F2937" text-anchor="middle">${text}</text>
-    </svg>`;
-    return Buffer.from(svg);
+  // 官方「新!」角标图片（懒加载 + 缓存）
+  async _newBadgeImage() {
+    if (this._newBadgeImg !== undefined) return this._newBadgeImg;
+    try {
+      const p = path.join(this.resourcesRoot, 'ui', 'badge_new.png');
+      const buf = await fs.readFile(p);
+      this._newBadgeImg = await loadImage(buf);
+    } catch {
+      this._newBadgeImg = null;
+    }
+    return this._newBadgeImg;
   }
 
   /**
@@ -287,63 +288,86 @@ export default class GachaCollection {
     const pageItems = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
     const rows = Math.max(1, Math.ceil(pageItems.length / COLS));
-    const W = MARGIN * 2 + COLS * CELL + (COLS - 1) * GAP;
-    const H = MARGIN + TITLE_H + rows * CELL + (rows - 1) * GAP + MARGIN;
+    // 画布 = 金框内侧留白 + 6列网格 + 标题区 + 底部留白
+    const PAD_X = 70;                 // 左右内边距（金框内侧）
+    const PAD_BOTTOM = 46;            // 底部留白
+    const W = PAD_X * 2 + COLS * CELL + (COLS - 1) * GAP;
+    // 高度按「标题中心 + 标题下沿 + 间距 + 网格 + 底部」计算，保证标题与网格不重叠
+    const TITLE_BLOCK = TITLE_Y + 17 + TITLE_GAP;   // 标题下沿(34px字号半高≈17) + 间距
+    const H = TITLE_BLOCK + rows * CELL + (rows - 1) * GAP + PAD_BOTTOM;
 
-    const kindLabel = kind === 'decorations' ? '装扮图鉴' : '雀士图鉴';
-    // 用户名做 XML 转义，防止群名片里的特殊字符破坏 SVG
-    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const ownerPrefix = userName ? `${esc(userName.slice(0, 16))}的` : '';
+    const kindLabel = kind === 'decorations' ? '装扮寮舍' : '雀士寮舍';
+    const ownerPrefix = userName ? `${String(userName).slice(0, 16)}的` : '';
     const titleText = `${ownerPrefix}${kindLabel} ${got}/${total} (${percent}%) 第 ${page}/${maxPage} 页`;
 
-    // 画布 + 标题
-    const composites = [
-      {
-        input: this._titleSvg(W, titleText),
-        top: MARGIN,
-        left: 0
-      }
-    ];
+    // ---- canvas 渲染（背景 + 滤镜 + 金框）----
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    await drawUiChrome(ctx, W, H, 'liaoshe', 0);
 
-    // 逐格渲染
+    // 标题：红豆大黑体（超宽自动缩字号）
+    // 标题中心固定在 TITLE_Y，字号自适应；与网格之间留出 TITLE_GAP 的间距
+    let titleSize = 34;
+    {
+      const maxW = W - 120;
+      ctx.font = `bold ${titleSize}px ${FONT.name}`;
+      while (titleSize > 18 && ctx.measureText(titleText).width > maxW) {
+        titleSize -= 2;
+        ctx.font = `bold ${titleSize}px ${FONT.name}`;
+      }
+      drawText(ctx, titleText, W / 2, TITLE_Y, titleSize, '#FFE9B8', 'center', 'bold', FONT.name);
+    }
+
+    // 网格起点：水平居中；纵向上保证不与标题文字重叠
+    const gridW = COLS * CELL + (COLS - 1) * GAP;
+    const x0 = Math.round((W - gridW) / 2);
+    // 标题文字下沿 ≈ TITLE_Y + titleSize/2，再加间距
+    const y0 = Math.round(Math.max(TITLE_H, TITLE_Y + titleSize / 2 + TITLE_GAP));
+
     for (let i = 0; i < pageItems.length; i++) {
       const item = pageItems[i];
       const col = i % COLS;
       const row = Math.floor(i / COLS);
-      const left = MARGIN + col * (CELL + GAP);
-      const top = MARGIN + TITLE_H + row * (CELL + GAP);
+      const x = x0 + col * (CELL + GAP);
+      const y = y0 + row * (CELL + GAP);
 
-      // 格子底板（已收集白底 + 灰边，未收集浅灰底）
       const isCollected = !!item.rec;
-      const bgSvg = `<svg width="${CELL}" height="${CELL}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${CELL}" height="${CELL}" rx="12" fill="${isCollected ? '#FFFFFF' : '#EFF1F5'}" stroke="#E5E7EB" stroke-width="2"/>
-      </svg>`;
-      composites.push({ input: Buffer.from(bgSvg), top, left });
+      // 格子底：已收集半透明深色 + 金边，未收集更暗 + 淡金边（避免白底突兀）
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, CELL, CELL, 10);
+      else ctx.rect(x, y, CELL, CELL);
+      ctx.fillStyle = isCollected ? 'rgba(28, 24, 20, 0.55)' : 'rgba(0, 0, 0, 0.55)';
+      ctx.fill();
+      ctx.strokeStyle = isCollected ? 'rgba(214, 175, 110, 0.85)' : 'rgba(214, 175, 110, 0.28)';
+      ctx.lineWidth = isCollected ? 2.5 : 1.5;
+      ctx.stroke();
 
-      // 物品图片
-      const imgBuf = await this._cellImage(item, isCollected);
-      composites.push({
-        input: imgBuf,
-        top: top + Math.floor((CELL - IMG) / 2),
-        left: left + Math.floor((CELL - IMG) / 2)
-      });
+      // 物品图片：已收集彩色，未收集灰度压暗（复用 _cellImage 的 sharp 处理）
+      try {
+        const imgBuf = await this._cellImage(item, isCollected);
+        const img = await loadImage(imgBuf);
+        // 圆角裁切后居中绘制
+        ctx.save();
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(x + 6, y + 6, CELL - 12, CELL - 12, 8);
+        else ctx.rect(x + 6, y + 6, CELL - 12, CELL - 12);
+        ctx.clip();
+        ctx.drawImage(img, x + (CELL - IMG) / 2, y + (CELL - IMG) / 2, IMG, IMG);
+        ctx.restore();
+      } catch { /* 无图片时保留格子底 */ }
 
-      // NEW 角标（右上角）
+      // 官方「新!」角标（右上角）
       if (item.isNew) {
-        composites.push({
-          input: this._newBadge(),
-          top: top + 2,
-          left: left + CELL - 56
-        });
+        try {
+          const nb = await this._newBadgeImage();
+          if (nb) ctx.drawImage(nb, x + CELL - 64 + 6, y - 8, 64, 48);
+        } catch { /* 角标失败跳过 */ }
       }
     }
 
-    // JPEG 质量90：PNG 大图 base64 体积过大，LLOneBot 上传偶发失败会导致接收端"图片已过期"（同 CurrencyCard）
-    const outputBuffer = await sharp({
-      create: { width: W, height: H, channels: 4, background: { r: 248, g: 249, b: 252, alpha: 1 } }
-    })
-      .composite(composites)
-      .flatten({ background: '#FFFFFF' })
+    // JPEG 质量 90：PNG 体积过大，LLOneBot 上传偶发失败导致"图片已过期"
+    const outputBuffer = await sharp(canvas.toBuffer('image/png'))
+      .flatten({ background: '#0d1017' })
       .jpeg({ quality: 90 })
       .toBuffer();
     return `base64://${outputBuffer.toString('base64')}`;

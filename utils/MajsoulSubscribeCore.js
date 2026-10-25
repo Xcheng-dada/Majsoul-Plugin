@@ -5,11 +5,13 @@ import { fileURLToPath } from 'url';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import MajsoulApi from './MajsoulApi.js';
 import { getRoomName, isThreePlayerMode, PlayerLevel } from './PlayerLevel.js';
-import { getRankImg } from '../components/render.js';
+import { drawRankBadge, drawRankLabel, numFontSize, drawNumText, drawPtChange } from './RankBadge.js';
+import { FONT } from '../components/fonts.js';
 
 async function loadResImage(subPath) {
     const fullPath = path.resolve('./plugins/Majsoul-Plugin/resources', subPath);
-    return await loadImage(fullPath);
+    // @napi-rs/canvas 在 Windows 下不认本地路径字符串，须读 Buffer 再解码
+    return await loadImage(await fs.readFile(fullPath));
 }
 
 // 获取当前文件所在目录，用于构建绝对路径
@@ -54,7 +56,7 @@ function formatPlayerInfo(player) {
     return `${nickname}：${score}（${prefix}${gradingScore}）`;
 }
 
-async function generateSubscribeImage(record, targetPlayerId = null) {
+export async function generateSubscribeImage(record, targetPlayerId = null) {
     try {
         const mode = isThreePlayerMode(record.modeId) ? '3' : '4';
         const roomName = getRoomName(record.modeId);
@@ -64,33 +66,49 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         const sortedPlayers = record.players && Array.isArray(record.players) 
             ? [...record.players].sort((a, b) => (b.score || 0) - (a.score || 0)) 
             : [];
-        
+        // ---- 尺寸与字号（与「雀魂对局」卡保持一致）----
         const CARD_WIDTH = 720;
         const PADDING = 16;
         const CONTENT_WIDTH = CARD_WIDTH - PADDING * 2;
-        const CARD_HEADER_HEIGHT = 60;
-        const TABLE_HEADER_HEIGHT = 36;
-        const PLAYER_ROW_HEIGHT = 56;
-        const FOOTER_HEIGHT = 16;
-        
-        const LEVEL_COL_CENTER = PADDING + 475;
-        const LEVEL_ICON_SIZE = 40;
-        const LEVEL_TEXT_OFFSET = LEVEL_ICON_SIZE + 8;
-        
+        // 底板按宽度等比缩放（不拉伸），卡片高度由底板比例决定
+        const cardBg = await loadResImage(mode === '4' ? 'ui/paipu_bg4.png' : 'ui/paipu_bg3.png').catch(() => null);
+        const rowShadow = await loadResImage('ui/paipu_row_shadow.png').catch(() => null);
+        const BAND_H_FALLBACK = 38;
+        const HEAD_H = 26;
+        const ROW_H = 32;
+        const bgH = cardBg ? Math.round(cardBg.height * CONTENT_WIDTH / cardBg.width) : 0;
+        const cardH = bgH || (BAND_H_FALLBACK + HEAD_H + ROW_H * sortedPlayers.length + 8);
+        // 底板缩放比例：暗色带在原图 y=4~52（高 48、中心 24），按此比例换算
+        const bgScale = cardBg ? cardH / cardBg.height : 1;
+        const BAND_TOP = Math.round(4 * bgScale);
+        const BAND_H = Math.round(48 * bgScale);
+        const BAND_CY = BAND_TOP + BAND_H / 2;
+
+        // 字号层级：昵称/位次 > 点数/PT > 时间 > 表头
+        // 注：HYWenHei 无真 bold（bold 会合成加粗使字形变大），数字统一 normal 同字号
+        const NAME_SIZE = 16;
+        const NUM_SIZE = 14;
+        // 汉仪文黑数字墨迹仅占字号 73%，需补偿到与汉字等视觉高
+        const NUM_FONT = numFontSize(NUM_SIZE);
+        const TIME_FONT = numFontSize(12);
+        const HEAD_SIZE = 12;
+
+        const LEVEL_ICON_SIZE = 34;
+        // 列位置（四列：位次 / 玩家 / 段位 / PT变动 / 点数，PT 独立成列便于对齐）
         const COL_X = {
-            rank: PADDING + 30,
-            name: PADDING + 100,
-            level: LEVEL_COL_CENTER,
-            score: PADDING + 590,
-            pt: PADDING + 650
+            rank: PADDING + 16,
+            name: PADDING + 78,
+            levelIcon: PADDING + 300,
+            pt: PADDING + 470,
+            score: PADDING + 600
         };
-        
-        const baseHeight = CARD_HEADER_HEIGHT + TABLE_HEADER_HEIGHT + 
-            sortedPlayers.length * PLAYER_ROW_HEIGHT + FOOTER_HEIGHT;
+
+        const baseHeight = cardH;
         const TOP_PADDING_PERCENT = 0.04;
         const topPadding = Math.floor(baseHeight * TOP_PADDING_PERCENT);
-        // 底部留白需至少容纳页脚文字（FOOTER_HEIGHT/2 + 文字半高），避免截断
-        const bottomPadding = Math.max(Math.floor(baseHeight * TOP_PADDING_PERCENT), 6);
+        // 底部必须给页脚留足空间（原先按 4% 算，小卡片时页脚会压进卡片里）
+        const FOOTER_SPACE = 22;
+        const bottomPadding = FOOTER_SPACE;
         const totalHeight = baseHeight + topPadding + bottomPadding;
         
         const canvas = createCanvas(CARD_WIDTH, totalHeight);
@@ -109,119 +127,112 @@ async function generateSubscribeImage(record, targetPlayerId = null) {
         
         let currentY = topPadding;
         
-        drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, 
-            baseHeight - FOOTER_HEIGHT, 12, '#1c2128');
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = '#30363d';
-        ctx.stroke();
+        if (cardBg) {
+            // 等比绘制：宽度贴合 CONTENT_WIDTH，高度按原生比例（不拉伸变形）
+            ctx.drawImage(cardBg, PADDING, currentY, CONTENT_WIDTH, cardH);
+        } else {
+            drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, cardH, 12, '#1c2128');
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#30363d';
+            ctx.stroke();
+        }
         
-        const headerGradient = ctx.createLinearGradient(PADDING, currentY, CARD_WIDTH - PADDING, currentY + CARD_HEADER_HEIGHT);
-        headerGradient.addColorStop(0, '#1e3a5f');
-        headerGradient.addColorStop(1, '#0d1b2a');
-        ctx.fillStyle = headerGradient;
+        // 标题带：整行金色（官方「段位场 · 比赛场 · 四人南」全部金色），文字红豆大黑体
+        // 注：roomName 本身已是「比赛场 · 四人南」，只补「段位场 · 」前缀（含尾空格）
+        // 暗色带在原图 y=4~52，等比缩放后中心 y≈20，标题与时间都按此居中
+        const bandCy = currentY + BAND_CY;
+        const prefix = '段位场 · ';
+        ctx.font = `normal 17px ${FONT.name}`;
+        const prefixW = ctx.measureText(prefix).width;
+        drawText(ctx, prefix, PADDING + 22, bandCy, 17, '#E8C87E', 'left', 'normal', FONT.name);
+        drawText(ctx, roomName, PADDING + 22 + prefixW, bandCy, 17, '#E8C87E', 'left', 'normal', FONT.name);
+        // 时间为数字，用汉仪文黑；结束时间用暗色与开始区分，与标题同一基线
+        drawNumText(ctx, startTime, Math.round(CARD_WIDTH / 2) + 30, bandCy, TIME_FONT, '#DCE7F7', 'center');
+        drawNumText(ctx, endTime, CARD_WIDTH - PADDING - 20, bandCy, TIME_FONT, '#7E93B4', 'right');
         
-        ctx.save();
-        drawRoundRect(ctx, PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2, 11, null);
-        ctx.clip();
-        ctx.fillRect(PADDING + 1, currentY + 1, CONTENT_WIDTH - 2, CARD_HEADER_HEIGHT - 2);
-        ctx.restore();
+        // 表头（四列：玩家 / 段位 / PT变动 / 点数）
+        const headerCy = currentY + BAND_TOP + BAND_H + HEAD_H / 2;
+        drawText(ctx, '玩家', COL_X.name, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+        drawText(ctx, '段位', COL_X.levelIcon, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+        drawText(ctx, 'PT变动', COL_X.pt, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
+        drawText(ctx, '点数', COL_X.score, headerCy, HEAD_SIZE, '#7E93B4', 'left', 'normal', FONT.name);
         
-        drawRoundRect(ctx, PADDING + 20, currentY + 15, 60, 30, 4, '#ffd700');
-        ctx.fillStyle = '#1a1a2e';
-        ctx.font = 'bold 12px "Microsoft YaHei", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('段位场', PADDING + 50, currentY + 30);
-        
-        drawText(ctx, roomName, PADDING + 100, currentY + 30, 14, '#e6edf3', 'left', '500');
-        
-        drawText(ctx, startTime, CARD_WIDTH - PADDING - 20, currentY + 22, 11, '#8b949e', 'right');
-        drawText(ctx, endTime, CARD_WIDTH - PADDING - 20, currentY + 38, 11, '#58a6ff', 'right');
-        
-        currentY += CARD_HEADER_HEIGHT;
-        
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-        ctx.save();
-        drawRoundRect(ctx, PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT, 11, null);
-        ctx.clip();
-        ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, TABLE_HEADER_HEIGHT);
-        ctx.restore();
-        
-        drawText(ctx, '排名', COL_X.rank, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-        drawText(ctx, '参赛玩家', COL_X.name, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'left', '500');
-        drawText(ctx, '段位', LEVEL_COL_CENTER + 20, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-        drawText(ctx, '点数', COL_X.score, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-        drawText(ctx, 'PT', COL_X.pt, currentY + TABLE_HEADER_HEIGHT / 2, 11, '#6e7681', 'center', '500');
-        
-        currentY += TABLE_HEADER_HEIGHT;
+        let rowY = currentY + BAND_TOP + BAND_H + HEAD_H;
         
         for (let i = 0; i < sortedPlayers.length; i++) {
             const player = sortedPlayers[i];
             const rank = i + 1;
+            const rowCy = rowY + ROW_H / 2;
             
             const isTarget = targetPlayerId && (player.id === targetPlayerId || player.playerId === targetPlayerId);
+            
+            // 目标玩家整行高亮：官方 list_at_the_bottom 阴影（左侧实心向右渐隐）
             if (isTarget) {
-                ctx.fillStyle = 'rgba(255, 215, 0, 0.06)';
-                ctx.fillRect(PADDING, currentY, CONTENT_WIDTH, PLAYER_ROW_HEIGHT);
-                
-                ctx.fillStyle = '#ffd700';
-                ctx.fillRect(PADDING, currentY + 4, 3, PLAYER_ROW_HEIGHT - 8);
+                if (rowShadow) {
+                    const sx = PADDING + 6;
+                    const sw = CONTENT_WIDTH - 12;
+                    const SOLID_SRC = 40;
+                    const SOLID_DST = Math.round(SOLID_SRC * ROW_H / rowShadow.height);
+                    ctx.drawImage(rowShadow, 0, 0, SOLID_SRC, rowShadow.height, sx, rowY, SOLID_DST, ROW_H);
+                    ctx.drawImage(rowShadow, SOLID_SRC, 0, rowShadow.width - SOLID_SRC, rowShadow.height,
+                        sx + SOLID_DST, rowY, sw - SOLID_DST, ROW_H);
+                } else {
+                    ctx.fillStyle = 'rgba(10, 18, 40, 0.55)';
+                    ctx.fillRect(PADDING + 6, rowY, CONTENT_WIDTH - 12, ROW_H);
+                }
             }
             
-            const rankColors = {
-                1: ['#ffd700', '#ffaa00'],
-                2: ['#c0c0c0', '#a0a0a0'],
-                3: ['#cd7f32', '#b87333'],
-                4: ['#4a5568', '#2d3748']
-            };
-            const rc = rankColors[rank] || rankColors[4];
-            const rankGradient = ctx.createRadialGradient(COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 0, COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 14);
-            rankGradient.addColorStop(0, rc[0]);
-            rankGradient.addColorStop(1, rc[1]);
-            drawRoundRect(ctx, COL_X.rank - 14, currentY + PLAYER_ROW_HEIGHT / 2 - 14, 28, 28, 14, rankGradient);
+            // 名次：官方艺术字素材「1位」~「4位」（不用文字排版）
+            await drawRankLabel(ctx, rank, COL_X.rank, rowCy, 18);
             
-            drawText(ctx, rank.toString(), COL_X.rank, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#ffffff', 'center', 'bold');
-            
+            // 昵称（红豆大黑体，主信息）
+            const nameColor = isTarget ? '#FFFFFF' : '#C5D2E8';
             const nickname = player.nickname || player.name || '未知玩家';
-            drawText(ctx, nickname, COL_X.name, currentY + PLAYER_ROW_HEIGHT / 2, 13, '#e6edf3', 'left', '500');
+            const nameMaxW = COL_X.levelIcon - COL_X.name - 16;
+            ctx.font = `normal ${NAME_SIZE}px ${FONT.name}`;
+            let nick = String(nickname);
+            while (nick.length > 1 && ctx.measureText(nick).width > nameMaxW) nick = nick.slice(0, -1);
+            if (nick !== nickname) nick = nick.slice(0, -1) + '…';
+            drawText(ctx, nick, COL_X.name, rowCy, NAME_SIZE, nameColor, 'left', 'normal', FONT.name);
             
-            let levelText = '';
+            // 段位徽章 + 右侧星级 / LvN
             let majorRank = '';
             let minorRank = 0;
+            let levelText = '';
             if (player.level !== undefined) {
                 const level = new PlayerLevel(player.level, 0);
                 levelText = level.full_tag;
                 majorRank = level.major_rank;
                 minorRank = level.minor_rank;
             }
-
-            const LEVEL_IMG_SIZE = 46;
-            let levelImg = null;
+            let afterIconX = COL_X.levelIcon;
             try {
-                levelImg = await getRankImg(majorRank, minorRank, mode, LEVEL_IMG_SIZE, 0);
-            } catch (e) {}
-            if (levelImg) {
-                ctx.drawImage(levelImg, LEVEL_COL_CENTER - LEVEL_IMG_SIZE / 2, currentY + (PLAYER_ROW_HEIGHT - LEVEL_IMG_SIZE) / 2);
-                drawText(ctx, levelText, LEVEL_COL_CENTER + LEVEL_TEXT_OFFSET / 2, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'left', '500');
-            } else {
-                drawText(ctx, levelText, LEVEL_COL_CENTER, currentY + PLAYER_ROW_HEIGHT / 2, 12, '#e6edf3', 'center', '500');
+                afterIconX = await drawRankBadge(
+                    ctx,
+                    { majorRank, minorRank, level: levelText },
+                    mode, COL_X.levelIcon, rowCy, LEVEL_ICON_SIZE, nameColor
+                );
+            } catch (e) {
+                drawText(ctx, levelText || '-', COL_X.levelIcon, rowCy, HEAD_SIZE, nameColor, 'left', 'normal', FONT.name);
+                afterIconX = COL_X.levelIcon + 64;
             }
             
-            const score = player.score || 0;
-            drawText(ctx, score.toString(), COL_X.score, currentY + PLAYER_ROW_HEIGHT / 2, 14, '#e6edf3', 'center', 'bold');
-            
+            // PT 变动（独立列，左对齐，正绿负红）
             const gradingScore = player.gradingScore || player.delta || 0;
-            const prefix = gradingScore > 0 ? '+' : '';
-            let ptColor = '#6e7681';
-            if (gradingScore > 0) ptColor = '#3fb950';
-            else if (gradingScore < 0) ptColor = '#f85149';
-            drawText(ctx, `${prefix}${gradingScore}`, COL_X.pt, currentY + PLAYER_ROW_HEIGHT / 2, 12, ptColor, 'center', '500');
+            const ptPrefix = gradingScore > 0 ? '+' : '';
+            let ptColor = '#8FA9CC';
+            if (gradingScore > 0) ptColor = '#4ADE80';
+            else if (gradingScore < 0) ptColor = '#F87171';
+            await drawPtChange(ctx, { pt: gradingScore, ptText: `${ptPrefix}${gradingScore}`, majorRank }, COL_X.pt, rowCy, NUM_FONT, ptColor);
             
-            currentY += PLAYER_ROW_HEIGHT;
+            // 点数：全部金色，高亮行（阴影条内）用亮金，其余用暗金
+            const score = player.score || 0;
+            drawNumText(ctx, String(score), COL_X.score, rowCy, NUM_FONT, isTarget ? '#F2D89A' : '#A8894F', 'left');
+            
+            rowY += ROW_H;
         }
         
-        const footerY = totalHeight - bottomPadding;
-        // 页脚：无背景、无分隔线、单行纯文字（仅署名与数据来源）
+        // 页脚：署名与数据来源（保持原样）
         ctx.font = 'bold 11px "Microsoft YaHei", sans-serif';
         ctx.fillStyle = '#FFFFFF';
         ctx.textAlign = 'center';
@@ -475,21 +486,23 @@ export default class MajsoulSubscribeCore {
             const groupSubs = allSubs.filter(s => s.gid == groupId);
             
             if (groupSubs.length === 0) {
-                return { success: false, message: `本群暂无${mode === 4 ? '四麻' : '三麻'}对局订阅。` };
+                return { success: false, message: `本群暂无${mode === 4 ? '四麻' : '三麻'}对局订阅。`, subs: [] };
             }
             
+            const subs = [];
             let message = `📋 本群${mode === 4 ? '四麻' : '三麻'}订阅状态 (共${groupSubs.length}个):\n`;
             
             for (let i = 0; i < groupSubs.length; i++) {
                 const sub = groupSubs[i];
                 const status = sub.record_on ? '🔔 开启' : '🔕 关闭';
                 const nickname = sub.nickname || (await this.getNicknameById(sub.id, mode)) || `ID:${sub.id}`;
+                subs.push({ id: String(sub.id), nickname, active: !!sub.record_on });
                 message += `${i + 1}. ${nickname} (${sub.id}) - ${status}\n`;
             }
             
             message += '\n提示: 使用 #关闭雀魂订阅 [昵称] 可临时关闭播报。';
             
-            return { success: true, message };
+            return { success: true, message, subs };
         } catch (error) {
             this._logger.error(`[MajsoulSubscribeCore] 查询订阅状态失败: ${error.message}`);
             return { success: false, message: '查询失败，请稍后重试。' };
@@ -662,3 +675,8 @@ export default class MajsoulSubscribeCore {
     
     
 }
+
+
+
+
+
