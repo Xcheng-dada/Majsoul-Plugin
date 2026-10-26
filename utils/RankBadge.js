@@ -54,18 +54,21 @@ export function drawNumText (ctx, text, x, cy, size, color, align = 'left', fami
   if (!s) return 0;
   ctx.font = `normal ${size}px ${family}`;
   const m = ctx.measureText(s);
-  // 用 middle 基线绘制时，墨迹相对 y 的偏移量：
-  //   actualBoundingBoxAscent/Descent 是相对「alphabetic 基线」的，
-  //   而 middle 基线的参考点是 em 盒中心 ≈ (ascent+descent)/2 处。
-  // 直接取 middle 基线下的墨迹中心相对偏移：
+
+  // ⚠️ 垂直居中只按「数字 + 小数点」本体算，忽略 + − 这类符号。
+  //    汉仪文黑的减号 U+2212 是下沉字符（descent 大），若把它算进墨迹中心，
+  //    「−0.4」的绘制点会被推低约 3px，看起来比魂珠偏下。
+  const core = s.replace(/[^0-9.]/g, '');
+  const dm = core ? ctx.measureText(core) : m;
+  const inkAsc = dm.actualBoundingBoxAscent || 0;
+  const inkDesc = dm.actualBoundingBoxDescent || 0;
+
   const emAscent = m.fontBoundingBoxAscent || size * 0.88;
   const emDescent = m.fontBoundingBoxDescent || size * 0.12;
-  const midFromBaseline = (emAscent - emDescent) / 2;      // middle 基线到 alphabetic 基线的距离
-  const inkCenterFromBaseline = ((m.actualBoundingBoxAscent || 0) - (m.actualBoundingBoxDescent || 0)) / 2;
-  // middle 基线下，墨迹中心相对绘制点 y 的偏移（负=偏上）
+  const midFromBaseline = (emAscent - emDescent) / 2;
+  const inkCenterFromBaseline = (inkAsc - inkDesc) / 2;
   const inkShift = inkCenterFromBaseline - midFromBaseline;
-  // 反推：要让墨迹中心落在 cy，绘制点应为 cy - inkShift
-  // +1.5 为实测残差（汉仪文黑各字号下墨迹中心普遍比目标高约 1.5px），补掉后与中文对齐
+  // +1.5 为实测残差（汉仪文黑各字号下墨迹中心普遍比目标高约 1.5px）
   const drawY = cy - inkShift + 1.5;
 
   const prevAlign = ctx.textAlign;
@@ -138,16 +141,16 @@ export async function drawPtChange (ctx, player, x, cy, size, color, ctxInfo = {
   if (beads == null) {
     // 无法判定（缺 rank 等）时退回原始分值
     const pt = Number(player.pt) || 0;
-    const t = pt === 0 ? '' : (pt > 0 ? `+${pt.toFixed(1)}` : pt.toFixed(1));
-    if (t) {
-      drawNumText(ctx, t, curX, cy, size, color, 'left');
-      curX += ctx.measureText(t).width;
-    }
-    return curX - x;
+    const t = pt === 0 ? '0.0' : (pt > 0 ? `+${pt.toFixed(1)}` : `-${Math.abs(pt).toFixed(1)}`);
+    drawNumText(ctx, t, curX, cy, size, color, 'left');
+    return curX - x + ctx.measureText(t).width;
   }
 
-  if (beads === 0) return curX - x;
-  const text = `${beads > 0 ? '+' : '−'}${Math.abs(beads).toFixed(1)}`;
+  // 0 变化也要显示（三麻 2 位官方即为 0）
+  // ⚠️ 减号必须用 ASCII '-'（U+2D）——汉仪文黑没有 U+2212「−」的字形，
+  //    会回退到其他字体并画成下沉横线，导致整串数字视觉偏下
+  const text = beads === 0 ? '0.0'
+    : `${beads > 0 ? '+' : '-'}${Math.abs(beads).toFixed(1)}`;
   drawNumText(ctx, text, curX, cy, size, color, 'left');
   return curX - x + ctx.measureText(text).width;
 }
