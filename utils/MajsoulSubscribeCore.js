@@ -6,6 +6,7 @@ import { createCanvas, loadImage } from '@napi-rs/canvas';
 import MajsoulApi from './MajsoulApi.js';
 import { getRoomName, isThreePlayerMode, PlayerLevel } from './PlayerLevel.js';
 import { drawRankBadge, drawRankLabel, numFontSize, drawNumText, drawPtChange } from './RankBadge.js';
+import { isEastRoom } from './StableRank.js';
 import { FONT } from '../components/fonts.js';
 
 async function loadResImage(subPath) {
@@ -218,12 +219,25 @@ export async function generateSubscribeImage(record, targetPlayerId = null) {
             }
             
             // PT 变动（独立列，左对齐，正绿负红）
+            // 魂天段的 PT 实际是「魂珠变化」：按顺位+场次查官方表，同桌全魂天时翻倍
             const gradingScore = player.gradingScore || player.delta || 0;
             const ptPrefix = gradingScore > 0 ? '+' : '';
             let ptColor = '#8FA9CC';
             if (gradingScore > 0) ptColor = '#4ADE80';
             else if (gradingScore < 0) ptColor = '#F87171';
-            await drawPtChange(ctx, { pt: gradingScore, ptText: `${ptPrefix}${gradingScore}`, majorRank }, COL_X.pt, rowCy, NUM_FONT, ptColor);
+            await drawPtChange(
+                ctx,
+                { pt: gradingScore, ptText: `${ptPrefix}${gradingScore}`, majorRank, rank },
+                COL_X.pt, rowCy, NUM_FONT, ptColor,
+                {
+                    east: isEastRoom(record.modeId),
+                    allKonten: sortedPlayers.length > 0 && sortedPlayers.every(p => {
+                        const lv = p.level !== undefined ? new PlayerLevel(p.level, 0) : null;
+                        return lv && lv.major_rank === '魂天';
+                    }),
+                    playerCount: sortedPlayers.length
+                }
+            );
             
             // 点数：全部金色，高亮行（阴影条内）用亮金，其余用暗金
             const score = player.score || 0;

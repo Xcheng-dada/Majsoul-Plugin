@@ -88,7 +88,7 @@ const ROOMS_BY_MODE = {
 }
 
 /** 房间 id → 是否为东场（东风战）。东/南的 PT 表与段位价值标尺都不同。 */
-const isEastRoom = roomId => (ROOMS_BY_MODE[3].east.includes(Number(roomId)) || ROOMS_BY_MODE[4].east.includes(Number(roomId)))
+export const isEastRoom = roomId => (ROOMS_BY_MODE[3].east.includes(Number(roomId)) || ROOMS_BY_MODE[4].east.includes(Number(roomId)))
 
 /**
  * 段位价值标尺：把「罚分」换算成连续段位值 value。

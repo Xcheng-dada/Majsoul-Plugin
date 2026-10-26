@@ -9,6 +9,7 @@ import MajsoulApi from '../utils/MajsoulApi.js';
 import { PlayerLevel, ROOM_LEVEL_MAP_3P, ROOM_LEVEL_MAP_4P } from '../utils/PlayerLevel.js';
 import { getFeatureConfigItem } from '../utils/Config.js';
 import { getMainUid as lookupMainUid } from '../utils/MajsoulBindings.js';
+import { isEastRoom } from '../utils/StableRank.js';
 
 // 段位房筛选：关键词 -> { name(显示名), ids: { 4:[四麻modeId], 3:[三麻modeId] }, aliases(模糊匹配词) }
 // modeId 取自 utils/PlayerLevel.js 的 ROOM_LEVEL_MAP
@@ -334,13 +335,22 @@ export class MajsoulRecords extends plugin {
                 };
             });
             
+            // 局上下文（供魂天魂珠变化计算）
+            // 东场判定用 modeId 精确查表（isEastRoom），不依赖房间名字符串
+            const rn = this._getRoomName(record.modeId, modeName === '四麻' ? 4 : 3) || '';
+            const east = isEastRoom(record.modeId);
+
             return {
                 index: index,
-                roomName: this._getRoomName(record.modeId, modeName === '四麻' ? 4 : 3),
+                roomName: rn,
                 startTime: this._formatTime(record.startTime),
                 endTime: this._formatTime(record.endTime),
                 link: record.uuid ? this._getRecordLink(record.uuid, playerId) : '',
-                players: players
+                players: players,
+                east: east,
+                // 同桌全部为魂天时，官方魂珠变化翻倍
+                allKonten: players.length > 0 && players.every(p => p.majorRank === '魂天'),
+                playerCount: players.length
             };
         });
     }
@@ -514,11 +524,15 @@ export class MajsoulRecords extends plugin {
                 }
                 
                 // PT 变动（独立列，左对齐，正绿负红）
-                // 魂天段的 PT 实际是「魂珠变化」，用亮起的魂珠图标 + 数值表示
+                // 魂天段的 PT 实际是「魂珠变化」：按顺位+场次查官方表，同桌全魂天时翻倍
                 let ptColor = '#8FA9CC';
                 if (player.pt > 0) ptColor = '#4ADE80';
                 else if (player.pt < 0) ptColor = '#F87171';
-                await drawPtChange(ctx, player, COL_X.pt, rowCy, NUM_FONT, ptColor);
+                await drawPtChange(ctx, player, COL_X.pt, rowCy, NUM_FONT, ptColor, {
+                    east: record.east,
+                    allKonten: record.allKonten,
+                    playerCount: record.playerCount
+                });
                 
                 // 点数：全部金色，高亮行（阴影条内）用亮金，其余用暗金
                 const scoreColor = player.isTarget ? '#F2D89A' : '#A8894F';

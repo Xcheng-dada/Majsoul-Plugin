@@ -1,4 +1,4 @@
-﻿// plugins/Majsoul-Plugin/utils/RankBadge.js
+// plugins/Majsoul-Plugin/utils/RankBadge.js
 // 段位徽章绘制：段位图本体 + 右侧星级 / LvN（对外复用，供对局记录卡与订阅推送共用）
 //
 // 官方布局：
@@ -96,27 +96,35 @@ const RANK_WEI_INK = { x: 0, y: 0, w: 44, h: 45 };
 /**
  * 绘制 PT 变动。
  *
- * 普通段位（初心~雀圣）：纯数字 `+128` / `-15`
- * 魂天：PT 实际是「魂珠变化」，最多 ±1.0 颗魂珠 —— 用亮起的魂珠图标 + 数值表示，
- *       如「🔵+1.0」「🔵-1.0」。数值为 0 时只有图标不带数字。
+ * 普通段位（初心~雀圣）：纯数字 `+152` / `-11`
+ *
+ * 魂天：PT 列实际是「魂珠变化」，用亮起的魂珠图标 + 数值表示。
+ *   变化量**不是固定 ±1.0**，按官方规则由「顺位 + 场次」决定：
+ *     四麻 东场 1/2/3/4 位 → +0.3/+0.1/−0.1/−0.3
+ *     四麻 南场 1/2/3/4 位 → +0.5/+0.2/−0.2/−0.5
+ *     三麻 东场 1/2/3   位 → +0.3/ 0.0/−0.3
+ *     三麻 南场 1/2/3   位 → +0.5/ 0.0/−0.5
+ *   另有规则：**同桌全部为魂天时变化量翻倍**。
  *
  * @param {CanvasRenderingContext2D} ctx
- * @param {{pt:number, ptText:string, majorRank:string}} player
+ * @param {{pt:number, ptText:string, majorRank:string, rank?:number}} player
  * @param {number} x 左边缘
  * @param {number} cy 行垂直中心
  * @param {number} size 数字 font-size
  * @param {string} color 数字颜色
+ * @param {{east?:boolean, allKonten?:boolean, playerCount?:number}} [ctxInfo]
+ *   east 是否东风战；allKonten 同桌是否全魂天；playerCount 人数（3/4）
  * @returns {Promise<number>} 占用宽度
  */
-export async function drawPtChange (ctx, player, x, cy, size, color) {
+export async function drawPtChange (ctx, player, x, cy, size, color, ctxInfo = {}) {
   const isKonten = player.majorRank === '魂天';
-  const pt = Number(player.pt) || 0;
 
   if (!isKonten) {
     return drawNumText(ctx, player.ptText, x, cy, size, color, 'left');
   }
 
-  // 魂天：魂珠图标 + 最多 ±1.0 的魂珠变化
+  // 魂天：按官方规则算魂珠变化量
+  const beads = kontenBeadsDelta(player.rank, ctxInfo);
   // 魂珠画布 20x24（墨迹占满），放大到略高于数字墨迹才显得协调
   const pearlH = Math.round(size * 1.15);
   let curX = x;
@@ -127,13 +135,47 @@ export async function drawPtChange (ctx, player, x, cy, size, color) {
     curX += pearlW + Math.max(3, Math.round(size * 0.16));
   } catch (e) { /* 素材缺失则只显示数字 */ }
 
-  // 魂珠变化最多 1.0 颗，保留一位小数
-  const text = pt === 0 ? '' : (pt > 0 ? `+${Math.min(1, pt).toFixed(1)}` : `-${Math.min(1, Math.abs(pt)).toFixed(1)}`);
-  if (text) {
-    drawNumText(ctx, text, curX, cy, size, color, 'left');
-    curX += ctx.measureText(text).width;
+  if (beads == null) {
+    // 无法判定（缺 rank 等）时退回原始分值
+    const pt = Number(player.pt) || 0;
+    const t = pt === 0 ? '' : (pt > 0 ? `+${pt.toFixed(1)}` : pt.toFixed(1));
+    if (t) {
+      drawNumText(ctx, t, curX, cy, size, color, 'left');
+      curX += ctx.measureText(t).width;
+    }
+    return curX - x;
   }
-  return curX - x;
+
+  if (beads === 0) return curX - x;
+  const text = `${beads > 0 ? '+' : '−'}${Math.abs(beads).toFixed(1)}`;
+  drawNumText(ctx, text, curX, cy, size, color, 'left');
+  return curX - x + ctx.measureText(text).width;
+}
+
+/**
+ * 魂天单局魂珠变化量（官方规则）。
+ * @param {number|undefined} rank 1-based 顺位
+ * @param {{east?:boolean, allKonten?:boolean, playerCount?:number}} ctxInfo
+ * @returns {number|null} 变化量（已含同桌全魂天翻倍），无法判定时 null
+ */
+export function kontenBeadsDelta (rank, ctxInfo = {}) {
+  const r = Number(rank);
+  if (!Number.isFinite(r) || r < 1) return null;
+  const n = ctxInfo.playerCount === 3 ? 3 : 4;
+  const east = !!ctxInfo.east;
+
+  // 官方魂珠变化表（四麻/三麻 × 东场/南场）
+  const TABLE = {
+    4: { east: [0.3, 0.1, -0.1, -0.3], south: [0.5, 0.2, -0.2, -0.5] },
+    3: { east: [0.3, 0, -0.3], south: [0.5, 0, -0.5] }
+  };
+  const arr = TABLE[n][east ? 'east' : 'south'];
+  if (!arr || r > arr.length) return null;
+
+  let d = arr[r - 1];
+  // 同桌全部为魂天 → 变化量翻倍
+  if (ctxInfo.allKonten) d *= 2;
+  return d;
 }
 
 /**
