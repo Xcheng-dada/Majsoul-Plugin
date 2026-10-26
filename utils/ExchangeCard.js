@@ -112,9 +112,11 @@ function drawMixed (ctx, text, x, y, size, color, align, cjkFont, numFont, weigh
  *   success 金色按钮·兑换成功；insufficient 灰色按钮·信仰不足；
  *   owned 灰色按钮 + 「已拥有」印章；unopened 灰度头像 + 「未开启兑换」；
  *   notfound 仅在头像位置显示「雀士未找到」，不画头像/名字/价格/按钮
+ * @param {string} [options.nickname] 操作者昵称（底部，与头像一起标识是谁兑换的）
+ * @param {string} [options.avatar]   操作者头像 URL 或本地路径
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderExchangeCard ({ name, isLimited = false, cost = 0, faith = null, portraitPath = null, state = 'success' }) {
+export async function renderExchangeCard ({ name, isLimited = false, cost = 0, faith = null, portraitPath = null, state = 'success', nickname = '', avatar = '' }) {
   const nameText = String(name || '');
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -164,10 +166,69 @@ export async function renderExchangeCard ({ name, isLimited = false, cost = 0, f
     ctx.stroke();
   }
 
+  // ---- 底部：操作者头像 + 昵称（让人知道是谁兑换的）----
+  const FOOTER_AV = 40;
+  const FOOTER_CY = BTN_Y + BTN_H + 70;
+  const drawUserFooter = async () => {
+    const nm = String(nickname || '').trim();
+    if (!nm && !avatar) return;
+
+    // 先量昵称宽度，头像+昵称作为整体水平居中
+    let nameSize = 26;
+    ctx.font = `bold ${nameSize}px ${FONT.name}`;
+    while (nameSize > 14 && ctx.measureText(nm).width > 420) {
+      nameSize -= 2;
+      ctx.font = `bold ${nameSize}px ${FONT.name}`;
+    }
+    const nameW = nm ? ctx.measureText(nm).width : 0;
+    const showAv = !!avatar;
+    const gap = 14;
+    const totalW = (showAv ? FOOTER_AV : 0) + (showAv && nameW ? gap : 0) + nameW;
+    let x = Math.round((W - totalW) / 2);
+
+    if (showAv) {
+      try {
+        let buf = null;
+        if (/^https?:\/\//.test(avatar)) {
+          const res = await fetch(avatar);
+          if (res.ok) buf = Buffer.from(await res.arrayBuffer());
+        } else {
+          buf = await fs.promises.readFile(avatar);
+        }
+        if (buf) {
+          const img = await loadImage(buf);
+          const c = createCanvas(FOOTER_AV, FOOTER_AV);
+          const cx = c.getContext('2d');
+          cx.save();
+          cx.beginPath();
+          if (typeof cx.roundRect === 'function') cx.roundRect(0, 0, FOOTER_AV, FOOTER_AV, 10);
+          else cx.rect(0, 0, FOOTER_AV, FOOTER_AV);
+          cx.clip();
+          const side = Math.min(img.width, img.height);
+          cx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, FOOTER_AV, FOOTER_AV);
+          cx.restore();
+          cx.beginPath();
+          if (typeof cx.roundRect === 'function') cx.roundRect(1, 1, FOOTER_AV - 2, FOOTER_AV - 2, 10);
+          else cx.rect(0, 0, FOOTER_AV, FOOTER_AV);
+          cx.strokeStyle = 'rgba(214,175,110,0.75)';
+          cx.lineWidth = 2;
+          cx.stroke();
+          ctx.drawImage(c, x, FOOTER_CY - FOOTER_AV / 2);
+        }
+      } catch { /* 头像失败静默跳过 */ }
+      x += FOOTER_AV + (nameW ? gap : 0);
+    }
+
+    if (nm) {
+      drawMixed(ctx, nm, x, FOOTER_CY, nameSize, '#D9C9A8', 'left', FONT.name, FONT.hei);
+    }
+  };
+
   // ---- 雀士名不存在：头像位置显示「雀士未找到」，其余内容全部不画 ----
   if (state === 'notfound') {
     drawMixed(ctx, '雀士未找到', W / 2, PORTRAIT_Y + PORTRAIT / 2, 72, '#93A2BC',
       'center', FONT.kai, FONT.hei);
+    await drawUserFooter();
     return `base64://${canvas.toBuffer('image/png').toString('base64')}`;
   }
 
@@ -291,9 +352,13 @@ export async function renderExchangeCard ({ name, isLimited = false, cost = 0, f
 
   // ---- 剩余信仰 ----
   if (faith != null) {
-    drawMixed(ctx, `剩余信仰 ${faith}`, W / 2, BTN_Y + BTN_H + 32, 26, '#8FA3C4',
+    drawMixed(ctx, `剩余信仰 ${faith}`, W / 2, BTN_Y + BTN_H + 24, 26, '#8FA3C4',
       'center', FONT.hei, FONT.hei, 'normal');
   }
 
+  // ---- 底部：操作者头像 + 昵称 ----
+  await drawUserFooter();
+
   return `base64://${canvas.toBuffer('image/png').toString('base64')}`;
 }
+

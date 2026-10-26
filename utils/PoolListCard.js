@@ -36,10 +36,15 @@ const NAME_SIZE = 19;
 const UP_LABEL_GAP = 56;       // 当前池艺术字与 UP 区的间距
 
 const ROW_ART_H = 44;
-const ROW_H = 64;
+const ROW_H = 64;          // 普通行（只有池名）
 const ROW_GAP = 8;
+
+// 顶部当前池 UP 装扮缩略图（与 UP 雀士头像同尺寸，视觉才统一）
+const TOP_DECOR_TS = AV;
 const FOOTER_H = 92;                   // 底部：头像+昵称（左）与提示（右）
 const FOOTER_AV = 64;                  // 底部头像尺寸
+// 「剩余时间」角标与倒计时数字之间的间距（角标图自带 2px 透明边，故留 12px 才不显黏）
+const BADGE_TEXT_GAP = 12;
 
 const _cache = new Map();
 async function loadRes (p) {
@@ -60,26 +65,46 @@ function findPersonImage (name) {
   return null;
 }
 
+const DECOR_DIR = path.join(RESOURCES_ROOT, 'decoration');
+const DECOR_EXT = ['.jpg', '.png', '.jpeg', '.webp'];
+
+/**
+ * 装扮名 → 图片路径。
+ * 联动池/自定义UP池的装扮在自己的子目录里（如 decoration/saki1/），
+ * 所以先查池目录再回退到 decoration 根目录。
+ * @param {string} name 装扮文件名（可带或不带扩展名）
+ * @param {string} [poolName] 池名（用于定位子目录）
+ */
+function findDecorationImage (name, poolName) {
+  const n = String(name || '').trim();
+  if (!n) return null;
+  const dirs = [];
+  if (poolName && poolName !== 'normal') {
+    let d = String(poolName);
+    if (d.startsWith('custom:')) d = d.slice('custom:'.length);
+    if (d.includes('|')) d = d.split('|')[0];
+    if (d) dirs.push(path.join(DECOR_DIR, d));
+  }
+  dirs.push(DECOR_DIR);
+  for (const dir of dirs) {
+    if (path.extname(n)) {
+      const p = path.join(dir, n);
+      if (fs.existsSync(p)) return p;
+    } else {
+      for (const ext of DECOR_EXT) {
+        const p = path.join(dir, n + ext);
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  }
+  return null;
+}
+
 /** 中英数字混排绘制 */
 function drawMixed (ctx, text, x, y, size, color, align, cjkFont, numFont, weight = 'bold') {
   const s = String(text ?? '');
-  if (!s) return;
-  const isNum = (c) => /[0-9A-Za-z.]/.test(c);
-  const segs = [];
-  let cur = '', curIsNum = null;
-  for (const ch of s) {
-    const n = isNum(ch);
-    if (curIsNum === null || n === curIsNum) { cur += ch; curIsNum = n; }
-    else { segs.push({ text: cur, isNum: curIsNum }); cur = ch; curIsNum = n; }
-  }
-  if (cur) segs.push({ text: cur, isNum: curIsNum });
-
-  let total = 0;
-  for (const seg of segs) {
-    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`;
-    seg.w = ctx.measureText(seg.text).width;
-    total += seg.w;
-  }
+  if (!s) return 0;
+  const { segs, total } = splitMixed(ctx, s, size, cjkFont, numFont, weight);
   let sx = x;
   if (align === 'center') sx = x - total / 2;
   else if (align === 'right') sx = x - total;
@@ -94,25 +119,118 @@ function drawMixed (ctx, text, x, y, size, color, align, cjkFont, numFont, weigh
     sx += seg.w;
   }
   ctx.textAlign = prevAlign;
+  return total;
 }
+
+/**
+ * 按「数字段用 numFont、其余用 cjkFont」切段并测量总宽。
+ * ⚠️ 必须与 drawMixed 使用同一套字体分段，否则量出来的宽度和实际绘制不一致，
+ *    右对齐时会导致文字压到左侧元素（如「剩余时间」角标）。
+ */
+function splitMixed (ctx, text, size, cjkFont, numFont, weight = 'bold') {
+  const isNum = (c) => /[0-9A-Za-z.]/.test(c);
+  const segs = [];
+  let cur = '', curIsNum = null;
+  for (const ch of String(text ?? '')) {
+    const n = isNum(ch);
+    if (curIsNum === null || n === curIsNum) { cur += ch; curIsNum = n; }
+    else { segs.push({ text: cur, isNum: curIsNum }); cur = ch; curIsNum = n; }
+  }
+  if (cur) segs.push({ text: cur, isNum: curIsNum });
+
+  let total = 0;
+  for (const seg of segs) {
+    ctx.font = `${weight} ${size}px ${seg.isNum ? numFont : cjkFont}`;
+    seg.w = ctx.measureText(seg.text).width;
+    total += seg.w;
+  }
+  return { segs, total };
+}
+
+/** 混排文本的真实绘制宽度（与 drawMixed 完全一致） */
+function measureMixed (ctx, text, size, cjkFont, numFont, weight = 'bold') {
+  return splitMixed(ctx, text, size, cjkFont, numFont, weight).total;
+}
+
+/**
+ * 缩略图下方的名称（与雀士名下同一行同字号）。
+ * 装扮名通常较长（如「和牌-冷血射击」），先缩字号，仍超宽则省略号截断。
+ */
+function drawThumbCaption (ctx, text, cx, cy, maxW) {
+  const s = String(text || '').trim();
+  if (!s) return;
+  let size = NAME_SIZE;
+  ctx.font = `bold ${size}px ${FONT.name}`;
+  while (size > 11 && ctx.measureText(s).width > maxW) {
+    size -= 1;
+    ctx.font = `bold ${size}px ${FONT.name}`;
+  }
+  let t = s;
+  if (ctx.measureText(t).width > maxW) {
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    t += '…';
+  }
+  drawMixed(ctx, t, cx, cy, size, '#FFF6E0', 'center', FONT.name, FONT.hei);
+}
+
+/**
+ * 画一个圆形/圆角图片缩略图（带金边）
+ */
+function drawThumb (ctx, img, x, y, size, radius) {
+  const c = createCanvas(size, size);
+  const cx = c.getContext('2d');
+  cx.save();
+  cx.beginPath();
+  if (typeof cx.roundRect === 'function') cx.roundRect(0, 0, size, size, radius);
+  else cx.rect(0, 0, size, size);
+  cx.clip();
+  const side = Math.min(img.width, img.height);
+  cx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+  cx.restore();
+  cx.beginPath();
+  if (typeof cx.roundRect === 'function') cx.roundRect(1, 1, size - 2, size - 2, radius);
+  else cx.rect(0, 0, size, size);
+  cx.strokeStyle = '#D6AF6E';
+  cx.lineWidth = 2;
+  cx.stroke();
+  ctx.drawImage(c, x, y);
+}
+
 
 /**
  * 渲染卡池一览图
  * @param {object} options
  * @param {string} options.currentName 当前卡池显示名
- * @param {string[]} [options.upNames] UP 雀士名称列表
- * @param {Array<{name:string, countdown?:string, isCurrent?:boolean}>} options.pools 可用卡池
+ * @param {string[]} [options.upNames] 当前池 UP 雀士名称列表
+ * @param {string[]} [options.upDecorNames] 当前池 UP 装扮名称列表
+ * @param {string} [options.currentCountdown] 当前池剩余时间（限时池才显示）
+ * @param {Array<{name:string, countdown?:string, isCurrent?:boolean, upNames?:string[], upDecorNames?:string[]}>} options.pools 可用卡池
  * @param {string} [options.footer] 底部提示
  * @param {string} [options.nickname] 用户昵称（左下角，个人卡池各不相同）
  * @param {string} [options.avatar] 头像 URL 或本地路径
  * @returns {Promise<string>} base64:// 图片
  */
-export async function renderPoolListCard ({ currentName, upNames = [], pools = [], footer, nickname, avatar }) {
+export async function renderPoolListCard ({ currentName, currentPoolId = '', upNames = [], upDecorNames = [], currentCountdown = '', pools = [], footer, nickname, avatar }) {
   const upList = (upNames || []).filter(Boolean);
+  const upDecorList = (upDecorNames || []).filter(Boolean);
 
-  const LIST_TITLE_Y = BAND_CY + AV / 2 + 62;   // 「可用卡池」标签 y
-  const LIST_TOP = LIST_TITLE_Y + 30;            // 列表首行顶部
-  const rowsH = pools.length ? pools.length * ROW_H + (pools.length - 1) * ROW_GAP : ROW_H;
+  // ---- 动态布局 ----
+  // 顶部横带底部 = 头像名 / 当前池倒计时 的最大下沿
+  // （UP 装扮改为与 UP 雀士同行的右侧区域，不再单独占一行）
+  const AV_BOTTOM = BAND_CY + AV / 2 + 10 + NAME_SIZE;         // 头像 + 名字
+  const CUR_CD_Y = BAND_CY + CUR_ART_H / 2 + 24;               // 当前池倒计时
+  const bandBottom = Math.max(
+    AV_BOTTOM,
+    currentCountdown ? CUR_CD_Y + 8 : 0
+  );
+  const LIST_TITLE_Y = bandBottom + 46;   // 「可用卡池」标签 y
+  const LIST_TOP = LIST_TITLE_Y + 30;     // 列表首行顶部
+
+  // 行内 UP 缩略图：统一单行布局，不再为 UP 内容额外加高整行
+  const rowHs = pools.map(() => ROW_H);
+  const rowsH = rowHs.length
+    ? rowHs.reduce((a, b) => a + b, 0) + (pools.length - 1) * ROW_GAP
+    : ROW_H;
   const H = LIST_TOP + rowsH + FOOTER_H;
 
   const canvas = createCanvas(W, H);
@@ -150,6 +268,11 @@ export async function renderPoolListCard ({ currentName, upNames = [], pools = [
     ctx.font = `bold 34px ${FONT.name}`;
     curW = Math.min(ctx.measureText(currentName || '未知卡池').width, 360);
     drawMixed(ctx, currentName || '未知卡池', PAD_X, BAND_CY + 10, 34, '#FFF6E0', 'left', FONT.name, FONT.hei);
+  }
+
+  // 当前池剩余时间（限时池才显示，画在池名艺术字下方）
+  if (currentCountdown) {
+    drawMixed(ctx, currentCountdown, PAD_X, CUR_CD_Y, 19, '#9FD8A0', 'left', FONT.kai, FONT.hei, 'normal');
   }
 
   // UP 雀士：放在当前卡池右侧
@@ -208,6 +331,48 @@ export async function renderPoolListCard ({ currentName, upNames = [], pools = [
     }
   }
 
+  // 当前池 UP 装扮：与 UP 雀士同行，放在其右侧的空白区域（不单独占一行）
+  if (upDecorList.length) {
+    // 先解析图片，一个都找不到就整块跳过（无 UP 装扮的池不显示该区域）
+    const TS = TOP_DECOR_TS;     // 缩略图边长（= AV，与雀士头像一致）
+    const TGAP = AV_GAP;         // 间距也与雀士头像一致
+    const decorImgs = [];
+    for (const name of upDecorList) {
+      const imgPath = findDecorationImage(name, currentPoolId);
+      if (!imgPath) continue;
+      const img = await loadRes(imgPath).catch(() => null);
+      if (img) decorImgs.push({ img, name });
+    }
+
+    if (decorImgs.length) {
+      // UP 雀士右侧起排；无 UP 雀士时直接从 upStartX 开始
+      const decorStartX = upList.length
+        ? upStartX + upList.length * (AV + AV_GAP) + 10
+        : upStartX;
+
+      const label = 'UP 装扮';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold 20px ${FONT.hei}`;
+      ctx.fillStyle = '#C9BFA8';
+      ctx.fillText(label, decorStartX, BAND_LABEL_Y);
+      const labelW = ctx.measureText(label).width + 14;
+
+      let dx = decorStartX + labelW;
+      const maxX = W - PAD_X;
+      const avTop = BAND_CY - AV / 2;
+      for (const { img, name } of decorImgs) {
+        if (dx + TS > maxX) break;
+        // 与雀士头像顶部对齐（同一 y 起画）
+        drawThumb(ctx, img, dx, avTop, TS, 14);
+        // 装扮名（与雀士名同一行同一字号，过长则缩字号，再不行省略号）
+        // 宽度限制在缩略图本体宽度内，避免相邻两个名字挤在一起
+        drawThumbCaption(ctx, name, dx + TS / 2, avTop + AV + 10 + NAME_SIZE / 2, TS + 6);
+        dx += TS + TGAP;
+      }
+    }
+  }
+
   // ---- 分隔线 ----
   const sepY = LIST_TITLE_Y - 22;
   ctx.strokeStyle = 'rgba(214,175,110,0.35)';
@@ -232,74 +397,179 @@ export async function renderPoolListCard ({ currentName, upNames = [], pools = [
   // ---- 卡池列表 ----
   const rowW = W - PAD_X * 2;
   const RIGHT_X = W - PAD_X - 22;
+  let rowY = LIST_TOP;
   for (let i = 0; i < pools.length; i++) {
     const p = pools[i];
-    const y = LIST_TOP + i * (ROW_H + ROW_GAP);
+    const rowH = rowHs[i];
+    const y = rowY;
+    const cy = y + rowH / 2;
     const isCur = !!p.isCurrent;
     // 仅联动池带「特定装扮UP」标签；贵人池（custom:<池名>）暂无，用 isCollab 显式区分
     const isCollab = !!p.isCollab;
+    // 该池是否有可渲染的 UP 内容（当前池的 UP 已在顶部展示，行内不重复）
+    const hasUp = !isCur && (
+      (Array.isArray(p.upNames) && p.upNames.length) ||
+      (Array.isArray(p.upDecorNames) && p.upDecorNames.length)
+    );
 
     // 行底：当前池金边高亮
     ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') ctx.roundRect(PAD_X, y, rowW, ROW_H, 10);
-    else ctx.rect(PAD_X, y, rowW, ROW_H);
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(PAD_X, y, rowW, rowH, 10);
+    else ctx.rect(PAD_X, y, rowW, rowH);
     ctx.fillStyle = isCur ? 'rgba(214,175,110,0.20)' : 'rgba(0,0,0,0.34)';
     ctx.fill();
     ctx.strokeStyle = isCur ? 'rgba(214,175,110,0.85)' : 'rgba(214,175,110,0.22)';
     ctx.lineWidth = isCur ? 2 : 1.2;
     ctx.stroke();
 
-    // 池名艺术字
+    // 池名艺术字（始终单行居中）
+    const artCy = cy;
     const artPath = findPoolTitleArt(p.name);
     const art = artPath ? await loadRes(artPath).catch(() => null) : null;
     let artRight = PAD_X + 22;
     if (art) {
       const artH = ROW_ART_H;
       const artW = Math.round(art.width * artH / art.height);
-      ctx.drawImage(art, PAD_X + 22, y + (ROW_H - artH) / 2, artW, artH);
+      ctx.drawImage(art, PAD_X + 22, artCy - artH / 2, artW, artH);
       artRight = PAD_X + 22 + artW;
     } else {
       ctx.font = `bold 24px ${FONT.name}`;
       const tw = Math.min(ctx.measureText(p.name).width, 420);
-      drawMixed(ctx, p.name, PAD_X + 22, y + ROW_H / 2, 24,
+      drawMixed(ctx, p.name, PAD_X + 22, artCy, 24,
         isCur ? '#FFE9B8' : '#E6DCC8', 'left', FONT.name, FONT.hei);
       artRight = PAD_X + 22 + tw;
     }
 
     // 联动池标签：樱花版（紫）/ 竹林版（绿）
+    let badgeRight = artRight;
     if (isCollab) {
       const badge = /竹林/.test(p.name) ? badgeZhulin : badgeSakura;
       if (badge) {
         const bh = 26;
         const bw = Math.round(badge.width * bh / badge.height);
-        ctx.drawImage(badge, artRight + 14, y + (ROW_H - bh) / 2, bw, bh);
+        ctx.drawImage(badge, artRight + 14, artCy - bh / 2, bw, bh);
+        badgeRight = artRight + 14 + bw;
+      }
+    }
+
+    // 该池的 UP 雀士 / UP 装扮：单行排在池名右侧的空白区域
+    // （非当前池才显示，当前池的已在顶部展示）
+    if (hasUp) {
+      const TS = 30;                                  // 行内缩略图边长
+      const TGAP = 6;
+      const gapLeft = 20;
+
+      // 先量右侧倒计时宽度，避免缩略图压到它
+      let cdReserve = 0;
+      if (p.countdown) {
+        ctx.font = `normal 19px ${FONT.hei}`;
+        cdReserve = measureMixed(ctx, p.countdown, 19, FONT.kai, FONT.hei, 'normal') + (badgeLefttime ? 34 : 0) + 16;
+      }
+      const hardMaxX = Math.max(badgeRight + 80, RIGHT_X - cdReserve);
+      let cx = badgeRight + gapLeft;
+
+      const drawLabel = (text) => {
+        if (cx + 24 > hardMaxX) return;
+        ctx.font = `bold 14px ${FONT.hei}`;
+        ctx.fillStyle = '#C9BFA8';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, cx, cy);
+        const w = ctx.measureText(text).width;
+        cx += w + 6;
+      };
+
+      // UP 雀士：先把图片解析出来，一个都没有就不画标签
+      if (Array.isArray(p.upNames) && p.upNames.length) {
+        const charImgs = [];
+        for (const nm of p.upNames) {
+          const ip = findPersonImage(nm);
+          if (!ip) continue;
+          const img = await loadRes(ip).catch(() => null);
+          if (img) charImgs.push(img);
+        }
+        if (charImgs.length) {
+          drawLabel('UP');
+          for (const img of charImgs) {
+            if (cx + TS > hardMaxX) break;
+            drawThumb(ctx, img, cx, cy - TS / 2, TS, 8);
+            cx += TS + TGAP;
+          }
+          cx += 8;
+        }
+      }
+
+      // UP 装扮：同样先解析，没有可用图片就整个跳过（不画「装扮」标签，也不留灰块）
+      if (Array.isArray(p.upDecorNames) && p.upDecorNames.length) {
+        const decorImgs = [];
+        for (const nm of p.upDecorNames) {
+          const ip = findDecorationImage(nm, p.id);
+          if (!ip) continue;
+          const img = await loadRes(ip).catch(() => null);
+          if (img) decorImgs.push(img);
+        }
+        if (decorImgs.length) {
+          if (cx + 30 < hardMaxX) drawLabel('装扮');
+          for (const img of decorImgs) {
+            if (cx + TS > hardMaxX) break;
+            drawThumb(ctx, img, cx, cy - TS / 2, TS, 8);
+            cx += TS + TGAP;
+          }
+        }
       }
     }
 
     // 右侧：当前标记 / 剩余时间（仅开放中）+ 倒计时 / 未开启提示（不配「剩余时间」标签）
     if (isCur) {
+      // 当前池：显示「当前使用」，若为限时池再显示剩余时间
+      let curRight = RIGHT_X;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       ctx.font = `bold 19px ${FONT.hei}`;
       ctx.fillStyle = '#FFC97A';
-      ctx.fillText('当前使用', RIGHT_X, y + ROW_H / 2);
+      ctx.fillText('当前使用', curRight, cy);
+      const curTagW = ctx.measureText('当前使用').width;
       ctx.textAlign = 'left';
+
+      if (p.countdown) {
+        const cdW = measureMixed(ctx, p.countdown, 19, FONT.kai, FONT.hei, 'normal');
+        drawMixed(ctx, p.countdown, curRight - curTagW - 16, cy, 19,
+          '#9FD8A0', 'right', FONT.kai, FONT.hei, 'normal');
+        if (badgeLefttime) {
+          const lh = 22;
+          const lw = Math.round(badgeLefttime.width * lh / badgeLefttime.height);
+          const bx = curRight - curTagW - 16 - cdW - BADGE_TEXT_GAP - lw;
+          ctx.drawImage(badgeLefttime, bx, cy - lh / 2, lw, lh);
+        }
+      } else if (p.pendingText) {
+        const pw = measureMixed(ctx, p.pendingText, 19, FONT.kai, FONT.hei, 'normal');
+        drawMixed(ctx, p.pendingText, curRight - curTagW - 16, cy, 19,
+          '#8FA3B8', 'right', FONT.kai, FONT.hei, 'normal');
+        if (badgeLefttime) {
+          const lh = 22;
+          const lw = Math.round(badgeLefttime.width * lh / badgeLefttime.height);
+          const bx = curRight - curTagW - 16 - pw - BADGE_TEXT_GAP - lw;
+          ctx.drawImage(badgeLefttime, bx, cy - lh / 2, lw, lh);
+        }
+      }
     } else if (p.countdown) {
       // 开放中且有结束时间：先量倒计时宽度，再在其左侧画「剩余时间」素材
-      ctx.font = `normal 19px ${FONT.hei}`;
-      const cdW = ctx.measureText(p.countdown).width;
-      drawMixed(ctx, p.countdown, RIGHT_X, y + ROW_H / 2, 19,
+      const cdW = measureMixed(ctx, p.countdown, 19, FONT.kai, FONT.hei, 'normal');
+      drawMixed(ctx, p.countdown, RIGHT_X, cy, 19,
         '#9FD8A0', 'right', FONT.kai, FONT.hei, 'normal');
       if (badgeLefttime) {
         const lh = 22;
         const lw = Math.round(badgeLefttime.width * lh / badgeLefttime.height);
-        ctx.drawImage(badgeLefttime, RIGHT_X - cdW - 8 - lw, y + (ROW_H - lh) / 2, lw, lh);
+        const bx = RIGHT_X - cdW - BADGE_TEXT_GAP - lw;
+        ctx.drawImage(badgeLefttime, bx, cy - lh / 2, lw, lh);
       }
     } else if (p.pendingText) {
       // 尚未开启（仅主人可见）：纯文字提示，不加「剩余时间」标签
-      drawMixed(ctx, p.pendingText, RIGHT_X, y + ROW_H / 2, 19,
+      drawMixed(ctx, p.pendingText, RIGHT_X, cy, 19,
         '#8FA3B8', 'right', FONT.kai, FONT.hei, 'normal');
     }
+
+    rowY += rowH + ROW_GAP;
   }
 
   // ---- 底部：左下头像 + 昵称（个人卡池各不相同），右下切换提示 ----
@@ -456,3 +726,5 @@ export async function renderPoolScheduleCard ({ rows = [], footer }) {
 
   return `base64://${canvas.toBuffer('image/png').toString('base64')}`;
 }
+
+

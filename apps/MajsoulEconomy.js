@@ -244,6 +244,10 @@ export class MajsoulEconomy extends plugin {
         if (!match) return false;
         const name = match[1].trim();
 
+        // 操作者信息（卡面底部标识是谁兑换的）
+        const userName = this._displayName(e);
+        const userAvatar = this._avatarUrl(e);
+
         // 收集当前开放池的雀士名单
         let openNames = [];
         try {
@@ -282,7 +286,7 @@ export class MajsoulEconomy extends plugin {
         // ① 雀士名不匹配：只在头像位置显示「雀士未找到」
         if (!portraitPath) {
             try {
-                const image = await renderExchangeCard({ name, state: 'notfound' });
+                const image = await renderExchangeCard({ name, state: 'notfound', nickname: userName, avatar: userAvatar });
                 await e.reply(segment.image(image), false);
             } catch {
                 await e.reply(`未找到雀士「${name}」，请检查名字是否正确`, true);
@@ -300,7 +304,9 @@ export class MajsoulEconomy extends plugin {
                     cost,
                     faith: w.faith,
                     portraitPath,
-                    state: 'unopened'
+                    state: 'unopened',
+                    nickname: userName,
+                    avatar: userAvatar
                 });
                 await e.reply(segment.image(image), false);
             } catch {
@@ -324,7 +330,9 @@ export class MajsoulEconomy extends plugin {
                         cost,
                         faith: w.faith,
                         portraitPath,
-                        state: 'owned'
+                        state: 'owned',
+                    nickname: userName,
+                    avatar: userAvatar
                     });
                     await e.reply(segment.image(image), false);
                 } catch {
@@ -344,7 +352,9 @@ export class MajsoulEconomy extends plugin {
                     cost,
                     faith: spendResult.wallet.faith,
                     portraitPath,
-                    state: 'insufficient'
+                    state: 'insufficient',
+                    nickname: userName,
+                    avatar: userAvatar
                 });
                 await e.reply(segment.image(image), false);
             } catch {
@@ -362,7 +372,9 @@ export class MajsoulEconomy extends plugin {
                 isLimited,
                 cost,
                 faith: spendResult.wallet.faith,
-                portraitPath: await this.collectionMgr.getCharacterPortrait(name)
+                portraitPath: await this.collectionMgr.getCharacterPortrait(name),
+                nickname: userName,
+                avatar: userAvatar
             });
             await e.reply(segment.image(image));
         } catch (error) {
@@ -571,3 +583,4 @@ export class MajsoulEconomy extends plugin {
         return true;
     }
 }
+

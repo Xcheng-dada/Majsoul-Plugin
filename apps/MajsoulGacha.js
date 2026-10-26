@@ -1,4 +1,4 @@
-﻿// plugins/Majsoul-Plugin/apps/MajsoulGacha.js
+// plugins/Majsoul-Plugin/apps/MajsoulGacha.js
 import plugin from "../../../lib/plugins/plugin.js";
 import { segment } from "oicq";
 import path from 'path';
@@ -426,6 +426,8 @@ export class MajsoulGacha extends plugin {
             const currentName = await this.gachaCore.getPoolDisplayTitle(current);
             // UP 雀士用头像呈现，取原始数组（不用拼接后的字符串）
             const upNames = await this._getUpCharacterList(current).catch(() => []);
+            // 当前池的 UP 装扮（联动池/自定义UP池才有），同样显示在上方
+            const upDecorNames = await this._getUpDecorationList(current).catch(() => []);
 
             // 当前可用池（联动池保留樱花/竹林变体后缀，两池都显示）
             // 未到开启时间的池只对主人可见（includePending），普通用户完全看不到
@@ -442,24 +444,46 @@ export class MajsoulGacha extends plugin {
                     : { state: 'none', text: '' };
                 // 未开启的池（仅主人可见）不显示「剩余时间」，用「X后开启」文字
                 const isPending = p.pending || st.state === 'pending';
+                // 非当前池也要列出 UP 雀士/装扮，方便用户判断该切到哪个池
+                const rowUpChars = await this._getUpCharacterList(p.id).catch(() => []);
+                const rowUpDecor = await this._getUpDecorationList(p.id).catch(() => []);
                 pools.push({
                     name,
+                    // 池 id（装扮目录名用它定位，显示名与目录名不同）
+                    id: p.id,
                     countdown: isPending ? '' : (st.state === 'open' ? st.text : ''),
                     pendingText: isPending ? st.text : '',
                     // 联动池 id 形如 saki1|female；贵人池为 custom:<池名>，两者需区分
                     // 贵人池暂无「特定装扮UP」，只有联动池带该标签
                     isCollab: p.id.includes('|'),
-                    isCurrent: p.id === current
+                    isCurrent: p.id === current,
+                    upNames: rowUpChars,
+                    upDecorNames: rowUpDecor
                 });
             }
             // 候选中没命中当前池时（如自定义UP池），补一行当前池，保证列表里有高亮项
             if (currentName && !pools.some(p => p.isCurrent)) {
-                pools.unshift({ name: currentName, countdown: '', isCurrent: true });
+                pools.unshift({
+                    name: currentName,
+                    id: current,
+                    countdown: '',
+                    isCurrent: true,
+                    upNames,
+                    upDecorNames
+                });
             }
 
             const image = await renderPoolListCard({
                 currentName,
+                // 当前池 id（UP 装扮目录名用它定位）
+                currentPoolId: current,
                 upNames,
+                upDecorNames,
+                // 当前池的剩余时间（限时池才显示在「当前使用」旁边）
+                currentCountdown: (() => {
+                    const cur = pools.find(p => p.isCurrent);
+                    return cur ? (cur.countdown || cur.pendingText || '') : '';
+                })(),
                 pools,
                 // 卡池是个人选择，图上标注是谁的卡池
                 nickname: (e.member?.card || e.member?.nickname || e.sender?.card || e.sender?.nickname || '雀魂玩家')
