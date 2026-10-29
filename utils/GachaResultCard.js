@@ -336,7 +336,29 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
         const label = it.count > 1 ? `${base}x${it.count}` : base;
         drawText(ctx, label, x + ICON / 2, y + ICON + 32, 26, '#FFF3D6', 'center', 'bold', FONT.name);
         if (it.tag) {
-          drawText(ctx, it.tag, x + ICON / 2, y + ICON + 64, 22, '#FFC97A', 'center', 'bold', FONT.name);
+          // 重复转化说明：字数较多，按单元格宽度自动缩字号，避免与相邻物品文字重叠
+          let tagSize = 22;
+          const tagMaxW = ICON + GAP - 10;
+          ctx.font = `bold ${tagSize}px ${FONT.name}`;
+          while (tagSize > 13 && ctx.measureText(it.tag).width > tagMaxW) {
+            tagSize -= 1;
+            ctx.font = `bold ${tagSize}px ${FONT.name}`;
+          }
+          // 加一圈深色描边：背景是浅色樱花/天空时，纯橙色文字几乎看不清
+          const tx = x + ICON / 2;
+          const ty = y + ICON + 64;
+          const prevAlign = ctx.textAlign;
+          const prevBase = ctx.textBaseline;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = Math.max(3, Math.round(tagSize * 0.24));
+          ctx.strokeStyle = 'rgba(48,26,8,0.9)';
+          ctx.strokeText(it.tag, tx, ty);
+          ctx.fillStyle = '#FFD79A';
+          ctx.fillText(it.tag, tx, ty);
+          ctx.textAlign = prevAlign;
+          ctx.textBaseline = prevBase;
         }
         x += ICON + GAP;
       }

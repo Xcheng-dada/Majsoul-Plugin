@@ -298,8 +298,11 @@ export class MajsoulGacha extends plugin {
             };
             const tagOf = (fileName) => {
                 // 重复转化标注：雀士→许愿石、装扮→星之石
-                if (charConv[fileName]) return `已转换许愿石x${charConv[fileName]}`;
-                if (decorConv[fileName]) return `已转换星之石x${decorConv[fileName]}`;
+                // ⚠️ charConv/decorConv 的键是去掉扩展名的名字（见上方 path.parse），
+                //    这里必须同样去扩展名，否则永远查不到、重复也看不出转化
+                const base = path.parse(fileName).name;
+                if (charConv[base]) return `重复·已转许愿石 x${charConv[base]}`;
+                if (decorConv[base]) return `重复·已转星之石 x${decorConv[base]}`;
                 return null;
             };
             const items = results.map(([objInt, fileName]) => ({
@@ -309,21 +312,24 @@ export class MajsoulGacha extends plugin {
                 tag: tagOf(fileName)
             }));
 
-            // 货币行：只列本次真实变化的项（辉玉为消耗，显示负增量）
-            const wallet = [];
-            // 消耗的货币（cost 里非零项）
+            // 货币行：按货币 key 聚合净变化，同一种货币只出现一次
+            // （此前「消耗的卷轴」与「自动兑换产出的卷轴」各推一条，导致图上出现两个寻觅卷轴）
+            const WALLET_ORDER = ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith'];
+            const deltaByKey = {};
             for (const [key, spent] of Object.entries(cost || {})) {
-                if (spent > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: -spent });
+                if (spent > 0) deltaByKey[key] = (deltaByKey[key] || 0) - spent;
             }
-            // 获得的货币（gains 里非零项；信仰每次 +times，单抽 +1 / 十连 +10）
-            for (const key of ['jade', 'ticket', 'ticket10', 'dust', 'stone', 'wish', 'faith']) {
+            for (const key of WALLET_ORDER) {
+                // 卷轴单独处理：ticketGain 已含粉尘/星之石自动兑换的产出
+                if (key === 'ticket') continue;
                 const g = gains[key] || 0;
-                if (g > 0) wallet.push({ icon: CURRENCY_ICONS[key], count: newWallet[key], delta: g });
+                if (g > 0) deltaByKey[key] = (deltaByKey[key] || 0) + g;
             }
-            // 自动兑换产生的卷轴增量（ticketGain 与 gains.ticket 不同，来自粉尘/石头的兑换链）
-            if (ticketGain > (gains.ticket || 0)) {
-                wallet.push({ icon: CURRENCY_ICONS.ticket, count: newWallet.ticket, delta: ticketGain });
-            }
+            if (ticketGain > 0) deltaByKey.ticket = (deltaByKey.ticket || 0) + ticketGain;
+
+            const wallet = WALLET_ORDER
+                .filter(k => deltaByKey[k])
+                .map(k => ({ icon: CURRENCY_ICONS[k], count: newWallet[k], delta: deltaByKey[k] }));
 
             // UP / 限定名单（用于结果图角标）
             const upNames = await this._getUpCharacterList(poolName);
