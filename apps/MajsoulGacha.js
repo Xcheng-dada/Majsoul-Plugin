@@ -238,11 +238,15 @@ export class MajsoulGacha extends plugin {
             const gains = { jade: 0, ticket: 0, ticket10: 0, dust: 0, stone: 0, wish: 0, faith: times };
             const charCounts = {};
             const decorCounts = {};
-            const charConv = {};   // 重复雀士转化的许愿石数量（按名字累计）
-            const decorConv = {};  // 重复装扮转化的星之石数量（按名字累计）
+            const charConv = {};   // 重复雀士转化的许愿石数量（按名字累计，仅用于统计总数）
+            const decorConv = {};  // 重复装扮转化的星之石数量（按名字累计，仅用于统计总数）
+            // 逐个结果的转化说明：只有「真正被判为重复」的那一次才有值。
+            // 一次十连里同名抽到两个时，第一个是新获得（无标注），第二个才是重复转化。
+            const convByIndex = {};
             const giftCounts = { blue: 0, purple: 0 };
 
-            for (const [objInt, fileName] of results) {
+            for (let ri = 0; ri < results.length; ri++) {
+                const [objInt, fileName] = results[ri];
                 const name = path.parse(fileName).name;
                 if (objInt === ITEM_TYPE.GIFT_BLUE) {
                     giftCounts.blue++;
@@ -256,6 +260,7 @@ export class MajsoulGacha extends plugin {
                     if (!isNew) {
                         decorConv[name] = (decorConv[name] || 0) + 5; // 重复装扮 → 5 星之石
                         gains.stone += 5;
+                        convByIndex[ri] = '重复·已转星之石 x5';
                     }
                 } else if (objInt === ITEM_TYPE.CHARACTER) {
                     charCounts[name] = (charCounts[name] || 0) + 1;
@@ -266,6 +271,7 @@ export class MajsoulGacha extends plugin {
                         const amount = isLimited ? 150 : 75;
                         charConv[name] = (charConv[name] || 0) + amount;
                         gains.wish += amount;
+                        convByIndex[ri] = `重复·已转许愿石 x${amount}`;
                     }
                 }
             }
@@ -296,20 +302,11 @@ export class MajsoulGacha extends plugin {
                 [ITEM_TYPE.GIFT_BLUE]: 'gift_blue',
                 [ITEM_TYPE.GIFT_PURPLE]: 'gift_purple'
             };
-            const tagOf = (fileName) => {
-                // 重复转化标注：雀士→许愿石、装扮→星之石
-                // ⚠️ charConv/decorConv 的键是去掉扩展名的名字（见上方 path.parse），
-                //    这里必须同样去扩展名，否则永远查不到、重复也看不出转化
-                const base = path.parse(fileName).name;
-                if (charConv[base]) return `重复·已转许愿石 x${charConv[base]}`;
-                if (decorConv[base]) return `重复·已转星之石 x${decorConv[base]}`;
-                return null;
-            };
-            const items = results.map(([objInt, fileName]) => ({
+            const items = results.map(([objInt, fileName], ri) => ({
                 name: fileName,
                 kind: KIND_MAP[objInt],
                 count: 1,
-                tag: tagOf(fileName)
+                tag: convByIndex[ri] || null
             }));
 
             // 货币行：按货币 key 聚合净变化，同一种货币只出现一次
