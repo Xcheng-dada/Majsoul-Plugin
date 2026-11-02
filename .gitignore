@@ -36,3 +36,6 @@ api/*
 # 缺失时自动回退系统字体，地图仍可正常出图。详见 resources/fonts/README.md）
 resources/fonts/*
 !resources/fonts/README.md
+
+# 公网网页版（本地开发中的功能，暂不入库）
+web/
