@@ -548,7 +548,7 @@ export default class GachaCore {
             '咲-saki-2': 'saki2',
             '竹林之路': 'male',
             '樱花之路': 'female',
-            '斗牌传说': 'douhun',
+            '斗牌传说': 'doupai',
             '狂赌之渊': 'kuangdu',
             '反叛的鲁路修': 'luluxiu',
             'Fate': 'fate',
@@ -562,7 +562,7 @@ export default class GachaCore {
         if (name.includes('竹林')) return 'male';
         if (name.includes('樱花')) return 'female';
         if (name.includes('辉夜')) return 'huiye';
-        if (name.includes('斗牌')) return 'douhun';
+        if (name.includes('斗牌')) return 'doupai';
         if (name.includes('狂赌')) return 'kuangdu';
         if (name.includes('saki') && name.includes('1')) return 'saki1';
         if (name.includes('saki') && name.includes('2')) return 'saki2';
@@ -588,7 +588,7 @@ export default class GachaCore {
             'saki2': '咲-saki-2',
             'male': '竹林之路',
             'female': '樱花之路',
-            'douhun': '斗牌传说',
+            'doupai': '斗牌传说',
             'kuangdu': '狂赌之渊',
             'luluxiu': '反叛的鲁路修',
             'fate': 'Fate',
