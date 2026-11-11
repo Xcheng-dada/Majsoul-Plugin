@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { FONT } from '../components/fonts.js';
-import { findPoolTitleArt } from './PoolTitleArt.js';
+import { findPoolTitleArt, splitPoolTitleArt } from './PoolTitleArt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RESOURCES_ROOT = path.join(__dirname, '..', 'resources');
@@ -41,6 +41,10 @@ const ROW_GAP = 8;
 
 // 顶部当前池 UP 装扮缩略图（与 UP 雀士头像同尺寸，视觉才统一）
 const TOP_DECOR_TS = AV;
+// UP 装扮独立一行（放在 UP 雀士下方，避免与雀士抢宽度）
+// DECOR_TOP 为该行缩略图的顶部 y，DECOR_LABEL_Y 为「UP 装扮」标签的垂直中心
+const DECOR_LABEL_Y = BAND_CY + AV / 2 + 10 + NAME_SIZE + 34;
+const DECOR_TOP = DECOR_LABEL_Y - 18;
 const FOOTER_H = 92;                   // 底部：头像+昵称（左）与提示（右）
 const FOOTER_AV = 64;                  // 底部头像尺寸
 // 「剩余时间」角标与倒计时数字之间的间距（角标图自带 2px 透明边，故留 12px 才不显黏）
@@ -215,13 +219,18 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
   const upDecorList = (upDecorNames || []).filter(Boolean);
 
   // ---- 动态布局 ----
-  // 顶部横带底部 = 头像名 / 当前池倒计时 的最大下沿
-  // （UP 装扮改为与 UP 雀士同行的右侧区域，不再单独占一行）
+  // 顶部横带底部 = 头像名 / 当前池倒计时 / UP 装扮行 三者的最大下沿
   const AV_BOTTOM = BAND_CY + AV / 2 + 10 + NAME_SIZE;         // 头像 + 名字
   const CUR_CD_Y = BAND_CY + CUR_ART_H / 2 + 24;               // 当前池倒计时
+  // UP 装扮独占一行时，其底部 = 缩略图底 + 名字
+  const hasTopDecor = (upDecorNames || []).some(n => !!findDecorationImage(n, currentPoolId));
+  const DECOR_BOTTOM = hasTopDecor
+    ? DECOR_TOP + TOP_DECOR_TS + 10 + NAME_SIZE
+    : 0;
   const bandBottom = Math.max(
     AV_BOTTOM,
-    currentCountdown ? CUR_CD_Y + 8 : 0
+    currentCountdown ? CUR_CD_Y + 8 : 0,
+    DECOR_BOTTOM
   );
   const LIST_TITLE_Y = bandBottom + 46;   // 「可用卡池」标签 y
   const LIST_TOP = LIST_TITLE_Y + 30;     // 列表首行顶部
@@ -255,14 +264,45 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
   ctx.fillStyle = '#C9BFA8';
   ctx.fillText('当前卡池', PAD_X, BAND_LABEL_Y);
 
-  // 当前池艺术字
-  const curArtPath = findPoolTitleArt(currentName);
-  const curArt = curArtPath ? await loadRes(curArtPath).catch(() => null) : null;
+  // 当前池艺术字（联动池若官方素材不含池名，则补上主体文字 + 后缀艺术字）
+  const curSplit = splitPoolTitleArt(currentName);
+  const curMainArt = curSplit.art ? await loadRes(curSplit.art).catch(() => null) : null;
+  const curSufArt = (!curSplit.artHasSuffix && curSplit.suffixArt)
+    ? await loadRes(curSplit.suffixArt).catch(() => null)
+    : null;
   let curW = 0;
-  if (curArt) {
-    const artW = Math.round(curArt.width * CUR_ART_H / curArt.height);
+  if (curMainArt) {
+    const artW = Math.round(curMainArt.width * CUR_ART_H / curMainArt.height);
+    ctx.drawImage(curMainArt, PAD_X, BAND_CY - CUR_ART_H / 2, artW, CUR_ART_H);
     curW = artW;
-    ctx.drawImage(curArt, PAD_X, BAND_CY - CUR_ART_H / 2, artW, CUR_ART_H);
+    if (curSufArt) {
+      const sH = 44;
+      const sW = Math.round(curSufArt.width * sH / curSufArt.height);
+      ctx.drawImage(curSufArt, PAD_X + curW + 12, BAND_CY - sH / 2, sW, sH);
+      curW += 12 + sW;
+    }
+  } else if (curSufArt) {
+    // 联动池：上方/左侧写池名，联动过多UP角色时上下叠放避免挤压右侧 4 个 UP 头像
+    const mainText = curSplit.main || currentName || '未知卡池';
+    let fontSize = 30;
+    ctx.font = `bold ${fontSize}px ${FONT.name}`;
+    while (fontSize > 22 && ctx.measureText(mainText).width > 220) {
+      fontSize -= 2;
+      ctx.font = `bold ${fontSize}px ${FONT.name}`;
+    }
+    const mainW = Math.min(ctx.measureText(mainText).width, 220);
+    const sH = 46;
+    const sW = Math.round(curSufArt.width * sH / curSufArt.height);
+    if (upList.length >= 3 && mainW + 12 + sW > 260) {
+      // 上方池名文字 + 下方特别寻觅艺术字，控制总宽保证右侧 4 个 UP 雀士不越界
+      drawMixed(ctx, mainText, PAD_X, BAND_CY - 22, fontSize, '#FFE9B8', 'left', FONT.name, FONT.hei);
+      ctx.drawImage(curSufArt, PAD_X, BAND_CY + 2, sW, sH);
+      curW = Math.max(mainW, sW);
+    } else {
+      drawMixed(ctx, mainText, PAD_X, BAND_CY, fontSize, '#FFE9B8', 'left', FONT.name, FONT.hei);
+      ctx.drawImage(curSufArt, PAD_X + mainW + 12, BAND_CY - sH / 2, sW, sH);
+      curW = mainW + 12 + sW;
+    }
   } else {
     // 无素材时用文字，宽度按测量值估算
     ctx.font = `bold 34px ${FONT.name}`;
@@ -272,7 +312,8 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
 
   // 当前池剩余时间（限时池才显示，画在池名艺术字下方）
   if (currentCountdown) {
-    drawMixed(ctx, currentCountdown, PAD_X, CUR_CD_Y, 19, '#9FD8A0', 'left', FONT.kai, FONT.hei, 'normal');
+    const cdY = (!curMainArt && curSufArt && upList.length >= 3) ? CUR_CD_Y + 14 : CUR_CD_Y;
+    drawMixed(ctx, currentCountdown, PAD_X, cdY, 19, '#9FD8A0', 'left', FONT.kai, FONT.hei, 'normal');
   }
 
   // UP 雀士：放在当前卡池右侧
@@ -331,11 +372,12 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
     }
   }
 
-  // 当前池 UP 装扮：与 UP 雀士同行，放在其右侧的空白区域（不单独占一行）
+  // 当前池 UP 装扮：单独占一行（放在 UP 雀士下方）
+  // ⚠️ 与雀士同排时，4 个雀士就占满宽度，装扮只能挤下 1 个；
+  //    改为独立一行后可以平铺全部装扮。
   if (upDecorList.length) {
-    // 先解析图片，一个都找不到就整块跳过（无 UP 装扮的池不显示该区域）
     const TS = TOP_DECOR_TS;     // 缩略图边长（= AV，与雀士头像一致）
-    const TGAP = AV_GAP;         // 间距也与雀士头像一致
+    const TGAP = AV_GAP;
     const decorImgs = [];
     for (const name of upDecorList) {
       const imgPath = findDecorationImage(name, currentPoolId);
@@ -345,29 +387,22 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
     }
 
     if (decorImgs.length) {
-      // UP 雀士右侧起排；无 UP 雀士时直接从 upStartX 开始
-      const decorStartX = upList.length
-        ? upStartX + upList.length * (AV + AV_GAP) + 10
-        : upStartX;
-
+      // 标签放在当前池艺术字右侧的留白处（或直接整行从 PAD_X 起）
       const label = 'UP 装扮';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.font = `bold 20px ${FONT.hei}`;
       ctx.fillStyle = '#C9BFA8';
-      ctx.fillText(label, decorStartX, BAND_LABEL_Y);
-      const labelW = ctx.measureText(label).width + 14;
+      ctx.fillText(label, PAD_X, DECOR_LABEL_Y);
+      ctx.font = `bold 20px ${FONT.hei}`;
+      const labelW = ctx.measureText(label).width + 20;
 
-      let dx = decorStartX + labelW;
+      let dx = PAD_X + labelW;
       const maxX = W - PAD_X;
-      const avTop = BAND_CY - AV / 2;
       for (const { img, name } of decorImgs) {
         if (dx + TS > maxX) break;
-        // 与雀士头像顶部对齐（同一 y 起画）
-        drawThumb(ctx, img, dx, avTop, TS, 14);
-        // 装扮名（与雀士名同一行同一字号，过长则缩字号，再不行省略号）
-        // 宽度限制在缩略图本体宽度内，避免相邻两个名字挤在一起
-        drawThumbCaption(ctx, name, dx + TS / 2, avTop + AV + 10 + NAME_SIZE / 2, TS + 6);
+        drawThumb(ctx, img, dx, DECOR_TOP, TS, 14);
+        drawThumbCaption(ctx, name, dx + TS / 2, DECOR_TOP + TS + 10 + NAME_SIZE / 2, TS + 6);
         dx += TS + TGAP;
       }
     }
@@ -422,22 +457,43 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
     ctx.lineWidth = isCur ? 2 : 1.2;
     ctx.stroke();
 
-    // 池名艺术字（始终单行居中）
+    // 池名艺术字（联动池若官方素材不含池名，则「文字主体名 + 后缀艺术字」组合展示）
     const artCy = cy;
-    const artPath = findPoolTitleArt(p.name);
-    const art = artPath ? await loadRes(artPath).catch(() => null) : null;
+    const split = splitPoolTitleArt(p.name);
+    const mainArt = split.art ? await loadRes(split.art).catch(() => null) : null;
     let artRight = PAD_X + 22;
-    if (art) {
+    if (mainArt) {
       const artH = ROW_ART_H;
-      const artW = Math.round(art.width * artH / art.height);
-      ctx.drawImage(art, PAD_X + 22, artCy - artH / 2, artW, artH);
-      artRight = PAD_X + 22 + artW;
-    } else {
-      ctx.font = `bold 24px ${FONT.name}`;
-      const tw = Math.min(ctx.measureText(p.name).width, 420);
-      drawMixed(ctx, p.name, PAD_X + 22, artCy, 24,
+      const artW = Math.round(mainArt.width * artH / mainArt.height);
+      ctx.drawImage(mainArt, artRight, artCy - artH / 2, artW, artH);
+      artRight += artW;
+    } else if (split.main) {
+      let fontSize = 24;
+      ctx.font = `bold ${fontSize}px ${FONT.name}`;
+      while (fontSize > 18 && ctx.measureText(split.main).width > 220) {
+        fontSize -= 2;
+        ctx.font = `bold ${fontSize}px ${FONT.name}`;
+      }
+      const tw = Math.min(ctx.measureText(split.main).width, 240);
+      drawMixed(ctx, split.main, artRight, artCy, fontSize,
         isCur ? '#FFE9B8' : '#E6DCC8', 'left', FONT.name, FONT.hei);
-      artRight = PAD_X + 22 + tw;
+      artRight += tw;
+    }
+
+    if (!split.artHasSuffix && split.suffixArt) {
+      const sArt = await loadRes(split.suffixArt).catch(() => null);
+      if (sArt) {
+        artRight += 10;
+        const sH = 34;
+        const sW = Math.round(sArt.width * sH / sArt.height);
+        ctx.drawImage(sArt, artRight, artCy - sH / 2, sW, sH);
+        artRight += sW;
+      }
+    } else if (!split.artHasSuffix && split.suffix) {
+      ctx.font = `bold 20px ${FONT.name}`;
+      drawMixed(ctx, split.suffix, artRight, artCy, 20,
+        isCur ? '#FFE9B8' : '#C9BFA8', 'left', FONT.name, FONT.hei);
+      artRight += Math.min(ctx.measureText(split.suffix).width, 200);
     }
 
     // 联动池标签：樱花版（紫）/ 竹林版（绿）
@@ -462,10 +518,13 @@ export async function renderPoolListCard ({ currentName, currentPoolId = '', upN
       // 先量右侧倒计时宽度，避免缩略图压到它
       let cdReserve = 0;
       if (p.countdown) {
-        ctx.font = `normal 19px ${FONT.hei}`;
-        cdReserve = measureMixed(ctx, p.countdown, 19, FONT.kai, FONT.hei, 'normal') + (badgeLefttime ? 34 : 0) + 16;
+        const lh = 22;
+        const lw = badgeLefttime ? Math.round(badgeLefttime.width * lh / badgeLefttime.height) : 0;
+        cdReserve = measureMixed(ctx, p.countdown, 19, FONT.kai, FONT.hei, 'normal') + lw + BADGE_TEXT_GAP + 16;
+      } else if (p.pendingText) {
+        cdReserve = measureMixed(ctx, p.pendingText, 19, FONT.kai, FONT.hei, 'normal') + 16;
       }
-      const hardMaxX = Math.max(badgeRight + 80, RIGHT_X - cdReserve);
+      const hardMaxX = Math.max(badgeRight + 40, RIGHT_X - cdReserve);
       let cx = badgeRight + gapLeft;
 
       const drawLabel = (text) => {
@@ -684,20 +743,47 @@ export async function renderPoolScheduleCard ({ rows = [], footer }) {
     ctx.lineWidth = r.status === 'open' ? 2 : 1.2;
     ctx.stroke();
 
-    // 池名艺术字（无素材则文字）
-    const artPath = findPoolTitleArt(r.name);
-    const art = artPath ? await loadRes(artPath).catch(() => null) : null;
+    // 池名：联动池用「文字主体名 + 官方后缀艺术字」，其余用艺术字或纯文字
+    // （狂赌之渊等联动池没有专属主体素材，只靠「樱花特别寻觅」艺术字看不出是哪个池）
+    const split = splitPoolTitleArt(r.name);
     let cursorX = PAD_X + 22;
-    if (art) {
-      const artH = 42;
-      const artW = Math.round(art.width * artH / art.height);
-      ctx.drawImage(art, cursorX, y + (ROW_H_S - artH) / 2, artW, artH);
+    const rowCy = y + ROW_H_S / 2;
+
+    // 主体部分：有含主体名的专属艺术字就画，否则写文字
+    // （联动池现有素材只画「樱花/竹林特别寻觅」，不含池名，故走文字分支）
+    const mainArt = split.art ? await loadRes(split.art).catch(() => null) : null;
+    if (mainArt) {
+      let artH = 42;
+      let artW = Math.round(mainArt.width * artH / mainArt.height);
+      if (artW > 300) {
+        artW = 300;
+        artH = Math.round(mainArt.height * artW / mainArt.width);
+      }
+      ctx.drawImage(mainArt, cursorX, y + (ROW_H_S - artH) / 2, artW, artH);
       cursorX += artW;
-    } else {
-      ctx.font = `bold 24px ${FONT.name}`;
-      const tw = Math.min(ctx.measureText(r.name).width, 380);
-      drawMixed(ctx, r.name, cursorX, y + ROW_H_S / 2, 24, '#E6DCC8', 'left', FONT.name, FONT.hei);
+    } else if (split.main) {
+      ctx.font = `bold 26px ${FONT.name}`;
+      const tw = Math.min(ctx.measureText(split.main).width, 240);
+      drawMixed(ctx, split.main, cursorX, rowCy, 26, '#E6DCC8', 'left', FONT.name, FONT.hei);
       cursorX += tw;
+    }
+
+    // 后缀艺术字（「樱花特别寻觅」/「竹林特别寻觅」）：紧跟主体
+    if (split.artHasSuffix) {
+      // 主体素材已完整表达，跳过后缀
+    } else if (split.suffixArt) {
+      const sArt = await loadRes(split.suffixArt).catch(() => null);
+      if (sArt) {
+        cursorX += 12;
+        const sH = 34;      // 后缀高度接近主体文字，避免看起来像小字注释
+        const sW = Math.round(sArt.width * sH / sArt.height);
+        ctx.drawImage(sArt, cursorX, rowCy - sH / 2, sW, sH);
+        cursorX += sW;
+      }
+    } else if (split.suffix) {
+      ctx.font = `bold 20px ${FONT.name}`;
+      drawMixed(ctx, split.suffix, cursorX, rowCy, 20, '#C9BFA8', 'left', FONT.name, FONT.hei);
+      cursorX += Math.min(ctx.measureText(split.suffix).width, 200);
     }
 
     // 状态标签
@@ -705,7 +791,7 @@ export async function renderPoolScheduleCard ({ rows = [], footer }) {
     ctx.textBaseline = 'middle';
     ctx.font = `bold 20px ${FONT.hei}`;
     ctx.fillStyle = st.color;
-    ctx.fillText(st.text, cursorX + 16, y + ROW_H_S / 2);
+    ctx.fillText(st.text, cursorX + 16, rowCy);
 
     // 右侧时间
     if (r.timeText) {

@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { drawText } from '../components/canvas.js';
 import { FONT } from '../components/fonts.js';
-import { findPoolTitleArt } from './PoolTitleArt.js';
+import { findPoolTitleArt, splitPoolTitleArt } from './PoolTitleArt.js';
 import { CURRENCY_ICONS } from './CurrencyCard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -245,23 +245,45 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
     const poolTitle = parts[0] || '';
     const suffix = parts.slice(1).join('｜');
 
-    // 查官方艺术字素材（映射见 utils/PoolTitleArt.js）
-    const artPath = findPoolTitleArt(poolTitle);
-    const poolArt = artPath ? await loadRes(artPath).catch(() => null) : null;
+    // 查官方艺术字素材（若卡池 logo 不含池名，则在 logo 前补上池名文字）
+    const split = splitPoolTitleArt(poolTitle);
+    const mainArt = split.art ? await loadRes(split.art).catch(() => null) : null;
+    const sufArt = (!split.artHasSuffix && split.suffixArt)
+      ? await loadRes(split.suffixArt).catch(() => null)
+      : null;
 
-    if (poolArt) {
-      // 艺术字高度约 76px，与后缀文字基线对齐
+    if (mainArt || sufArt) {
       const artH = 76;
-      const artW = Math.round(poolArt.width * artH / poolArt.height);
-      // 后缀「累计寻觅 108 次｜含保底」：中文用文鼎特毛楷，数字用汉仪文黑75W
+      const MAIN_SIZE = 44;
       const SUF_SIZE = 40;
+      const mainTextW = (!mainArt && split.main)
+        ? measureMixed(ctx, split.main, MAIN_SIZE, FONT.kai, FONT.hei)
+        : 0;
+      const mainArtW = mainArt ? Math.round(mainArt.width * artH / mainArt.height) : 0;
+      const sufArtW = sufArt ? Math.round(sufArt.width * artH / sufArt.height) : 0;
       const sufW = suffix ? measureMixed(ctx, suffix, SUF_SIZE, FONT.kai, FONT.hei) : 0;
-      const gap = suffix ? 24 : 0;
-      const totalW = artW + gap + sufW;
-      const startX = Math.round((W - totalW) / 2);
-      ctx.drawImage(poolArt, startX, y - artH / 2 - 4, artW, artH);
+
+      const gapBeforeLogo = (mainTextW > 0 && (mainArtW > 0 || sufArtW > 0)) ? 18 : 0;
+      const gapBetweenLogos = (mainArtW > 0 && sufArtW > 0) ? 16 : 0;
+      const gapAfterLogo = suffix ? 24 : 0;
+
+      const totalW = mainTextW + gapBeforeLogo + mainArtW + gapBetweenLogos + sufArtW + gapAfterLogo + sufW;
+      let curX = Math.round((W - totalW) / 2);
+
+      if (mainTextW > 0) {
+        drawMixedFont(ctx, split.main, curX, y, MAIN_SIZE, '#FFE9B8', 'left', FONT.kai, FONT.hei);
+        curX += mainTextW + gapBeforeLogo;
+      }
+      if (mainArt) {
+        ctx.drawImage(mainArt, curX, y - artH / 2 - 4, mainArtW, artH);
+        curX += mainArtW + gapBetweenLogos;
+      }
+      if (sufArt) {
+        ctx.drawImage(sufArt, curX, y - artH / 2 - 4, sufArtW, artH);
+        curX += sufArtW;
+      }
       if (suffix) {
-        drawMixedFont(ctx, suffix, startX + artW + gap, y, SUF_SIZE, '#FFE9B8',
+        drawMixedFont(ctx, suffix, curX + gapAfterLogo, y, SUF_SIZE, '#FFE9B8',
           'left', FONT.kai, FONT.hei);
       }
     } else {
@@ -415,5 +437,5 @@ export async function renderGachaResultCard ({ title, items, wallet, lines, pool
     }
   }
 
-  return `base64://${canvas.toBuffer('image/png').toString('base64')}`;
+  return `base64://${canvas.toBuffer('image/jpeg', 90).toString('base64')}`;
 }

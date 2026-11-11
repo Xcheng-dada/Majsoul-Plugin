@@ -1079,8 +1079,9 @@ export class MajsoulGacha extends plugin {
             return true;
         }
         const now = Date.now();
-        const items = rows.map(r => {
-            const name = this.gachaCore.getPoolName(r.poolId);
+        const items = [];
+        for (const r of rows) {
+            const baseName = this.gachaCore.getPoolName(r.poolId);
             let status = 'open';
             // 联动池可能已被手动提前开启（#开启联动 立即生效），排期状态需反映真实开放状态
             if (r.startAt != null && now < r.startAt) {
@@ -1097,8 +1098,18 @@ export class MajsoulGacha extends plugin {
                 : (status === 'early'
                     ? `已手动开启 · ${endPart}`
                     : endPart);
-            return { name, status, timeText };
-        });
+
+            // 联动池与 getAvailablePools 口径一致：名里已含「樱花/竹林」的只出一行，
+            // 否则拆成「樱花特别寻觅」「竹林特别寻觅」两个变体（同一排期，两行）
+            if (/樱花/.test(baseName)) {
+                items.push({ name: baseName, status, timeText });
+            } else if (/竹林/.test(baseName)) {
+                items.push({ name: baseName, status, timeText });
+            } else {
+                items.push({ name: `${baseName}（樱花特别寻觅）`, status, timeText });
+                items.push({ name: `${baseName}（竹林特别寻觅）`, status, timeText });
+            }
+        }
         const image = await renderPoolScheduleCard({
             rows: items,
             footer: '设置：#设置卡池开启/关闭 <池名> <YYYY-MM-DD HH:mm>'

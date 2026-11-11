@@ -69,6 +69,8 @@ const TITLE_ART = [
   ['斗牌传说（竹林特别寻觅）', 'pool_zhulin_special_doupai.png'],
   ['偶像大师（樱花特别寻觅）', 'pool_sakura_special_imas.png'],
   ['偶像大师（竹林特别寻觅）', 'pool_zhulin_special_imas.png'],
+  ['葬送的芙莉莲（樱花特别寻觅）', 'pool_sakura_special_fulilian.png'],
+  ['葬送的芙莉莲（竹林特别寻觅）', 'pool_zhulin_special_fulilian.png'],
   ['（樱花特别寻觅）', 'pool_sakura_special2.png'],
   ['（竹林特别寻觅）', 'pool_zhulin_special2.png']
 ];
@@ -82,21 +84,94 @@ export function findPoolTitleArt (title) {
   if (!title) return null;
   let s = String(title).trim();
 
-  // 贵人池/自定义UP池的标题会带「（樱花特别寻觅）」「（竹林特别寻觅）」后缀，
-  // 但贵人池名（如「赤影骁歌」）本身就对应一张完整艺术字素材，需先剥掉后缀再匹配，
-  // 否则会被下面的「（樱花特别寻觅）」宽泛规则抢走。
+  // 贵人池/自定义UP池/联动池的标题会带「（樱花特别寻觅）」「（竹林特别寻觅）」后缀。
+  //
+  // 匹配策略（顺序很重要）：
+  //   1) 先剥后缀，用池主体名找专属艺术字（如「赤影骁歌」「蔚蓝档案」）
+  //   2) 找不到再用带后缀的完整名（专属的「蔚蓝档案（樱花特别寻觅）」）
+  //   3) 最后才回退到通用后缀键「（樱花特别寻觅）」/「（竹林特别寻觅）」
+  //      —— 联动池没有专属素材时走这条（如「狂赌之渊（樱花特别寻觅）」）
+  //
+  // ⚠️ 不能用 includes + 任意顺序：短 key「樱花」会抢走
+  //    「狂赌之渊（樱花特别寻觅）」，错配成樱花之路的艺术字。
+  const hasSuffix = /（(樱花|竹林)特别寻觅）$/.test(s);
   const stripped = s.replace(/（(樱花|竹林)特别寻觅）$/, '').trim();
-  const candidates = stripped !== s ? [stripped, s] : [s];
+  const suffixKey = hasSuffix ? (s.match(/（(樱花|竹林)特别寻觅）$/)?.[0] || '') : '';
 
-  for (const cand of candidates) {
-    for (const [key, file] of TITLE_ART) {
-      if (cand.includes(key)) {
+  const lookups = [];
+  if (stripped) lookups.push(stripped);       // 1) 主体名
+  if (hasSuffix && s) lookups.push(s);          // 2) 完整名
+  if (suffixKey) lookups.push(suffixKey);       // 3) 通用后缀
+
+  for (const q of lookups) {
+    // 同一轮里长 key 优先，避免子串误配
+    const sorted = [...TITLE_ART].sort((a, b) => b[0].length - a[0].length);
+    for (const [key, file] of sorted) {
+      if (q === key || q.includes(key)) {
         const p = path.join(GACHA_DIR, file);
         if (fs.existsSync(p)) return p;
       }
     }
   }
   return null;
+}
+
+/**
+ * 拆分「联动池显示名」为「主体名 + 后缀艺术字」，供排期图等需要
+ * 「文字池名 + 官方后缀艺术字」组合展示的场景使用。
+ *
+ * 行为：
+ *   - 名里带「（樱花特别寻觅）」「（竹林特别寻觅）」时：
+ *       main  = 主体名（如「狂赌之渊」）
+ *       suffix = 后缀文字（如「（樱花特别寻觅）」）
+ *       art    = 该池**专属**的主体艺术字；没有专属素材时返回 null
+ *                （此时调用方用 main 画文字，再画通用后缀艺术字）
+ *       suffixArt = 通用后缀艺术字（「樱花特别寻觅」/「竹林特别寻觅」）
+ *   - 名里不带后缀时：main = 原名，art = 该池艺术字，suffix/suffixArt 为空
+ *
+ * @param {string} title 卡池显示名
+ * @returns {{main:string, art:string|null, suffix:string, suffixArt:string|null}}
+ */
+export function splitPoolTitleArt (title) {
+  const empty = { main: '', art: null, suffix: '', suffixArt: null };
+  if (!title) return empty;
+  const s = String(title).trim();
+
+  const m = s.match(/^(.+?)（(樱花|竹林)特别寻觅）$/);
+  if (!m) {
+    return { main: s, art: findPoolTitleArt(s), suffix: '', suffixArt: null };
+  }
+
+  const main = m[1].trim();
+  const suffix = `（${m[2]}特别寻觅）`;
+  const suffixArt = findPoolTitleArt(s) || findPoolTitleArt(suffix);   // 优先该池配色的特别寻觅后缀图，再回退通用后缀素材
+
+  // 主体专属艺术字：
+  // ⚠️ 实测 resources/gacha 里 pool_*_special_<池>*.png 素材画的都只是
+  //    「樱花/竹林 + 特别寻觅」，**不含联动池名**，不能代表主体名
+  //    （否则图上只剩「竹林特别寻觅」，看不出是哪个池）。
+  //    这类素材统一当后缀素材用，主体名由调用方文字补全。
+  //
+  // 只有 TITLE_ART 里存在「键含主体名 + 素材真的含主体名」时才用艺术字。
+  // 当前联动池均不满足，故实际恒为 null；保留逻辑以备将来补充真素材。
+  let art = null;
+  let artHasSuffix = false;
+  const MARK = ['sakura', 'zhulin'];
+  const suffixMark = m[2] === '樱花' ? 'sakura' : 'zhulin';
+  const sorted = [...TITLE_ART].sort((a, b) => b[0].length - a[0].length);
+  for (const [key, file] of sorted) {
+    if (!key.includes(main)) continue;                 // 键里必须含主体名
+    if (key === `（${m[2]}特别寻觅）`) continue;         // 跳过通用后缀
+    // 素材若不是「special」后缀图，才可能是真主体图
+    if (file.includes('_special')) continue;
+    // 若素材名带樱花/竹林标记，必须与当前后缀一致
+    const other = suffixMark === 'sakura' ? 'zhulin' : 'sakura';
+    if (MARK.some(k => file.includes(k)) && file.includes(other) && !file.includes(suffixMark)) continue;
+    const p = path.join(GACHA_DIR, file);
+    if (fs.existsSync(p)) { art = p; artHasSuffix = true; break; }
+  }
+
+  return { main, art, artHasSuffix, suffix, suffixArt };
 }
 
 export { GACHA_DIR };

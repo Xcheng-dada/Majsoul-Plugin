@@ -556,7 +556,8 @@ export default class GachaCore {
             '魔法少女伊莉雅': 'mofa',
             '蔚蓝档案': 'bluearchive',
             '偶像大师闪耀色彩': 'ouxiang',
-            '刀剑神域': 'daojian'
+            '刀剑神域': 'daojian',
+            '葬送的芙莉莲': 'fulilian'
         };
         // 处理包含关键词的情况
         if (name.includes('竹林')) return 'male';
@@ -573,6 +574,7 @@ export default class GachaCore {
         if (name.includes('银魂')) return 'yinhun';
         if (name.includes('偶像')) return 'ouxiang'
         if (name.includes('刀剑')) return 'daojian'
+        if (name.includes('芙莉莲')) return 'fulilian'
 
         return map[name] || null;
     }
@@ -597,6 +599,7 @@ export default class GachaCore {
             'bluearchive': '蔚蓝档案',
             'ouxiang': '偶像大师闪耀色彩',
             'daojian': '刀剑神域',
+            'fulilian': '葬送的芙莉莲',
             'guiren': '贵人限定'
         };
         return map[id] || '未知卡池';
